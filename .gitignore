@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Secrets
+credentials.json
+token.json
+backend/secrets/*.json
+backend/storage/secrets/*.json
+backend/storage/
+!backend/storage/.gitkeep
+.claude
+
+# Generated files
+*.log
+*.csv
+*.xlsx
+*.xls
+.DS_Store
