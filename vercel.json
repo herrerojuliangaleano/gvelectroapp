@@ -1,7 +1,11 @@
 {
   "rewrites": [
     {
-      "source": "/((?!api/.*|assets/.*|icons/.*|manifest.webmanifest|sw.js|favicon.ico|robots.txt).*)",
+      "source": "/api/:path*",
+      "destination": "https://electrogv.ngrok.dev/api/:path*"
+    },
+    {
+      "source": "/((?!assets/.*|icons/.*|manifest.webmanifest|sw.js|favicon.ico|robots.txt).*)",
       "destination": "/index.html"
     }
   ],
