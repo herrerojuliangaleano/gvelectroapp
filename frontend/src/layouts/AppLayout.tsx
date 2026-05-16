@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { getBrandForUser } from '../brand';
 import { BrandLogo } from '../components/BrandLogo';
+import { PwaInstallPrompt } from '../components/PwaInstallPrompt';
 import { can, fetchNotifications, fetchSystemStatus, fetchUnreadNotificationsCount, getCurrentUserFromStorage, logout } from '../api/client';
 import type { SystemPublicStatus } from '../types';
 import { canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantyReview, canSeeWarrantySync, canUseBranchDispatch, canUseRemitosHub, isPlainDepositOperator } from '../warrantyAccess';
@@ -239,6 +240,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         <button onClick={doLogout} className="sticky bottom-3 mt-4 flex w-full items-center gap-3 rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm font-semibold text-slate-300 shadow-xl shadow-black/20 hover:bg-slate-900"><LogOut size={18} /> Salir</button>
       </aside>
       <main className="min-h-screen p-3 pb-40 sm:p-6 sm:pb-40 lg:ml-80 lg:p-8 lg:pb-8">{children}</main>
+      <PwaInstallPrompt />
       <MobileQuickNav items={mobileQuickNav} unread={unread} />
     </div>
   );

@@ -1,11 +1,41 @@
 {
-  "name": "ElectroGV Interno",
+  "id": "/",
+  "name": "ElectroGV Web Tools",
   "short_name": "ElectroGV",
-  "icons": [
-    { "src": "/android-chrome-192x192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/android-chrome-512x512.png", "sizes": "512x512", "type": "image/png" }
-  ],
+  "description": "Sistema interno de operaciones, ventas, garantías, remitos, precios y gestión administrativa.",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
   "theme_color": "#0b1220",
   "background_color": "#0b1220",
-  "display": "standalone"
+  "lang": "es-AR",
+  "categories": ["business", "productivity", "utilities"],
+  "icons": [
+    { "src": "/android-chrome-192x192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/android-chrome-512x512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Nueva garantía",
+      "short_name": "Garantía",
+      "description": "Cargar una garantía nueva",
+      "url": "/warranties/new?source=pwa_shortcut",
+      "icons": [{ "src": "/android-chrome-192x192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Remitos",
+      "short_name": "Remitos",
+      "description": "Recepción, despacho y movimientos",
+      "url": "/warranties/remitos?source=pwa_shortcut",
+      "icons": [{ "src": "/android-chrome-192x192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Notificaciones",
+      "short_name": "Avisos",
+      "description": "Ver avisos pendientes",
+      "url": "/notificaciones?source=pwa_shortcut",
+      "icons": [{ "src": "/android-chrome-192x192.png", "sizes": "192x192" }]
+    }
+  ]
 }
