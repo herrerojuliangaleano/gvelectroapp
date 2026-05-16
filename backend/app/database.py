@@ -133,8 +133,29 @@ def init_db() -> None:
             )
             """
         )
+        existing_notification_cols = {row["name"] for row in conn.execute("PRAGMA table_info(notifications)").fetchall()}
+        notification_extra_cols = {
+            "module": "TEXT NOT NULL DEFAULT 'general'",
+            "event_type": "TEXT NOT NULL DEFAULT 'general'",
+            "priority": "TEXT NOT NULL DEFAULT 'normal'",
+            "entity_type": "TEXT",
+            "entity_id": "TEXT",
+            "link_url": "TEXT",
+            "branch_id": "TEXT",
+            "branch_name": "TEXT",
+            "target_role": "TEXT",
+            "metadata": "TEXT",
+            "delivered_push_at": "TEXT",
+            "push_status": "TEXT",
+        }
+        for col_name, col_def in notification_extra_cols.items():
+            if col_name not in existing_notification_cols:
+                conn.execute(f"ALTER TABLE notifications ADD COLUMN {col_name} {col_def}")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(username, read)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user_module ON notifications(username, module, read)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user_priority ON notifications(username, priority, read)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_entity ON notifications(entity_type, entity_id)")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS push_subscriptions (

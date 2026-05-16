@@ -145,6 +145,148 @@ def build_inputs(tool_id: str, payload: dict[str, Any], uploads: dict[str, list[
 def validate_payload(tool: dict[str, Any], payload: dict[str, Any], uploads: dict[str, list[Path]]) -> None:
     fields = tool.get("fields", [])
 
+    # ─────────────────────────────────────────────────────────────────────
+    # Validación especial CER / Limpiar Comprobantes
+    #
+    # IMPORTANTE:
+    # "rango_tipo" SIEMPRE tiene valor porque el select tiene default.
+    # Por eso NO puede usarse como señal de que el usuario eligió "otro rango".
+    #
+    # La única señal real para activar "otro rango" es que haya archivos subidos
+    # en "archivos_otro_periodo".
+    # ─────────────────────────────────────────────────────────────────────
+    is_cer = tool["id"] == "cer"
+    cer_file_fields = {
+        "archivos_mes_actual",
+        "archivos_mes_pasado",
+        "archivos_otro_periodo",
+    }
+
+    for field in fields:
+        if not field.get("required"):
+            continue
+
+        name = field["name"]
+        ftype = field["type"]
+
+        # CER valida sus archivos aparte porque tiene varios modos posibles:
+        # actual, anterior, actual+y anterior, auto y otro rango.
+        if is_cer and name in cer_file_fields:
+            continue
+
+        if ftype in {"file", "multi_file"}:
+            if not uploads.get(name):
+                raise ValueError(f"Falta subir archivo(s): {field['label']}")
+        else:
+            value = payload.get(name)
+            if value is None or str(value).strip() == "":
+                raise ValueError(f"Falta completar: {field['label']}")
+
+    if is_cer:
+        from datetime import date, datetime
+
+        def _has_files(field_name: str) -> bool:
+            return bool(uploads.get(field_name))
+
+        def _parse_date(value: Any) -> date:
+            if not value:
+                return date.today()
+
+            raw = str(value).strip()
+
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+                try:
+                    return datetime.strptime(raw, fmt).date()
+                except ValueError:
+                    pass
+
+            raise ValueError("La fecha de referencia no es válida. Usá formato YYYY-MM-DD.")
+
+        def _parse_cutoff(value: Any) -> int:
+            if value in (None, ""):
+                return 11
+
+            try:
+                cutoff = int(value)
+            except Exception:
+                raise ValueError("El día de corte mes anterior debe ser un número.")
+
+            if cutoff < 1 or cutoff > 31:
+                raise ValueError("El día de corte mes anterior debe estar entre 1 y 31.")
+
+            return cutoff
+
+        uses_otro = _has_files("archivos_otro_periodo")
+
+        # Si cargaron archivos en "otro rango", ese flujo toma prioridad.
+        # No se exige mes actual ni mes pasado.
+        if uses_otro:
+            rango_tipo = str(payload.get("rango_tipo") or "anio_pasado").strip()
+
+            if rango_tipo == "personalizado":
+                desde = str(payload.get("fecha_desde_otro") or "").strip()
+                hasta = str(payload.get("fecha_hasta_otro") or "").strip()
+
+                if not desde:
+                    raise ValueError("Para rango personalizado falta completar la fecha desde.")
+                if not hasta:
+                    raise ValueError("Para rango personalizado falta completar la fecha hasta.")
+
+                try:
+                    fecha_desde = datetime.strptime(desde, "%Y-%m-%d").date()
+                    fecha_hasta = datetime.strptime(hasta, "%Y-%m-%d").date()
+                except ValueError:
+                    raise ValueError("Las fechas del rango personalizado deben tener formato YYYY-MM-DD.")
+
+                if fecha_hasta < fecha_desde:
+                    raise ValueError("En rango personalizado, la fecha hasta no puede ser anterior a la fecha desde.")
+
+            return
+
+        # Flujo normal mensual.
+        # Este es el comportamiento principal:
+        # - actual: pide solo mes actual
+        # - anterior: pide solo mes pasado
+        # - actual_y_anterior: pide ambos
+        # - auto: según fecha de referencia y día de corte
+        periodos = str(payload.get("periodos") or "auto").strip()
+        fecha_ref = _parse_date(payload.get("fecha_referencia"))
+        cutoff_day = _parse_cutoff(payload.get("dia_corte_mes_anterior"))
+
+        requiere_actual = False
+        requiere_pasado = False
+
+        if periodos == "actual":
+            requiere_actual = True
+        elif periodos == "anterior":
+            requiere_pasado = True
+        elif periodos == "actual_y_anterior":
+            requiere_actual = True
+            requiere_pasado = True
+        elif periodos == "auto":
+            if fecha_ref.day < cutoff_day:
+                requiere_actual = True
+                requiere_pasado = True
+            else:
+                requiere_actual = True
+        else:
+            raise ValueError(f"Modo de períodos no reconocido: {periodos}")
+
+        if requiere_actual and not _has_files("archivos_mes_actual"):
+            raise ValueError("Falta subir archivo(s): Archivos MES ACTUAL")
+
+        if requiere_pasado and not _has_files("archivos_mes_pasado"):
+            raise ValueError("Falta subir archivo(s): Archivos MES PASADO")
+
+        return
+
+    if tool["id"] == "cc" and not bool(payload.get("modo_prueba", True)) and not bool(payload.get("confirmacion_real", False)):
+        raise ValueError("Para ejecutar Congelar Carpeta en modo real tenés que marcar la confirmación.")
+
+    if tool["id"] == "gg" and str(payload.get("fecha_fin", "")) < str(payload.get("fecha_inicio", "")):
+        raise ValueError("La fecha fin no puede ser anterior a la fecha inicio.")
+    fields = tool.get("fields", [])
+
     # Para CER: si se subieron archivos de "otro periodo", el flujo principal no es obligatorio
     cer_uses_otro = tool["id"] == "cer" and bool(uploads.get("archivos_otro_periodo"))
     cer_main_file_fields = {"archivos_mes_actual", "archivos_mes_pasado"}

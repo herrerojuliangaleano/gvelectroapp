@@ -944,15 +944,15 @@ export interface WarrantyExportInfo {
   download_url: string;
   shipment_code?: string;
   file_format?: 'excel' | 'pdf' | string;
-  logo_brand?: 'gv_electro' | 'abc_electro' | string;
+  logo_brand?: 'gv' | 'abc' | string;
 }
 
 export interface WarrantyBatchExportPayload {
   warranty_ids: string[];
   proveedor?: string;
   nota?: string;
-  formato?: 'excel' | 'pdf';
-  logo_brand?: 'gv_electro' | 'abc_electro';
+  formato?: 'excel' | 'pdf' | string;
+  logo_brand?: 'gv' | 'abc' | string;
 }
 
 export interface ConfirmShipmentPayload {
@@ -1227,10 +1227,36 @@ export interface NotificationInfo {
   title: string;
   message: string;
   type: string;
+  module?: string;
+  module_label?: string;
+  event_type?: string;
+  priority?: 'low' | 'normal' | 'high' | 'critical' | string;
   sales_request_id?: number | null;
+  entity_type?: string | null;
+  entity_id?: string | null;
+  link_url?: string | null;
+  branch_id?: string | null;
+  branch_name?: string | null;
+  target_role?: string | null;
+  metadata?: Record<string, unknown> | null;
   read: boolean;
   created_at: string;
   read_at?: string | null;
+}
+
+export interface NotificationSummary {
+  unread_total: number;
+  unread_high_priority: number;
+  unread_by_module: Record<string, number>;
+  modules: Record<string, string>;
+}
+
+export interface NotificationFilters {
+  unreadOnly?: boolean;
+  module?: string;
+  priority?: string;
+  readStatus?: 'all' | 'unread' | 'read';
+  limit?: number;
 }
 
 export interface SalesWebItem {

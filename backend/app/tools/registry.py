@@ -63,7 +63,7 @@ TOOLS: dict[str, ToolDef] = {
         ],
         "fields": [
             # ── Flujo principal ───────────────────────────────────────────────
-            {"name": "archivos_mes_actual", "label": "Archivos MES ACTUAL", "type": "multi_file", "required": True, "validate_filename": "arca", "help": "Subí los emitidos y recibidos de GV y ABC correspondientes al mes actual."},
+            {"name": "archivos_mes_actual", "label": "Archivos MES ACTUAL", "type": "multi_file", "required": False, "validate_filename": "arca", "help": "Subí los emitidos y recibidos de GV y ABC correspondientes al mes actual. Obligatorio solo si procesás mes actual o automático desde el día de corte."},
             {"name": "archivos_mes_pasado", "label": "Archivos MES PASADO", "type": "multi_file", "required": False, "validate_filename": "arca", "help": "Subí acá los archivos del mes anterior completo. Necesario en automático del día 1 al 10 o si elegís mes actual + anterior."},
             {"name": "periodos", "label": "Períodos a procesar", "type": "select", "required": True, "default": "auto", "options": [
                 {"label": "Automático: día 1 al 10 → anterior + actual; desde el 11 → solo actual", "value": "auto"},

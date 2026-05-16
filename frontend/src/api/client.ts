@@ -26,6 +26,8 @@ import type {
   GoogleAdminStatus,
   JobInfo,
   NotificationInfo,
+  NotificationFilters,
+  NotificationSummary,
   OperationalConfigPayload,
   OperationalConfigResponse,
   OperationalConfigValidationResult,
@@ -421,15 +423,20 @@ export async function confirmWarrantyShipment(id: string, payload: ConfirmShipme
 export async function fetchEligibleWarranties(params: Record<string, string | number | undefined> = {}): Promise<WarrantyListResponse> {
   return request(`/api/warranties/export/eligible${buildQs(params)}`);
 }
-export async function fetchExportProviderSuggestions(q = ''): Promise<{ items: string[] }> {
-  return request(`/api/warranties/export/provider-suggestions${buildQs({ q })}`);
-}
 export async function createBatchExport(payload: WarrantyBatchExportPayload): Promise<WarrantyExportInfo> {
   return request('/api/warranties/export/batch', { method: 'POST', body: JSON.stringify(payload) });
 }
 export async function createWarrantyExport(payload: WarrantyExportPayload): Promise<WarrantyExportInfo> {
   return request('/api/warranties/export/provider', { method: 'POST', body: JSON.stringify(payload) });
 }
+export async function fetchExportProviderSuggestions(query = '', selectedIds: string[] = []): Promise<{ items: string[] }> {
+  const params = new URLSearchParams();
+  if (query) params.set('q', query);
+  for (const id of selectedIds) params.append('warranty_ids', id);
+  const qs = params.toString();
+  return request(`/api/warranties/export/provider-suggestions${qs ? `?${qs}` : ''}`);
+}
+
 export async function fetchWarrantyExports(limit = 50): Promise<WarrantyExportListResponse> {
   return request(`/api/warranties/exports?limit=${encodeURIComponent(String(limit))}`);
 }
@@ -571,12 +578,26 @@ export async function fetchBackups(): Promise<BackupInfo[]> { return request('/a
 export async function createBackup(): Promise<BackupInfo> { return request('/api/admin/backups', { method: 'POST' }); }
 
 
-export async function fetchNotifications(unreadOnly = false): Promise<NotificationInfo[]> {
-  return request(`/api/notifications${unreadOnly ? '?unread_only=true' : ''}`);
+export async function fetchNotifications(options: boolean | NotificationFilters = false): Promise<NotificationInfo[]> {
+  if (typeof options === 'boolean') {
+    return request(`/api/notifications${options ? '?unread_only=true' : ''}`);
+  }
+  const params = new URLSearchParams();
+  if (options.unreadOnly) params.set('unread_only', 'true');
+  if (options.module) params.set('module', options.module);
+  if (options.priority) params.set('priority', options.priority);
+  if (options.readStatus && options.readStatus !== 'all') params.set('read_status', options.readStatus);
+  if (options.limit) params.set('limit', String(options.limit));
+  const qs = params.toString();
+  return request(`/api/notifications${qs ? `?${qs}` : ''}`);
 }
+export async function fetchNotificationSummary(): Promise<NotificationSummary> { return request('/api/notifications/summary'); }
 export async function fetchUnreadNotificationsCount(): Promise<{ count: number }> { return request('/api/notifications/unread-count'); }
 export async function markNotificationRead(id: number): Promise<NotificationInfo> { return request(`/api/notifications/${id}/read`, { method: 'POST' }); }
-export async function markAllNotificationsRead(): Promise<{ ok: boolean }> { return request('/api/notifications/mark-all-read', { method: 'POST' }); }
+export async function markAllNotificationsRead(module?: string): Promise<{ ok: boolean }> {
+  const qs = module ? `?module=${encodeURIComponent(module)}` : '';
+  return request(`/api/notifications/mark-all-read${qs}`, { method: 'POST' });
+}
 
 export async function fetchSalesWebOptions(): Promise<SalesWebOptions> { return request('/api/sales-web/options'); }
 export async function searchSalesWebProducts(query: string): Promise<BudgetProduct[]> { return request(`/api/sales-web/products?q=${encodeURIComponent(query)}&limit=20`); }
