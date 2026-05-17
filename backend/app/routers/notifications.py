@@ -121,6 +121,19 @@ def ensure_notifications_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fcm_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            token TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(token)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_fcm_tokens_username ON fcm_tokens(username)")
 
 
 def _normalize_module(value: str | None, fallback_type: str = "info", sales_request_id: int | None = None) -> str:
@@ -210,6 +223,10 @@ class PushSubscribeRequest(BaseModel):
     keys: dict[str, str] | None = None
 
 
+class FcmTokenRequest(BaseModel):
+    token: str
+
+
 class InternalNotificationRequest(BaseModel):
     usernames: list[str]
     title: str
@@ -284,6 +301,24 @@ def create_notification(
             ),
         )
         conn.commit()
+        tokens = [row["token"] for row in conn.execute(
+            "SELECT token FROM fcm_tokens WHERE username = ?", (username,)
+        ).fetchall()]
+
+    if tokens:
+        try:
+            from ..fcm import send_to_many
+            fcm_data: dict[str, str] = {"module": module_value, "priority": priority_value}
+            if link_url:
+                fcm_data["link_url"] = link_url
+            if entity_type:
+                fcm_data["entity_type"] = entity_type
+            if entity_id is not None:
+                fcm_data["entity_id"] = str(entity_id)
+            send_to_many(tokens, title, message, fcm_data)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("FCM push falló para %s: %s", username, exc)
 
 
 def notify_many(
@@ -483,6 +518,33 @@ def create_internal_notification(data: InternalNotificationRequest):
         metadata=data.metadata,
     )
     return {"ok": True, "created": len({u for u in data.usernames if u})}
+
+
+@router.post("/push/fcm-token")
+def register_fcm_token(data: FcmTokenRequest, user: Annotated[CurrentUser, Depends(require_permission("notifications.view"))]):
+    now = utc_now()
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO fcm_tokens (username, token, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(token) DO UPDATE SET username = excluded.username, updated_at = excluded.updated_at
+            """,
+            (user.username, data.token, now, now),
+        )
+        conn.commit()
+    return {"ok": True}
+
+
+@router.delete("/push/fcm-token")
+def unregister_fcm_token(data: FcmTokenRequest, user: Annotated[CurrentUser, Depends(require_permission("notifications.view"))]):
+    with connect() as conn:
+        conn.execute(
+            "DELETE FROM fcm_tokens WHERE username = ? AND token = ?",
+            (user.username, data.token),
+        )
+        conn.commit()
+    return {"ok": True}
 
 
 @router.post("/push/subscribe")

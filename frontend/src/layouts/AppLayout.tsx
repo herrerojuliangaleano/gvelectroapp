@@ -8,6 +8,7 @@ import { getBrandForUser } from '../brand';
 import { BrandLogo } from '../components/BrandLogo';
 import { PwaInstallPrompt } from '../components/PwaInstallPrompt';
 import { can, fetchNotifications, fetchSystemStatus, fetchUnreadNotificationsCount, getCurrentUserFromStorage, logout } from '../api/client';
+import { cleanupPushNotifications, initPushNotifications } from '../services/pushNotifications';
 import type { SystemPublicStatus } from '../types';
 import { canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantyReview, canSeeWarrantySync, canUseBranchDispatch, canUseRemitosHub, isPlainDepositOperator } from '../warrantyAccess';
 
@@ -71,6 +72,11 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const [lastNotificationId, setLastNotificationId] = useState<number | null>(null);
   const user = getCurrentUserFromStorage();
   const brand = getBrandForUser(user);
+
+  useEffect(() => {
+    initPushNotifications(navigate);
+    return () => { cleanupPushNotifications(); };
+  }, []);
 
   useEffect(() => {
     let alive = true;

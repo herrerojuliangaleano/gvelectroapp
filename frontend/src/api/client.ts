@@ -578,6 +578,13 @@ export async function fetchBackups(): Promise<BackupInfo[]> { return request('/a
 export async function createBackup(): Promise<BackupInfo> { return request('/api/admin/backups', { method: 'POST' }); }
 
 
+export async function registerFcmToken(token: string): Promise<void> {
+  await request('/api/notifications/push/fcm-token', { method: 'POST', body: JSON.stringify({ token }) });
+}
+export async function unregisterFcmToken(token: string): Promise<void> {
+  await request('/api/notifications/push/fcm-token', { method: 'DELETE', body: JSON.stringify({ token }) });
+}
+
 export async function fetchNotifications(options: boolean | NotificationFilters = false): Promise<NotificationInfo[]> {
   if (typeof options === 'boolean') {
     return request(`/api/notifications${options ? '?unread_only=true' : ''}`);

@@ -22,6 +22,7 @@ yarn-error.log*
 credentials.json
 token.json
 backend/secrets/*.json
+frontend/android/app/google-services.json
 backend/storage/secrets/*.json
 backend/storage/
 !backend/storage/.gitkeep
