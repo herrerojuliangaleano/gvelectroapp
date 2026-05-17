@@ -1,6 +1,6 @@
 import { Download, ExternalLink, RefreshCw, Smartphone, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { isPwaStandalone } from '../pwa';
+import { activateWaitingServiceWorker, isStandalonePwa } from '../pwa';
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -51,7 +51,7 @@ export function PwaInstallPrompt() {
   const [nativeApp, setNativeApp] = useState(false);
 
   useEffect(() => {
-    setStandalone(isPwaStandalone());
+    setStandalone(isStandalonePwa());
     setAndroidBrowser(isAndroidBrowser());
     setNativeApp(isNativeCapacitorApp());
     setInstallHidden(isRecentlyDismissed(INSTALL_DISMISSED_KEY));
@@ -66,18 +66,19 @@ export function PwaInstallPrompt() {
       setStandalone(true);
       setInstallEvent(null);
     };
-    const onUpdate = (event: WindowEventMap['pwa:update-available']) => {
-      setUpdateReload(() => event.detail.reload);
+    const onUpdate = (event: WindowEventMap['electrogv:pwa-update-available']) => {
+      const registration = event.detail;
+      setUpdateReload(() => () => activateWaitingServiceWorker(registration));
       setUpdateHidden(false);
     };
 
     window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt);
     window.addEventListener('appinstalled', onAppInstalled);
-    window.addEventListener('pwa:update-available', onUpdate);
+    window.addEventListener('electrogv:pwa-update-available', onUpdate);
     return () => {
       window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt);
       window.removeEventListener('appinstalled', onAppInstalled);
-      window.removeEventListener('pwa:update-available', onUpdate);
+      window.removeEventListener('electrogv:pwa-update-available', onUpdate);
     };
   }, []);
 
