@@ -528,7 +528,6 @@ export function WarrantyRemitosPage() {
                   placeholder="Ej. GV-R-2026-0001"
                   value={quickCode}
                   onChange={(e) => setQuickCode(e.target.value.toUpperCase())}
-                  autoFocus
                 />
               </div>
               <div className="flex flex-col gap-1">
@@ -934,13 +933,13 @@ export function WarrantyRemitosPage() {
                     </div>
 
                     <div className="ml-auto flex flex-wrap items-center gap-2">
-                      <button onClick={() => handleDownloadPdf(remito.remito_code)} className="flex items-center gap-1 rounded-xl border border-slate-600 bg-slate-800 px-3 py-1.5 text-sm text-slate-300 hover:border-blue-500 hover:text-blue-300" title="Descargar PDF">
+                      <button onClick={() => handleDownloadPdf(remito.remito_code)} className="flex items-center gap-1 rounded-xl border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-300 hover:border-blue-500 hover:text-blue-300" title="Descargar PDF">
                         <Download className="h-4 w-4" />PDF
                       </button>
-                      <button onClick={() => handlePrint(remito.remito_code)} disabled={printing} className="flex items-center gap-1 rounded-xl border border-slate-600 bg-slate-800 px-3 py-1.5 text-sm text-slate-300 hover:border-violet-500 hover:text-violet-300 disabled:opacity-50" title="Imprimir directamente">
+                      <button onClick={() => handlePrint(remito.remito_code)} disabled={printing} className="flex items-center gap-1 rounded-xl border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-300 hover:border-violet-500 hover:text-violet-300 disabled:opacity-50" title="Imprimir directamente">
                         {printing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />} Imprimir
                       </button>
-                      <button onClick={() => toggleExpanded(remito.remito_code)} className="flex items-center gap-1 rounded-xl border border-slate-600 bg-slate-800 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-500">
+                      <button onClick={() => toggleExpanded(remito.remito_code)} className="flex items-center gap-1 rounded-xl border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-300 hover:border-slate-500">
                         {isExp ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                         {isExp ? 'Ocultar' : 'Detalle'}
                       </button>
@@ -956,7 +955,7 @@ export function WarrantyRemitosPage() {
                           <button onClick={() => handleDelete(remito.remito_code)} disabled={delLoading} className="flex items-center gap-1 rounded-xl bg-red-600 px-3 py-1.5 text-sm font-bold text-white hover:bg-red-500 disabled:opacity-50">
                             {delLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />} Sí
                           </button>
-                          <button onClick={() => setConfirmDelete((p) => ({ ...p, [remito.remito_code]: false }))} className="rounded-xl border border-slate-600 bg-slate-800 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-500">No</button>
+                          <button onClick={() => setConfirmDelete((p) => ({ ...p, [remito.remito_code]: false }))} className="rounded-xl border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-300 hover:border-slate-500">No</button>
                         </div>
                       )}
                     </div>
@@ -991,7 +990,7 @@ export function WarrantyRemitosPage() {
                               {remito.warranties.map((w) => (
                                 <tr key={`${remito.remito_code}-${w.warranty_code}`}>
                                   <td className="px-3 py-2 font-mono text-xs font-bold text-slate-300">{w.warranty_code}</td>
-                                  <td className="px-3 py-2 text-white">{w.producto}</td>
+                                  <td className="px-3 py-2 text-white"><div className="max-w-[160px] truncate">{w.producto}</div></td>
                                   <td className="px-3 py-2 text-slate-300">{w.sku || '—'}</td>
                                   <td className="px-3 py-2 text-slate-300">{w.serie || '—'}</td>
                                   <td className="px-3 py-2 text-slate-400">{w.falla || '—'}</td>

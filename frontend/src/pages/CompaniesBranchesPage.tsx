@@ -288,7 +288,7 @@ export function CompaniesBranchesPage() {
                 <div>{branch.parent_branch_name || '-'}</div>
                 <div className="flex items-center justify-between gap-2 lg:justify-start">
                   <StatusPill active={branch.is_active} />
-                  {canManageBranches && <button onClick={() => void toggleBranch(branch)} className="rounded-lg border border-slate-700 p-1.5 text-slate-300 hover:bg-slate-800" title={branch.is_active ? 'Desactivar' : 'Activar'}>{branch.is_active ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}</button>}
+                  {canManageBranches && <button onClick={() => void toggleBranch(branch)} className="rounded-lg border border-slate-700 p-2 text-slate-300 hover:bg-slate-800" title={branch.is_active ? 'Desactivar' : 'Activar'}>{branch.is_active ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}</button>}
                   {canManageBranches && <button onClick={() => editBranch(branch)} className="rounded-lg border border-slate-700 px-2 py-1.5 text-xs font-black text-slate-300 hover:bg-slate-800">Editar</button>}
                 </div>
               </div>

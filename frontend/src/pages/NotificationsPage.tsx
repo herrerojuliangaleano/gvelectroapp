@@ -103,7 +103,7 @@ export function NotificationsPage() {
               Bandeja unificada para ventas, precios/costos, garantías, remitos, proveedor y sistema. Esta fase prepara la base para push nativo en Android.
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:min-w-[340px]">
+          <div className="grid grid-cols-2 gap-2 sm:w-[340px]">
             <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-3">
               <div className="text-xs font-bold uppercase text-blue-200/80">No leídas</div>
               <div className="mt-1 text-2xl font-black text-white">{summary?.unread_total ?? '—'}</div>

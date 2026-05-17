@@ -160,7 +160,7 @@ export function WarrantiesListPage() {
       )}
 
       {data && (
-        <div className="grid gap-3 lg:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <ResumenCard title="Por sucursal" items={resumen.bySucursal} />
           <ResumenCard title="Por lugar" items={resumen.byDeposito} />
           <ResumenCard title="Por estado" items={resumen.byEstado} />
