@@ -11,7 +11,8 @@
     "cap:sync": "npm run build && npx cap sync",
     "cap:open:android": "npx cap open android",
     "android:build:web": "npm run build && npx cap sync android",
-    "android:open": "npx cap open android"
+    "android:open": "npx cap open android",
+    "android:apk": "powershell -ExecutionPolicy Bypass -File build-apk.ps1"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",
