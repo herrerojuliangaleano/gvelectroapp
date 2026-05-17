@@ -1,4 +1,14 @@
 # build-apk.ps1 — Pipeline completo: web build -> cap sync -> APK -> copia a public/downloads
+#
+# Uso:
+#   npm run android:apk                  → build normal (update opcional)
+#   npm run android:apk -- --required    → marca el update como obligatorio en la app
+#   npm run android:apk -- --changelog "Nuevas notificaciones, fix de icono"
+#
+param(
+    [switch]$required,
+    [string]$changelog = ""
+)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
@@ -16,20 +26,21 @@ if (-not $env:JAVA_HOME -or -not (Test-Path $env:JAVA_HOME)) {
     Write-Host ">> JAVA_HOME auto: $env:JAVA_HOME" -ForegroundColor DarkCyan
 }
 
-$root     = $PSScriptRoot                                        # frontend/
-$gradle   = Join-Path $root "android\gradlew.bat"
-$apkSrc   = Join-Path $root "android\app\build\outputs\apk\debug\electrogv.apk"
-$apkDst   = Join-Path $root "public\downloads\electrogv.apk"
+$root        = $PSScriptRoot                                      # frontend/
+$gradle      = Join-Path $root "android\gradlew.bat"
+$apkSrc      = Join-Path $root "android\app\build\outputs\apk\debug\electrogv.apk"
+$apkDst      = Join-Path $root "public\downloads\electrogv.apk"
 $buildGradle = Join-Path $root "android\app\build.gradle"
+$versionJson = Join-Path $root "public\version.json"
+$utf8NoBom   = [System.Text.UTF8Encoding]::new($false)
 
-# ── 1. Auto-incrementar versionCode ────────────────────────────────────────
-$content  = Get-Content $buildGradle -Raw
-$match    = [regex]::Match($content, 'versionCode\s+(\d+)')
-$oldCode  = [int]$match.Groups[1].Value
-$newCode  = $oldCode + 1
-$content  = $content -replace "versionCode\s+$oldCode", "versionCode $newCode"
-# Escribir sin BOM (PowerShell 5 agrega BOM con -Encoding UTF8, Gradle no lo acepta)
-[System.IO.File]::WriteAllText($buildGradle, $content, [System.Text.UTF8Encoding]::new($false))
+# ── 1. Auto-incrementar versionCode en build.gradle ────────────────────────
+$gradleContent = [System.IO.File]::ReadAllText($buildGradle)
+$match         = [regex]::Match($gradleContent, 'versionCode\s+(\d+)')
+$oldCode       = [int]$match.Groups[1].Value
+$newCode       = $oldCode + 1
+$gradleContent = $gradleContent -replace "versionCode\s+$oldCode", "versionCode $newCode"
+[System.IO.File]::WriteAllText($buildGradle, $gradleContent, $utf8NoBom)
 Write-Host ">> versionCode: $oldCode -> $newCode" -ForegroundColor Cyan
 
 # ── 2. Build web (Vite + TypeScript) ───────────────────────────────────────
@@ -55,8 +66,24 @@ if (-not (Test-Path $apkSrc)) { throw "APK no encontrado en: $apkSrc" }
 $null = New-Item -ItemType Directory -Path (Split-Path $apkDst) -Force
 Copy-Item $apkSrc $apkDst -Force
 $sizeMB = [math]::Round((Get-Item $apkDst).Length / 1MB, 1)
+
+# ── 6. Actualizar public/version.json ──────────────────────────────────────
+$versionData = [ordered]@{
+    minVersionCode = $newCode
+    versionName    = "1.0"
+    required       = [bool]$required
+    changelog      = $changelog
+    apkUrl         = "/downloads/electrogv.apk"
+}
+$versionJson_content = $versionData | ConvertTo-Json -Depth 2
+[System.IO.File]::WriteAllText($versionJson, $versionJson_content, $utf8NoBom)
+$requiredLabel = if ($required) { "OBLIGATORIA" } else { "opcional" }
+
 Write-Host "`n==========================================" -ForegroundColor Green
 Write-Host "  APK listo: public/downloads/electrogv.apk" -ForegroundColor Green
 Write-Host "  Tamano: ${sizeMB} MB   |   versionCode: $newCode" -ForegroundColor Green
+Write-Host "  Actualizacion: $requiredLabel" -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
-Write-Host "`nProximo paso: git add + commit + push para que Vercel lo sirva en /downloads/electrogv.apk"
+Write-Host ""
+Write-Host "Proximo paso: git add -A && git commit -m 'apk: v$newCode' && git push"
+Write-Host "Vercel servira el APK en /downloads/electrogv.apk y version.json en /version.json"

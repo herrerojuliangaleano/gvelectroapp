@@ -7,6 +7,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { getBrandForUser } from '../brand';
 import { BrandLogo } from '../components/BrandLogo';
 import { PwaInstallPrompt } from '../components/PwaInstallPrompt';
+import { UpdatePrompt } from '../components/UpdatePrompt';
 import { can, fetchNotifications, fetchSystemStatus, fetchUnreadNotificationsCount, getCurrentUserFromStorage, logout } from '../api/client';
 import { cleanupPushNotifications, initPushNotifications } from '../services/pushNotifications';
 import type { SystemPublicStatus } from '../types';
@@ -247,6 +248,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
       </aside>
       <main className="min-h-screen p-3 pb-40 sm:p-6 sm:pb-40 lg:ml-80 lg:p-8 lg:pb-8">{children}</main>
       <PwaInstallPrompt />
+      <UpdatePrompt />
       <MobileQuickNav items={mobileQuickNav} unread={unread} />
     </div>
   );
