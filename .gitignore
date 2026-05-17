@@ -39,6 +39,9 @@ backend/storage/
 .idea/tasks.xml
 .idea/caches/
 
+# APK de distribución — se sirve desde Vercel en /downloads/electrogv.apk
+!frontend/public/downloads/electrogv.apk
+
 # Generated / OS
 *.log
 *.csv
