@@ -170,6 +170,12 @@ export function WarrantyRemitosPage() {
   const userBranchType = (currentUser?.branch_type || '').toLowerCase();
   const lockOriginBranch = userBranchType === 'physical' && Boolean(userBranchName) && !can('warranties.manage');
 
+  // Asegurar que la página arranca desde el top (evita el bug de pantalla azul en Android
+  // donde el teclado virtual desplaza el scroll al montar un input con autoFocus)
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+  }, []);
+
   useEffect(() => {
     fetchWarrantyOptions().then((opts) => {
       setOptions(opts);
