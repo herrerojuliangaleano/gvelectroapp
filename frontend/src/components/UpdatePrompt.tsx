@@ -1,3 +1,5 @@
+import { Browser } from '@capacitor/browser';
+import { Capacitor } from '@capacitor/core';
 import { Download, RefreshCw, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { UpdateInfo } from '../services/appUpdate';
@@ -16,8 +18,18 @@ export function UpdatePrompt() {
 
   const { required, apkUrl, changelog, latestVersionCode, installedVersionCode } = info;
 
-  function openDownload() {
-    window.open(apkUrl, '_blank');
+  async function openDownload() {
+    // Construir URL absoluta (el apkUrl puede ser relativo como /downloads/electrogv.apk)
+    const absolute = apkUrl.startsWith('http')
+      ? apkUrl
+      : `${window.location.origin}${apkUrl}`;
+
+    if (Capacitor.isNativePlatform()) {
+      // En el APK: abrir Chrome Custom Tabs (puede descargar el APK)
+      await Browser.open({ url: absolute, presentationStyle: 'popover' });
+    } else {
+      window.open(absolute, '_blank');
+    }
   }
 
   // ── Actualización obligatoria: modal bloqueante ──────────────────────────

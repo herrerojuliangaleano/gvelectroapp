@@ -5,7 +5,7 @@
       "destination": "https://electrogv.ngrok.dev/api/:path*"
     },
     {
-      "source": "/((?!assets/.*|icons/.*|manifest.webmanifest|sw.js|favicon.ico|robots.txt).*)",
+      "source": "/((?!assets/.*|icons/.*|downloads/.*|manifest.webmanifest|sw.js|favicon.ico|robots.txt|version.json).*)",
       "destination": "/index.html"
     }
   ],
@@ -25,6 +25,32 @@
         {
           "key": "Cache-Control",
           "value": "public, max-age=3600"
+        }
+      ]
+    },
+    {
+      "source": "/version.json",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/downloads/(.*).apk",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/vnd.android.package-archive"
+        },
+        {
+          "key": "Content-Disposition",
+          "value": "attachment; filename=\"electrogv.apk\""
+        },
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
         }
       ]
     }
