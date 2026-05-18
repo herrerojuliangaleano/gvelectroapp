@@ -216,7 +216,7 @@ export function WarrantyRemitosPage() {
     setSelectedCodes(new Set());
     try {
       const res = await fetchAvailableWarrantiesForRemito(suc);
-      setAvailableWarranties(res.items);
+      setAvailableWarranties(Array.isArray(res.items) ? res.items : []);
     } catch {
       setAvailableWarranties([]);
     } finally {
@@ -458,12 +458,15 @@ export function WarrantyRemitosPage() {
   const generator = canGenerate();
   const dispatcher = canDispatch();
   const receiver = canReceive();
+  const remitos = useMemo<WarrantyRemitoInfo[]>(() => (Array.isArray(data?.items) ? data.items : []), [data]);
+  const totalRemitos = typeof data?.total === 'number' ? data.total : remitos.length;
+
   const stats = useMemo(() => ({
-    total: data?.total ?? 0,
-    pendientes: countByStatus(data?.items, 'pendiente'),
-    transito: countByStatus(data?.items, 'en_transito'),
-    llegados: countByStatus(data?.items, 'llegado'),
-  }), [data]);
+    total: totalRemitos,
+    pendientes: countByStatus(remitos, 'pendiente'),
+    transito: countByStatus(remitos, 'en_transito'),
+    llegados: countByStatus(remitos, 'llegado'),
+  }), [remitos, totalRemitos]);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4">
@@ -864,7 +867,7 @@ export function WarrantyRemitosPage() {
             <h2 className="flex items-center gap-2 text-lg font-black text-white">
               <Truck className="h-5 w-5 text-slate-400" />
               Seguimiento de remitos
-              {data && <span className="ml-1 text-sm font-normal text-slate-400">({data.total})</span>}
+              {data && <span className="ml-1 text-sm font-normal text-slate-400">({totalRemitos})</span>}
             </h2>
             <div className="lg:ml-auto flex flex-wrap items-center gap-2">
               <input
@@ -903,7 +906,7 @@ export function WarrantyRemitosPage() {
             </div>
           )}
 
-          {!loading && data?.items.length === 0 && (
+          {!loading && data && remitos.length === 0 && (
             <div className="rounded-2xl border border-slate-800 bg-slate-900 py-12 text-center text-slate-400">
               <Truck className="mx-auto mb-3 h-10 w-10 opacity-30" />
               <p>No hay remitos que coincidan con los filtros</p>
@@ -911,7 +914,7 @@ export function WarrantyRemitosPage() {
           )}
 
           <div className="space-y-3">
-            {data?.items.map((remito) => {
+            {remitos.map((remito) => {
               const isExp       = expanded[remito.remito_code] ?? false;
               const actLoad     = actionLoading[remito.remito_code] ?? false;
               const actErr      = actionError[remito.remito_code] ?? '';
