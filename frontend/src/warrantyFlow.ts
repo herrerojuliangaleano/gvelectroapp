@@ -93,6 +93,32 @@ const RESOLUTION_LABELS: Record<string, string> = {
   anulacion: 'Anulación',
 };
 
+export type DetailMode = 'editable' | 'operational' | 'readonly';
+
+export interface DetailStateConfig {
+  mode: DetailMode;
+  isFinal: boolean;
+  showProviderAlerts: boolean;
+  showReviewBlock: boolean;
+}
+
+const DETAIL_STATE_CONFIG_MAP: Record<string, DetailStateConfig> = {
+  '1 - INGRESO':               { mode: 'editable',     isFinal: false, showProviderAlerts: false, showReviewBlock: true  },
+  '2 - PENDIENTE':             { mode: 'operational',  isFinal: false, showProviderAlerts: false, showReviewBlock: false },
+  '3 - LISTO PARA ENVIAR':     { mode: 'operational',  isFinal: false, showProviderAlerts: true,  showReviewBlock: false },
+  '4 - ENVIADO AL PROVEEDOR':  { mode: 'operational',  isFinal: false, showProviderAlerts: true,  showReviewBlock: false },
+  '5 - EN EL PROVEEDOR':       { mode: 'operational',  isFinal: false, showProviderAlerts: true,  showReviewBlock: false },
+  '6 - RESPONDIDO POR PROVEEDOR': { mode: 'operational', isFinal: false, showProviderAlerts: true, showReviewBlock: false },
+  '7 - RESUELTO':              { mode: 'operational',  isFinal: false, showProviderAlerts: false, showReviewBlock: false },
+  '8 - RECHAZADO':             { mode: 'readonly',     isFinal: true,  showProviderAlerts: false, showReviewBlock: false },
+  '9 - ANULADA':               { mode: 'readonly',     isFinal: true,  showProviderAlerts: false, showReviewBlock: false },
+  '10 - FINALIZADO':           { mode: 'readonly',     isFinal: true,  showProviderAlerts: false, showReviewBlock: false },
+};
+
+export function getDetailStateConfig(estado?: string): DetailStateConfig {
+  return DETAIL_STATE_CONFIG_MAP[estado || ''] ?? { mode: 'operational', isFinal: false, showProviderAlerts: false, showReviewBlock: false };
+}
+
 export function getWarrantyStatusMeta(status?: string) {
   return STATUS_META[status || ''] || { label: status || 'Sin estado', shortLabel: status || 'Sin estado', tone: 'slate' as FlowTone, helper: 'Estado no reconocido. Revisar normalización.' };
 }
