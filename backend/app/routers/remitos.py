@@ -1254,16 +1254,17 @@ def dispatch_remito(
         # Actualizar transit_status en las garantías
         suc_origen = (data.lugar_salida or "").strip() or str(row["origen_sucursal"] or "")
         tipo_rem   = str(row["tipo_remito"] or "sucursal_a_deposito") if "tipo_remito" in row.keys() else "sucursal_a_deposito"
+        ubicacion_transito = "en_transito_proveedor" if tipo_rem == "deposito_a_proveedor" else "en_transito"
         for wcode in ids:
             g = conn.execute("SELECT id, warranty_code FROM guarantees WHERE warranty_code = ?", (wcode,)).fetchone()
             if g:
                 conn.execute(
                     """UPDATE guarantees SET transit_status = 'en_transito',
-                       ubicacion_actual = 'en_transito',
+                       ubicacion_actual = ?,
                        fecha_salida_transito = ?, lugar_salida_transito = ?,
                        updated_at = ?, updated_by = ?, updated_by_name = ?
                        WHERE warranty_code = ?""",
-                    (now, suc_origen, now, actor, actor_nm, wcode),
+                    (ubicacion_transito, now, suc_origen, now, actor, actor_nm, wcode),
                 )
                 add_history(conn, int(g["id"]), wcode, user, "remito_dispatch",
                             note=f"Remito {remito_code} despachado desde {suc_origen}",

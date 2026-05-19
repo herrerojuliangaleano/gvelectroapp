@@ -419,6 +419,10 @@ function currentLocationLabel(item: WarrantySummary) {
   if (item.transit_status === 'en_transito') {
     return `En tránsito a Depósito Chiclana${item.remito_interno ? ` · ${item.remito_interno}` : ''}`;
   }
+  // When the product is physically at the provider, append the provider name
+  if (item.ubicacion_actual === 'proveedor' && item.provider_name) {
+    return `En el proveedor — ${item.provider_name}`;
+  }
   if (item.ubicacion_actual_label || item.ubicacion_actual) {
     return item.ubicacion_actual_label || item.ubicacion_actual;
   }
@@ -629,26 +633,35 @@ function ManagementCard({
           )}
 
           {/* Location bar */}
-          <div className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold ${
-            item.transit_status === 'en_deposito'
+          {(() => {
+            const atProvider   = item.ubicacion_actual === 'proveedor';
+            const toProvider   = item.ubicacion_actual === 'en_transito_proveedor';
+            const inTransit    = item.transit_status === 'en_transito';
+            const inDeposit    = item.transit_status === 'en_deposito';
+            const cls = inDeposit
               ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'
-              : item.transit_status === 'en_transito'
+              : inTransit
               ? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
+              : atProvider
+              ? 'border-violet-500/30 bg-violet-500/10 text-violet-100'
               : logisticsBlocked
               ? 'border-orange-500/40 bg-orange-500/10 text-orange-100'
-              : 'border-slate-700 bg-slate-900 text-slate-200'
-          }`}>
-            {item.transit_status === 'en_deposito'
-              ? <CheckCircle2 size={15} />
-              : item.transit_status === 'en_transito'
-              ? <Truck size={15} />
-              : <AlertTriangle size={15} />}
-            <span>
-              {item.transit_status === 'en_deposito' && `En depósito · ${currentLocationLabel(item)}`}
-              {item.transit_status === 'en_transito' && `En tránsito al depósito · desde ${item.sucursal || '-'}`}
-              {!item.transit_status && `Lugar actual: ${currentLocationLabel(item)}`}
-            </span>
-          </div>
+              : 'border-slate-700 bg-slate-900 text-slate-200';
+            const Icon = inDeposit ? CheckCircle2 : (inTransit || atProvider) ? Truck : atProvider ? PackageCheck : AlertTriangle;
+            const text = inDeposit
+              ? `En depósito · ${currentLocationLabel(item)}`
+              : toProvider
+              ? `En tránsito al proveedor${item.provider_name ? ` — ${item.provider_name}` : ''}`
+              : inTransit
+              ? `En tránsito al depósito · desde ${item.sucursal || '-'}`
+              : `Lugar actual: ${currentLocationLabel(item)}`;
+            return (
+              <div className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold ${cls}`}>
+                <Icon size={15} />
+                <span>{text}</span>
+              </div>
+            );
+          })()}
 
           {/* Transport blocked alert */}
           {logisticsBlocked && (
