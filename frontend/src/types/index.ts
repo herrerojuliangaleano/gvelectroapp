@@ -1145,7 +1145,7 @@ export interface WarrantyRemitoInfo {
   id: number;
   remito_code: string;
   shipment_code: string;
-  tipo_remito?: 'sucursal_a_deposito' | 'deposito_a_deposito' | string;
+  tipo_remito?: 'sucursal_a_deposito' | 'deposito_a_deposito' | 'deposito_a_proveedor' | string;
   company_brand: string;
   company_name: string;
   origen_sucursal: string;
@@ -1206,6 +1206,27 @@ export interface DepositTransferOptions {
 export interface DepositTransferPayload {
   destino_deposito: string;
   warranty_codes: string[];
+  nota?: string;
+}
+
+export interface ProviderDeliveryWarranty {
+  warranty_code: string;
+  sucursal: string;
+  estado: string;
+  provider_name: string;
+  deposito: string;
+  estado_retiro_proveedor: string;
+  fecha_solicitud_retiro_proveedor: string;
+  producto: string;
+  sku: string;
+  serie: string;
+  falla: string;
+  marca: string;
+}
+
+export interface ProviderDeliveryPayload {
+  warranty_codes: string[];
+  proveedor: string;
   nota?: string;
 }
 

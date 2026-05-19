@@ -527,6 +527,15 @@ export async function downloadRemitoPdf(remitoCode: string): Promise<Blob> {
 export async function deleteRemito(remitoCode: string): Promise<{ ok: boolean; deleted: string; warranties_unlinked: number }> {
   return request(`/api/warranties/remitos/${encodeURIComponent(remitoCode)}`, { method: 'DELETE' });
 }
+export async function fetchAvailableWarrantiesForProviderDelivery(): Promise<{ items: import('../types').ProviderDeliveryWarranty[]; total: number }> {
+  return request('/api/warranties/remitos/provider-delivery/available-warranties');
+}
+export async function generateProviderDeliveryRemito(payload: import('../types').ProviderDeliveryPayload): Promise<{ ok: boolean; remitos: import('../types').WarrantyRemitoInfo[]; count: number }> {
+  const res = await request<{ ok: boolean; created: import('../types').WarrantyRemitoInfo[] }>(
+    '/api/warranties/remitos/provider-delivery/generate', { method: 'POST', body: JSON.stringify(payload) }
+  );
+  return { ok: res.ok, remitos: res.created, count: res.created.length };
+}
 
 export async function fetchBudgetOptions(): Promise<BudgetOptions> { return request('/api/budgets/options'); }
 export async function searchBudgetProducts(query: string): Promise<BudgetProduct[]> { return request(`/api/budgets/products?q=${encodeURIComponent(query)}&limit=20`); }

@@ -35,6 +35,7 @@ ALL_PERMISSIONS: dict[str, str] = {
     "warranties.remitos.dispatch": "Despachar remitos (marcar en tránsito)",
     "warranties.remitos.receive": "Confirmar llegada de remitos al depósito",
     "warranties.remitos.deposit_transfer": "Mover garantías entre depósitos",
+    "warranties.remitos.provider_delivery": "Generar remito de entrega a proveedor",
     "warranties.remitos.delete": "Eliminar remitos internos",
 
     "budgets.view": "Ver Presupuestos",
@@ -136,7 +137,7 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
         "level": 80,
         "permissions": [
             "dashboard.view", "profile.view", "employees.photo.upload_own", "payroll_receipts.view_own", "payroll_receipts.sign_own", "payroll_receipts.observe_own", "about.view", "system.status.view", "system.diagnostics.view", "system.diagnostics.repair",
-            "warranties.view", "warranties.create", "warranties.dashboard", "warranties.manage", "warranties.review", "warranties.mark_incomplete", "warranties.approve_review", "warranties.manage_provider", "warranties.change_status", "warranties.register_provider_response", "warranties.register_claim", "warranties.export", "warranties.sync_to_sheet", "warranties.sync_from_sheet", "warranties.sync_logs", "warranties.config", "warranties.reset_data", "warranties.cancel", "warranties.delete", "warranties.update", "warranties.counters", "warranties.remitos.view", "warranties.remitos.generate", "warranties.remitos.dispatch", "warranties.remitos.receive", "warranties.remitos.deposit_transfer", "warranties.remitos.delete",
+            "warranties.view", "warranties.create", "warranties.dashboard", "warranties.manage", "warranties.review", "warranties.mark_incomplete", "warranties.approve_review", "warranties.manage_provider", "warranties.change_status", "warranties.register_provider_response", "warranties.register_claim", "warranties.export", "warranties.sync_to_sheet", "warranties.sync_from_sheet", "warranties.sync_logs", "warranties.config", "warranties.reset_data", "warranties.cancel", "warranties.delete", "warranties.update", "warranties.counters", "warranties.remitos.view", "warranties.remitos.generate", "warranties.remitos.dispatch", "warranties.remitos.receive", "warranties.remitos.deposit_transfer", "warranties.remitos.provider_delivery", "warranties.remitos.delete",
             "budgets.view", "budgets.create", "budgets.save", "budgets.manage", "budgets.price_override",
             "products.view", "products.sync", "products.manage", "products.providers.manage",
             "sales_web.view", "sales_web.create", "sales_web.take", "sales_web.complete", "sales_web.send", "sales_web.cancel", "sales_web.cancel_own", "sales_web.branch_manage", "sales_web.manage", "sales_web.delete", "notifications.view", "push.subscribe",
@@ -152,7 +153,7 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
         "level": 60,
         "permissions": [
             "dashboard.view", "profile.view", "employees.photo.upload_own", "payroll_receipts.view_own", "payroll_receipts.sign_own", "payroll_receipts.observe_own", "about.view", "system.status.view", "system.diagnostics.view", "system.diagnostics.repair",
-            "warranties.view", "warranties.create", "warranties.dashboard", "warranties.manage", "warranties.review", "warranties.mark_incomplete", "warranties.approve_review", "warranties.manage_provider", "warranties.change_status", "warranties.register_provider_response", "warranties.register_claim", "warranties.export", "warranties.sync_to_sheet", "warranties.sync_from_sheet", "warranties.sync_logs", "warranties.config", "warranties.reset_data", "warranties.cancel", "warranties.delete", "warranties.update", "warranties.counters", "warranties.remitos.view", "warranties.remitos.generate", "warranties.remitos.dispatch", "warranties.remitos.receive", "warranties.remitos.deposit_transfer", "warranties.remitos.delete",
+            "warranties.view", "warranties.create", "warranties.dashboard", "warranties.manage", "warranties.review", "warranties.mark_incomplete", "warranties.approve_review", "warranties.manage_provider", "warranties.change_status", "warranties.register_provider_response", "warranties.register_claim", "warranties.export", "warranties.sync_to_sheet", "warranties.sync_from_sheet", "warranties.sync_logs", "warranties.config", "warranties.reset_data", "warranties.cancel", "warranties.delete", "warranties.update", "warranties.counters", "warranties.remitos.view", "warranties.remitos.generate", "warranties.remitos.dispatch", "warranties.remitos.receive", "warranties.remitos.deposit_transfer", "warranties.remitos.provider_delivery", "warranties.remitos.delete",
             "budgets.view", "budgets.create", "budgets.save",
             "products.view", "products.sync", "products.manage", "products.providers.manage",
             "sales_web.view", "sales_web.create", "sales_web.take", "sales_web.complete", "sales_web.send", "sales_web.cancel", "sales_web.cancel_own", "sales_web.branch_manage", "sales_web.manage", "notifications.view", "push.subscribe",
@@ -167,7 +168,7 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
         "level": 60,
         "permissions": [
             "dashboard.view", "profile.view", "employees.photo.upload_own", "payroll_receipts.view_own", "payroll_receipts.sign_own", "payroll_receipts.observe_own", "about.view", "system.status.view", "system.diagnostics.view", "system.diagnostics.repair",
-            "warranties.view", "warranties.create", "warranties.dashboard", "warranties.manage", "warranties.review", "warranties.mark_incomplete", "warranties.approve_review", "warranties.manage_provider", "warranties.change_status", "warranties.register_provider_response", "warranties.register_claim", "warranties.export", "warranties.sync_to_sheet", "warranties.sync_from_sheet", "warranties.sync_logs", "warranties.config", "warranties.reset_data", "warranties.cancel", "warranties.delete", "warranties.update", "warranties.counters", "warranties.remitos.view", "warranties.remitos.generate", "warranties.remitos.dispatch", "warranties.remitos.receive", "warranties.remitos.deposit_transfer", "warranties.remitos.delete",
+            "warranties.view", "warranties.create", "warranties.dashboard", "warranties.manage", "warranties.review", "warranties.mark_incomplete", "warranties.approve_review", "warranties.manage_provider", "warranties.change_status", "warranties.register_provider_response", "warranties.register_claim", "warranties.export", "warranties.sync_to_sheet", "warranties.sync_from_sheet", "warranties.sync_logs", "warranties.config", "warranties.reset_data", "warranties.cancel", "warranties.delete", "warranties.update", "warranties.counters", "warranties.remitos.view", "warranties.remitos.generate", "warranties.remitos.dispatch", "warranties.remitos.receive", "warranties.remitos.deposit_transfer", "warranties.remitos.provider_delivery", "warranties.remitos.delete",
             "budgets.view", "budgets.create", "budgets.save",
             "products.view", "products.sync", "products.manage", "products.providers.manage",
             "sales_web.view", "sales_web.create", "sales_web.take", "sales_web.complete", "sales_web.send", "sales_web.cancel", "sales_web.cancel_own", "sales_web.branch_manage", "sales_web.manage", "notifications.view", "notifications.manage", "push.subscribe",
@@ -192,6 +193,21 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
             "profile.view", "employees.photo.upload_own", "payroll_receipts.view_own", "payroll_receipts.sign_own", "payroll_receipts.observe_own", "about.view", "system.status.view",
             "budgets.view", "budgets.create", "budgets.save",
             "sales_web.view", "sales_web.create", "sales_web.send", "sales_web.complete", "sales_web.cancel", "sales_web.cancel_own", "notifications.view", "notifications.manage", "push.subscribe",
+        ],
+    },
+    "GESTOR_GARANTIAS": {
+        "label": "Gestor de Garantías",
+        "level": 50,
+        "permissions": [
+            "dashboard.view", "profile.view", "employees.photo.upload_own", "payroll_receipts.view_own", "payroll_receipts.sign_own", "payroll_receipts.observe_own", "about.view", "system.status.view",
+            # Garantías: revisión completa + gestión + logística
+            "warranties.view", "warranties.dashboard", "warranties.manage",
+            "warranties.review", "warranties.mark_incomplete", "warranties.approve_review",
+            "warranties.update", "warranties.cancel",
+            # Remitos: genera, despacha, recibe y entrega al proveedor
+            "warranties.remitos.view", "warranties.remitos.generate", "warranties.remitos.dispatch",
+            "warranties.remitos.receive", "warranties.remitos.provider_delivery",
+            "notifications.view", "push.subscribe",
         ],
     },
     "DEPOSITO": {
@@ -224,7 +240,7 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
 
 PERMISSION_GROUPS: dict[str, list[str]] = {
     "Inicio y sistema": ["dashboard.view", "profile.view", "employees.photo.upload_own", "about.view", "system.status.view", "system.manage", "system.diagnostics.view", "system.diagnostics.repair"],
-    "Garantías": ["warranties.view", "warranties.create", "warranties.dashboard", "warranties.manage", "warranties.review", "warranties.mark_incomplete", "warranties.approve_review", "warranties.manage_provider", "warranties.change_status", "warranties.register_provider_response", "warranties.register_claim", "warranties.export", "warranties.sync_to_sheet", "warranties.sync_from_sheet", "warranties.sync_logs", "warranties.config", "warranties.reset_data", "warranties.cancel", "warranties.delete", "warranties.update", "warranties.counters", "warranties.remitos.view", "warranties.remitos.generate", "warranties.remitos.dispatch", "warranties.remitos.receive", "warranties.remitos.deposit_transfer", "warranties.remitos.delete"],
+    "Garantías": ["warranties.view", "warranties.create", "warranties.dashboard", "warranties.manage", "warranties.review", "warranties.mark_incomplete", "warranties.approve_review", "warranties.manage_provider", "warranties.change_status", "warranties.register_provider_response", "warranties.register_claim", "warranties.export", "warranties.sync_to_sheet", "warranties.sync_from_sheet", "warranties.sync_logs", "warranties.config", "warranties.reset_data", "warranties.cancel", "warranties.delete", "warranties.update", "warranties.counters", "warranties.remitos.view", "warranties.remitos.generate", "warranties.remitos.dispatch", "warranties.remitos.receive", "warranties.remitos.deposit_transfer", "warranties.remitos.provider_delivery", "warranties.remitos.delete"],
     "Presupuestos": ["budgets.view", "budgets.create", "budgets.save", "budgets.manage", "budgets.price_override"],
     "Productos y proveedores": ["products.view", "products.sync", "products.manage", "products.providers.manage"],
     "Ventas": ["sales_web.view", "sales_web.create", "sales_web.take", "sales_web.complete", "sales_web.send", "sales_web.cancel", "sales_web.cancel_own", "sales_web.branch_manage", "sales_web.manage", "sales_web.delete"],

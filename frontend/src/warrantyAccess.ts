@@ -1,7 +1,7 @@
 import type { CurrentUser } from './types';
 import { can } from './api/client';
 
-const PRIVILEGED_ROLES = new Set(['SUPERADMIN', 'GERENTE', 'ADMINISTRADOR', 'ADMIN', 'GESTOR']);
+const PRIVILEGED_ROLES = new Set(['SUPERADMIN', 'GERENTE', 'ADMINISTRADOR', 'ADMIN', 'GESTOR', 'GESTOR_GARANTIAS']);
 
 export function roleKeys(user: CurrentUser | null | undefined): string[] {
   if (!user) return [];
@@ -60,4 +60,12 @@ export function canUseBranchDispatch(user: CurrentUser | null | undefined): bool
 
 export function canUseRemitosHub(user: CurrentUser | null | undefined): boolean {
   return can('warranties.remitos.view') || can('warranties.remitos.generate') || can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer');
+}
+
+export function canGenerateProviderDelivery(user: CurrentUser | null | undefined): boolean {
+  return !isPlainDepositOperator(user) && can('warranties.remitos.provider_delivery');
+}
+
+export function isGestorGarantias(user: CurrentUser | null | undefined): boolean {
+  return roleKeys(user).includes('GESTOR_GARANTIAS');
 }

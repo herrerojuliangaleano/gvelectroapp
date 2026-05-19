@@ -267,6 +267,12 @@ class DepositTransferRequest(BaseModel):
     nota: str | None = None
 
 
+class ProviderDeliveryRequest(BaseModel):
+    warranty_codes: list[str] = Field(min_length=1)
+    proveedor:      str = Field(min_length=1)
+    nota:           str | None = None
+
+
 class BatchPickupRequest(BaseModel):
     shipment_code:         str = Field(min_length=1)
     punto_retiro:          str = Field(min_length=1)
@@ -382,6 +388,28 @@ def _notify_remitos_view_users(title: str, message: str) -> None:
         pass
 
 
+def _notify_gestor_garantias(title: str, message: str) -> None:
+    """Notifica a usuarios con permiso warranties.remitos.provider_delivery (Gestores de Garantías)."""
+    try:
+        roles = load_roles()
+        users = load_users()
+        targets: list[str] = []
+        for user in users.values():
+            if not getattr(user, "is_active", True):
+                continue
+            perms: list[str] = []
+            for role_name in (getattr(user, "roles", None) or [getattr(user, "role", "")]):
+                role = roles.get(role_name)
+                if role:
+                    perms.extend(getattr(role, "permissions", []))
+            if has_permission(perms, "warranties.remitos.provider_delivery"):
+                targets.append(user.username)
+        if targets:
+            notify_many(targets, title, message, type_="warning")
+    except Exception:
+        pass
+
+
 def _require_any(user: Any, *permissions: str) -> None:
     if getattr(user, "must_change_password", False):
         raise HTTPException(403, "Tenés que crear tu contraseña antes de continuar")
@@ -400,6 +428,22 @@ def _user_deposit_name(user: Any) -> str:
 
 def _active_remito_codes(conn: sqlite3.Connection) -> set[str]:
     rows = conn.execute("SELECT warranty_ids_json FROM warranty_remitos WHERE status IN ('pendiente','en_transito')").fetchall()
+    active: set[str] = set()
+    for row in rows:
+        try:
+            for code in json.loads(str(row["warranty_ids_json"] or "[]")):
+                if str(code).strip():
+                    active.add(str(code).strip())
+        except Exception:
+            continue
+    return active
+
+
+def _active_provider_delivery_codes(conn: sqlite3.Connection) -> set[str]:
+    """Garantías que ya tienen un remito deposito_a_proveedor activo (pendiente o en tránsito)."""
+    rows = conn.execute(
+        "SELECT warranty_ids_json FROM warranty_remitos WHERE tipo_remito = 'deposito_a_proveedor' AND status IN ('pendiente','en_transito')"
+    ).fetchall()
     active: set[str] = set()
     for row in rows:
         try:
@@ -680,6 +724,150 @@ def generate_deposit_transfer_remito(
     return {"ok": True, "created": [row_to_remito(row_new, w_data)]}
 
 
+# ── Entrega al proveedor (deposito_a_proveedor) ───────────────────────────────
+
+@router.get("/provider-delivery/available-warranties")
+def available_warranties_for_provider_delivery(
+    user: Annotated[Any, Depends(require_current_user)],
+):
+    """Garantías listas para entregar al proveedor (estado_retiro_proveedor = listo_para_retiro)."""
+    _require_any(user, "warranties.remitos.provider_delivery")
+    with db_connect() as conn:
+        ensure_warranty_tables(conn)
+        ensure_remito_tables(conn)
+        active_codes = _active_provider_delivery_codes(conn)
+        rows = conn.execute(
+            """
+            SELECT g.warranty_code, g.sucursal, g.company_id, g.status, g.provider_name,
+                   g.deposito, g.lugar_llegada, g.ubicacion_actual,
+                   g.estado_retiro_proveedor, g.fecha_solicitud_retiro_proveedor,
+                   gi.producto, gi.sku, gi.serie, gi.falla, gi.marca
+            FROM guarantees g
+            LEFT JOIN guarantee_items gi ON gi.guarantee_id = g.id
+            WHERE (g.cancelled IS NULL OR g.cancelled = 0)
+              AND UPPER(COALESCE(g.status, '')) NOT IN ('9 - ANULADA', 'ANULADA', '10 - FINALIZADO', 'FINALIZADO')
+              AND g.estado_retiro_proveedor = 'listo_para_retiro'
+            ORDER BY g.provider_name, g.warranty_code, gi.id
+            """
+        ).fetchall()
+    seen: set[str] = set()
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        wc = str(row["warranty_code"])
+        if wc in seen or wc in active_codes:
+            continue
+        seen.add(wc)
+        deposito_actual = str(row["deposito"] or row["lugar_llegada"] or "")
+        items.append({
+            "warranty_code":                   wc,
+            "sucursal":                        str(row["sucursal"] or ""),
+            "estado":                          str(row["status"] or ""),
+            "provider_name":                   str(row["provider_name"] or ""),
+            "deposito":                        deposito_actual,
+            "estado_retiro_proveedor":         str(row["estado_retiro_proveedor"] or ""),
+            "fecha_solicitud_retiro_proveedor": str(row["fecha_solicitud_retiro_proveedor"] or ""),
+            "producto":                        str(row["producto"] or ""),
+            "sku":                             str(row["sku"] or ""),
+            "serie":                           str(row["serie"] or ""),
+            "falla":                           str(row["falla"] or ""),
+            "marca":                           str(row["marca"] or ""),
+        })
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/provider-delivery/generate")
+def generate_provider_delivery_remito(
+    data: ProviderDeliveryRequest,
+    user: Annotated[Any, Depends(require_current_user)],
+):
+    """Genera un remito de entrega al proveedor (depósito → proveedor)."""
+    _require_any(user, "warranties.remitos.provider_delivery")
+
+    codes = [str(c).strip() for c in (data.warranty_codes or []) if str(c).strip()]
+    if not codes:
+        raise HTTPException(400, "Seleccioná al menos una garantía para incluir.")
+    proveedor = data.proveedor.strip()
+    if not proveedor:
+        raise HTTPException(400, "Indicá el nombre del proveedor.")
+
+    now      = utc_now_iso()
+    actor    = getattr(user, "username", "") or ""
+    actor_nm = getattr(user, "display_name", "") or actor
+
+    with db_connect() as conn:
+        ensure_remito_tables(conn)
+        ensure_warranty_tables(conn)
+
+        active_codes = _active_provider_delivery_codes(conn)
+        blocked = [c for c in codes if c in active_codes]
+        if blocked:
+            raise HTTPException(400, "Hay garantías con remito de proveedor activo: " + ", ".join(blocked))
+
+        placeholders = ",".join("?" for _ in codes)
+        rows = conn.execute(
+            f"""
+            SELECT g.warranty_code, g.company_id, g.deposito, g.lugar_llegada,
+                   g.ubicacion_actual, g.estado_retiro_proveedor, g.status
+            FROM guarantees g
+            WHERE g.warranty_code IN ({placeholders})
+            """,
+            codes,
+        ).fetchall()
+        found = {str(r["warranty_code"]): r for r in rows}
+        missing = [c for c in codes if c not in found]
+        if missing:
+            raise HTTPException(400, "Garantías no encontradas: " + ", ".join(missing))
+
+        invalid: list[str] = []
+        company_id = ""
+        origen_deposito = ""
+        for code in codes:
+            row = found[code]
+            pickup = str(row["estado_retiro_proveedor"] or "")
+            st = str(row["status"] or "").upper()
+            if pickup != "listo_para_retiro" or st in {"9 - ANULADA", "ANULADA", "10 - FINALIZADO", "FINALIZADO"}:
+                invalid.append(code)
+            if not company_id and row["company_id"]:
+                company_id = str(row["company_id"] or "")
+            if not origen_deposito:
+                origen_deposito = str(row["deposito"] or row["lugar_llegada"] or "Depósito Central")
+        if invalid:
+            raise HTTPException(400, "Estas garantías no están listas para retiro del proveedor: " + ", ".join(invalid))
+
+        brand    = _resolve_remito_brand(conn, origen_deposito, company_id)
+        rem_code = next_remito_code(conn, brand)
+        conn.execute(
+            """INSERT INTO warranty_remitos
+                (remito_code, shipment_code, tipo_remito, company_brand, origen_sucursal,
+                 destino_deposito, warranty_ids_json, proveedor, status,
+                 nota, created_at, created_by, created_by_name)
+               VALUES (?, '', 'deposito_a_proveedor', ?, ?, ?, ?, ?, 'pendiente', ?, ?, ?, ?)""",
+            (rem_code, brand, origen_deposito, proveedor, json.dumps(codes), proveedor,
+             (data.nota or "").strip(), now, actor, actor_nm),
+        )
+        for wcode in codes:
+            g = conn.execute("SELECT id FROM guarantees WHERE warranty_code = ?", (wcode,)).fetchone()
+            conn.execute(
+                """UPDATE guarantees
+                   SET remito_interno = ?, updated_at = ?, updated_by = ?, updated_by_name = ?
+                   WHERE warranty_code = ?""",
+                (rem_code, now, actor, actor_nm, wcode),
+            )
+            if g:
+                add_history(
+                    conn, int(g["id"]), wcode, user, "provider_delivery_generated",
+                    note=f"Remito de entrega al proveedor {rem_code}: {origen_deposito} → {proveedor}",
+                    details={"remito": rem_code, "proveedor": proveedor},
+                )
+        row_new = conn.execute("SELECT * FROM warranty_remitos WHERE remito_code = ?", (rem_code,)).fetchone()
+        w_data  = load_warranties_for_ids(conn, codes)
+        conn.commit()
+
+    audit("warranties.remitos.provider_delivery", user=user, resource_type="warranty_remito", resource_id=rem_code,
+          details={"proveedor": proveedor, "origen": origen_deposito, "cantidad": len(codes)})
+    return {"ok": True, "created": [row_to_remito(row_new, w_data)]}
+
+
 @router.post("/generate")
 def generate_remitos(
     data: GenerateRemitosRequest,
@@ -858,7 +1046,8 @@ def _confirm_arrival_update(
     except Exception:
         ids = []
 
-    destino = data.lugar_llegada.strip() if data.lugar_llegada else str(row["destino_deposito"] or "")
+    destino  = data.lugar_llegada.strip() if data.lugar_llegada else str(row["destino_deposito"] or "")
+    tipo_rem = str(row["tipo_remito"] or "sucursal_a_deposito") if "tipo_remito" in row.keys() else "sucursal_a_deposito"
 
     conn.execute(
         """UPDATE warranty_remitos
@@ -871,18 +1060,33 @@ def _confirm_arrival_update(
     for wcode in ids:
         g = conn.execute("SELECT id FROM guarantees WHERE warranty_code = ?", (wcode,)).fetchone()
         if g:
-            conn.execute(
-                """UPDATE guarantees
-                   SET transit_status = 'en_deposito', lugar_llegada = ?,
-                       deposito = ?, ubicacion_actual = ?,
-                       fecha_llegada_transito = ?,
-                       updated_at = ?, updated_by = ?, updated_by_name = ?
-                   WHERE warranty_code = ?""",
-                (destino, destino, destino or "deposito", now, now, actor, actor_nm, wcode),
-            )
-            add_history(conn, int(g["id"]), wcode, user, "remito_arrival",
-                        note=f"Remito {remito_code} confirmado en {destino}",
-                        details={"remito": remito_code, "destino": destino})
+            if tipo_rem == "deposito_a_proveedor":
+                # El producto llegó al proveedor: marcar como retirado y ubicación = proveedor
+                conn.execute(
+                    """UPDATE guarantees
+                       SET transit_status = '', estado_retiro_proveedor = 'retirado',
+                           ubicacion_actual = 'proveedor',
+                           fecha_llegada_transito = ?,
+                           updated_at = ?, updated_by = ?, updated_by_name = ?
+                       WHERE warranty_code = ?""",
+                    (now, now, actor, actor_nm, wcode),
+                )
+                add_history(conn, int(g["id"]), wcode, user, "provider_delivery_confirmed",
+                            note=f"Remito {remito_code} confirmado: producto entregado a {destino}",
+                            details={"remito": remito_code, "proveedor": destino})
+            else:
+                conn.execute(
+                    """UPDATE guarantees
+                       SET transit_status = 'en_deposito', lugar_llegada = ?,
+                           deposito = ?, ubicacion_actual = ?,
+                           fecha_llegada_transito = ?,
+                           updated_at = ?, updated_by = ?, updated_by_name = ?
+                       WHERE warranty_code = ?""",
+                    (destino, destino, destino or "deposito", now, now, actor, actor_nm, wcode),
+                )
+                add_history(conn, int(g["id"]), wcode, user, "remito_arrival",
+                            note=f"Remito {remito_code} confirmado en {destino}",
+                            details={"remito": remito_code, "destino": destino})
 
     return {"ok": True, "remito_code": remito_code, "status": "llegado", "destino": destino, "lote_consolidado": False}
 
@@ -1029,6 +1233,7 @@ def dispatch_remito(
 
         # Actualizar transit_status en las garantías
         suc_origen = (data.lugar_salida or "").strip() or str(row["origen_sucursal"] or "")
+        tipo_rem   = str(row["tipo_remito"] or "sucursal_a_deposito") if "tipo_remito" in row.keys() else "sucursal_a_deposito"
         for wcode in ids:
             g = conn.execute("SELECT id, warranty_code FROM guarantees WHERE warranty_code = ?", (wcode,)).fetchone()
             if g:
@@ -1044,6 +1249,19 @@ def dispatch_remito(
                             note=f"Remito {remito_code} despachado desde {suc_origen}",
                             details={"remito": remito_code})
         conn.commit()
+
+    # Notificar al Gestor de Garantías sobre movimientos en tránsito
+    destino_disp = str(row["destino_deposito"] or "")
+    if tipo_rem in ("sucursal_a_deposito", "deposito_a_deposito"):
+        _notify_gestor_garantias(
+            "🚚 Remito en tránsito",
+            f"Remito {remito_code} ({len(ids)} garantía(s)) salió desde {suc_origen} hacia {destino_disp}.",
+        )
+    elif tipo_rem == "deposito_a_proveedor":
+        _notify_gestor_garantias(
+            "🏭 Entrega al proveedor en camino",
+            f"Remito {remito_code} ({len(ids)} garantía(s)) despachado hacia {destino_disp}.",
+        )
 
     audit("warranties.remito.dispatch", user=user, resource_type="warranty_remito", resource_id=remito_code)
     return {"ok": True, "remito_code": remito_code, "status": "en_transito"}

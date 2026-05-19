@@ -32,7 +32,10 @@ from ..auth import require_current_user, require_permission
 from ..config import get_settings
 from ..google_sheets import quote_sheet_name, sheets_service
 from ..operational_config import runtime_warranty_config, load_operational_config, save_operational_config
+from ..permissions import has_permission
 from ..product_catalog import search_products as search_local_products, get_provider_for_brand, ensure_product_catalog_tables, runtime_product_catalog_config
+from ..users import load_roles, load_users
+from .notifications import notify_many
 
 router = APIRouter(prefix="/api/warranties", tags=["warranties"])
 
@@ -1356,6 +1359,28 @@ def _derive_sucursal_fields(item: "WarrantyItemIn", user: Any, is_vendedor_sucur
 
     # falla_recepcion_mercaderia, stock_interno, otro → depósito es carga y responsable
     return user_branch, suc_resp or user_branch
+
+
+def _notify_gestor_garantias_pickup(title: str, message: str) -> None:
+    """Notifica a usuarios con warranties.remitos.provider_delivery cuando se necesita acción urgente de logística."""
+    try:
+        roles = load_roles()
+        users_map = load_users()
+        targets: list[str] = []
+        for u in users_map.values():
+            if not getattr(u, "is_active", True):
+                continue
+            perms: list[str] = []
+            for role_name in (getattr(u, "roles", None) or [getattr(u, "role", "")]):
+                role = roles.get(role_name)
+                if role:
+                    perms.extend(getattr(role, "permissions", []))
+            if has_permission(perms, "warranties.remitos.provider_delivery"):
+                targets.append(u.username)
+        if targets:
+            notify_many(targets, title, message, type_="warning")
+    except Exception:
+        pass  # notificaciones no son críticas
 
 
 def is_provider_waiting_closed_status(status_value: str) -> bool:
@@ -4540,6 +4565,14 @@ def register_provider_pickup_request(warranty_id: str, data: ProviderPickupReque
             details={"pickup_status": pickup_status, "fecha_retiro_acordada": data.fecha_retiro_acordada or ""},
         )
         conn.commit()
+
+    # Alerta al Gestor de Garantías cuando el producto aún NO está en el depósito
+    if pickup_status == "retiro_solicitado":
+        _notify_gestor_garantias_pickup(
+            "⚠️ Retiro urgente pendiente",
+            f"El proveedor solicitó retiro de la garantía {warranty_id} pero el producto no está en depósito. Coordinar traslado urgente.",
+        )
+
     audit("warranties.provider.pickup_requested", user=user, resource_type="warranty", resource_id=warranty_id, details={"pickup_status": pickup_status})
     return get_warranty_detail(warranty_id, user)
 

@@ -26,28 +26,32 @@ import {
   downloadRemitoPdf,
   fetchAvailableWarrantiesForRemito,
   fetchAvailableWarrantiesForDepositTransfer,
+  fetchAvailableWarrantiesForProviderDelivery,
   fetchDepositTransferOptions,
   fetchRemitos,
   fetchWarrantyOptions,
   generateDepositTransferRemito,
+  generateProviderDeliveryRemito,
   generateRemitos,
   getCurrentUserFromStorage,
 } from '../api/client';
 import type {
   AvailableWarrantyForRemito,
+  ProviderDeliveryWarranty,
   WarrantyOptions,
   WarrantyRemitoInfo,
   WarrantyRemitosResponse,
 } from '../types';
 
 // ── Permisos ──────────────────────────────────────────────────────────────────
-const canView     = () => can('warranties.remitos.view')     || can('warranties.remitos.generate') || can('warranties.remitos.dispatch') || can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer');
-const canFollow   = () => can('warranties.remitos.view');
-const canGenerate = () => can('warranties.remitos.generate');
-const canDispatch = () => can('warranties.remitos.dispatch');
-const canReceive  = () => can('warranties.remitos.receive');
-const canDepositTransfer = () => can('warranties.remitos.deposit_transfer');
-const canDelete   = () => can('warranties.remitos.delete');
+const canView             = () => can('warranties.remitos.view')     || can('warranties.remitos.generate') || can('warranties.remitos.dispatch') || can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer');
+const canFollow           = () => can('warranties.remitos.view');
+const canGenerate         = () => can('warranties.remitos.generate');
+const canDispatch         = () => can('warranties.remitos.dispatch');
+const canReceive          = () => can('warranties.remitos.receive');
+const canDepositTransfer  = () => can('warranties.remitos.deposit_transfer');
+const canDelete           = () => can('warranties.remitos.delete');
+const canProviderDelivery = () => can('warranties.remitos.provider_delivery');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -145,6 +149,15 @@ export function WarrantyRemitosPage() {
   const [transferError, setTransferError] = useState('');
   const [transferResult, setTransferResult] = useState<{ count: number; remitos: WarrantyRemitoInfo[] } | null>(null);
 
+  // Entrega al proveedor (deposito_a_proveedor)
+  const [pdWarranties, setPdWarranties]             = useState<ProviderDeliveryWarranty[]>([]);
+  const [pdLoading, setPdLoading]                   = useState(false);
+  const [pdError, setPdError]                       = useState('');
+  const [pdResult, setPdResult]                     = useState<{ count: number; remitos: WarrantyRemitoInfo[] } | null>(null);
+  const [pdSelected, setPdSelected]                 = useState<Set<string>>(new Set());
+  const [pdFilterProvider, setPdFilterProvider]     = useState('');
+  const [pdNota, setPdNota]                         = useState('');
+
   // Quick-accept
   const [quickCode, setQuickCode] = useState('');
   const [quickLugar, setQuickLugar] = useState('');
@@ -187,6 +200,7 @@ export function WarrantyRemitosPage() {
     }).catch(() => {});
     if (canFollow()) load();
     if (canDepositTransfer()) loadDepositTransfer();
+    if (canProviderDelivery()) loadProviderDelivery();
   }, []);
 
   async function load() {
@@ -274,6 +288,76 @@ export function WarrantyRemitosPage() {
     } finally {
       setTransferLoading(false);
     }
+  }
+
+  async function loadProviderDelivery() {
+    setPdLoading(true);
+    setPdError('');
+    try {
+      const res = await fetchAvailableWarrantiesForProviderDelivery();
+      setPdWarranties(Array.isArray(res.items) ? res.items : []);
+      setPdSelected(new Set());
+    } catch (e: unknown) {
+      setPdError((e as Error).message || 'No se pudieron cargar las garantías listas para proveedor');
+    } finally {
+      setPdLoading(false);
+    }
+  }
+
+  async function handleProviderDelivery(e: FormEvent) {
+    e.preventDefault();
+    if (pdSelected.size === 0) {
+      setPdError('Seleccioná al menos una garantía para incluir.');
+      return;
+    }
+    // Infer provider from selected warranties
+    const selectedWarranties = pdWarranties.filter((w) => pdSelected.has(w.warranty_code));
+    const proveedores = [...new Set(selectedWarranties.map((w) => w.provider_name).filter(Boolean))];
+    if (proveedores.length !== 1) {
+      setPdError('Seleccioná garantías de un solo proveedor por remito.');
+      return;
+    }
+    const proveedor = proveedores[0];
+    setPdLoading(true);
+    setPdError('');
+    setPdResult(null);
+    try {
+      const res = await generateProviderDeliveryRemito({
+        warranty_codes: Array.from(pdSelected),
+        proveedor,
+        nota: pdNota.trim() || undefined,
+      });
+      setPdResult({ count: res.count, remitos: res.remitos });
+      setPdNota('');
+      setPdSelected(new Set());
+      await loadProviderDelivery();
+      if (canFollow()) load();
+    } catch (e: unknown) {
+      setPdError((e as Error).message || 'Error al generar el remito de entrega');
+    } finally {
+      setPdLoading(false);
+    }
+  }
+
+  function togglePdCode(code: string) {
+    setPdSelected((prev) => {
+      const next = new Set(prev);
+      next.has(code) ? next.delete(code) : next.add(code);
+      return next;
+    });
+  }
+
+  function togglePdAll(codes: string[]) {
+    setPdSelected((prev) => {
+      if (codes.every((c) => prev.has(c))) {
+        const next = new Set(prev);
+        codes.forEach((c) => next.delete(c));
+        return next;
+      }
+      const next = new Set(prev);
+      codes.forEach((c) => next.add(c));
+      return next;
+    });
   }
 
   async function handleDepositTransfer(e: FormEvent) {
@@ -458,6 +542,23 @@ export function WarrantyRemitosPage() {
   const generator = canGenerate();
   const dispatcher = canDispatch();
   const receiver = canReceive();
+  const providerDelivery = canProviderDelivery();
+
+  // Garantías agrupadas por proveedor para el flujo de entrega al proveedor
+  const pdProviders = useMemo(() => {
+    const map = new Map<string, ProviderDeliveryWarranty[]>();
+    for (const w of pdWarranties) {
+      const key = w.provider_name || 'Sin proveedor';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(w);
+    }
+    return map;
+  }, [pdWarranties]);
+
+  const pdFilteredWarranties = useMemo(
+    () => (pdFilterProvider ? (pdProviders.get(pdFilterProvider) ?? []) : pdWarranties),
+    [pdFilterProvider, pdProviders, pdWarranties],
+  );
   const remitos = useMemo<WarrantyRemitoInfo[]>(() => (Array.isArray(data?.items) ? data.items : []), [data]);
   const totalRemitos = typeof data?.total === 'number' ? data.total : remitos.length;
 
@@ -487,6 +588,7 @@ export function WarrantyRemitosPage() {
                 {dispatcher && <span className="rounded-full bg-amber-500/20 px-3 py-1 font-semibold text-amber-200">Despacho</span>}
                 {receiver  && <span className="rounded-full bg-emerald-500/20 px-3 py-1 font-semibold text-emerald-200">Recepción</span>}
                 {depositTransfer && <span className="rounded-full bg-cyan-500/20 px-3 py-1 font-semibold text-cyan-200">Movimiento depósito</span>}
+                {providerDelivery && <span className="rounded-full bg-violet-500/20 px-3 py-1 font-semibold text-violet-200">Entrega proveedor</span>}
               </div>
             </div>
           </div>
@@ -667,6 +769,148 @@ export function WarrantyRemitosPage() {
             )}
             <button type="submit" disabled={transferLoading || !transferDestino.trim() || transferSelected.size === 0} className="rounded-2xl bg-cyan-600 px-5 py-3 text-sm font-black text-white hover:bg-cyan-500 disabled:opacity-50">
               {transferLoading ? <RefreshCw className="mr-2 inline h-4 w-4 animate-spin" /> : <Truck className="mr-2 inline h-4 w-4" />}Generar movimiento interno
+            </button>
+          </form>
+        </section>
+      )}
+
+      {/* Entrega al proveedor */}
+      {providerDelivery && (
+        <section className="rounded-3xl border border-violet-500/30 bg-slate-950 p-5 shadow-xl shadow-violet-950/10">
+          <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h2 className="flex items-center gap-2 text-lg font-black text-violet-200">
+                <Building2 className="h-5 w-5" />
+                Entrega al proveedor
+              </h2>
+              <p className="mt-1 text-sm text-slate-400">
+                Generá un remito para acompañar el traslado físico de garantías desde el depósito al proveedor. Solo aparecen garantías con retiro confirmado como listo.
+              </p>
+            </div>
+            <button type="button" onClick={loadProviderDelivery} disabled={pdLoading} className="rounded-2xl border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-bold text-slate-100 hover:bg-slate-700 disabled:opacity-50">
+              <RefreshCw className={`mr-2 inline h-4 w-4 ${pdLoading ? 'animate-spin' : ''}`} />Actualizar
+            </button>
+          </div>
+
+          <form onSubmit={handleProviderDelivery} className="space-y-4">
+            {/* Filtro por proveedor */}
+            {pdProviders.size > 1 && (
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-semibold text-slate-400">Filtrar por proveedor</label>
+                <select
+                  className="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm text-white focus:border-violet-500 focus:outline-none"
+                  value={pdFilterProvider}
+                  onChange={(e) => { setPdFilterProvider(e.target.value); setPdSelected(new Set()); }}
+                >
+                  <option value="">— Todos los proveedores ({pdWarranties.length}) —</option>
+                  {[...pdProviders.entries()].map(([prov, items]) => (
+                    <option key={prov} value={prov}>{prov} ({items.length})</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {pdLoading && (
+              <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-4 text-sm text-slate-400">
+                <RefreshCw className="mr-2 inline h-4 w-4 animate-spin" />Cargando garantías listas para proveedor...
+              </div>
+            )}
+
+            {!pdLoading && pdFilteredWarranties.length > 0 && (
+              <div className="overflow-hidden rounded-2xl border border-slate-700 bg-slate-900/70">
+                <div className="flex flex-col gap-2 border-b border-slate-700 px-4 py-3 sm:flex-row sm:items-center">
+                  <label className="flex cursor-pointer items-center gap-3">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-violet-500"
+                      checked={pdFilteredWarranties.every((w) => pdSelected.has(w.warranty_code))}
+                      onChange={() => togglePdAll(pdFilteredWarranties.map((w) => w.warranty_code))}
+                    />
+                    <span className="text-sm font-bold text-white">
+                      {pdSelected.size > 0 ? `${pdSelected.size} seleccionada(s)` : `${pdFilteredWarranties.length} garantía(s) listas para retiro`}
+                    </span>
+                  </label>
+                  <span className="text-xs text-violet-300/60 sm:ml-auto">
+                    <MapPin className="mr-1 inline h-3 w-3" />En depósito · Proveedor confirmó retiro
+                  </span>
+                </div>
+                <div className="max-h-72 overflow-y-auto divide-y divide-slate-800">
+                  {pdFilteredWarranties.map((w) => (
+                    <label key={`pd-${w.warranty_code}`} className={`flex cursor-pointer items-start gap-3 px-4 py-3 hover:bg-slate-800/70 ${pdSelected.has(w.warranty_code) ? 'bg-violet-950/30' : ''}`}>
+                      <input type="checkbox" className="mt-1 h-4 w-4 accent-violet-500" checked={pdSelected.has(w.warranty_code)} onChange={() => togglePdCode(w.warranty_code)} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-xs font-black text-white">{w.warranty_code}</span>
+                          {w.provider_name && <span className="rounded-full bg-violet-500/20 px-2 py-0.5 text-[10px] font-semibold text-violet-300">{w.provider_name}</span>}
+                          {w.marca && <span className="text-[10px] uppercase tracking-wide text-slate-500">{w.marca}</span>}
+                          {w.deposito && <span className="text-[10px] text-slate-500"><MapPin className="mr-0.5 inline h-3 w-3" />{w.deposito}</span>}
+                        </div>
+                        <div className="mt-1 text-sm text-slate-300">{w.producto || 'Producto sin nombre'}</div>
+                        <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+                          {w.sku && <span>SKU: {w.sku}</span>}
+                          {w.serie && <span>Serie: {w.serie}</span>}
+                          {w.falla && <span>Falla: {w.falla}</span>}
+                        </div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {!pdLoading && pdWarranties.length === 0 && (
+              <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-4 text-sm text-slate-400">
+                No hay garantías listas para entrega al proveedor en este momento.
+              </div>
+            )}
+
+            <label className="flex flex-col gap-1">
+              <span className="text-xs font-semibold text-slate-400">Nota para el remito (opcional)</span>
+              <input
+                className="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm text-white placeholder:text-slate-500 focus:border-violet-500 focus:outline-none"
+                placeholder="Ej: urgente, coordinar con técnico"
+                value={pdNota}
+                onChange={(e) => setPdNota(e.target.value)}
+              />
+            </label>
+
+            {pdError && (
+              <div className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+                <AlertTriangle className="h-4 w-4 shrink-0" />{pdError}
+              </div>
+            )}
+
+            {pdResult && (
+              <div className="rounded-2xl border border-violet-500/30 bg-violet-500/10 p-4 text-sm text-violet-100">
+                <div className="mb-3 font-bold"><CheckCircle2 className="mr-2 inline h-4 w-4" />{pdResult.count} remito(s) de entrega generado(s)</div>
+                <div className="space-y-2">
+                  {pdResult.remitos.map((r) => (
+                    <div key={`pd-result-${r.remito_code}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-violet-500/20 bg-slate-950 px-3 py-2">
+                      <div>
+                        <span className="font-mono text-sm font-black text-white">{r.remito_code}</span>
+                        <span className="ml-3 text-xs text-slate-400">{r.origen_sucursal} <ArrowRight className="inline h-3 w-3" /> {r.destino_deposito}</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => handleDownloadPdf(r.remito_code)} className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-violet-500">
+                          <Download className="h-3.5 w-3.5" /> PDF
+                        </button>
+                        <button type="button" onClick={() => printRemitoPdf(r.remito_code)} className="flex items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700">
+                          <Printer className="h-3.5 w-3.5" /> Imprimir
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={pdLoading || pdSelected.size === 0}
+              className="rounded-2xl bg-violet-600 px-5 py-3 text-sm font-black text-white hover:bg-violet-500 disabled:opacity-50"
+            >
+              {pdLoading ? <RefreshCw className="mr-2 inline h-4 w-4 animate-spin" /> : <Send className="mr-2 inline h-4 w-4" />}
+              Generar remito de entrega al proveedor
             </button>
           </form>
         </section>
