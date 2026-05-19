@@ -1,10 +1,15 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, ArrowRight, Building2, CheckCircle2, Clock, FileCheck2, Filter, MessageSquareReply, PackageCheck, RefreshCw, Search, Send, ShieldCheck, Truck } from 'lucide-react';
+import {
+  AlertTriangle, ArrowRight, Building2, CheckCircle2, Clock,
+  FileCheck2, Filter, History, MessageSquareReply, PackageCheck,
+  RefreshCw, Search, Send, ShieldCheck, Truck,
+} from 'lucide-react';
 import {
   can,
   changeWarrantyStatus,
   confirmWarrantyShipment,
+  fetchWarrantyDetail,
   fetchWarrantyManagement,
   fetchWarrantyOptions,
   registerWarrantyClaim,
@@ -13,14 +18,12 @@ import {
   registerWarrantyProviderPickupRequest,
   sendWarrantyToProvider,
 } from '../api/client';
-import type { WarrantyListResponse, WarrantyOptions, WarrantySummary } from '../types';
+import type { AuditEvent, WarrantyListResponse, WarrantyOptions, WarrantySummary } from '../types';
 import { CANONICAL_WARRANTY_STATUSES, flowToneClass, getWarrantyNextStep, getWarrantyStatusMeta } from '../warrantyFlow';
 
 const PROVIDER_STATUSES = CANONICAL_WARRANTY_STATUSES.filter((status) => status !== '1 - INGRESO');
-
 const FINAL_STATUSES = ['10 - FINALIZADO'];
 
-// Opciones de resultado_resolucion cuando estado = "7 - RESUELTO"
 const RESOLUTION_TYPES: { value: string; label: string; helper: string }[] = [
   { value: 'nota_credito', label: 'Nota de crédito', helper: 'Proveedor reconoce el caso con NC. Después se finaliza cuando la NC queda aplicada/cerrada.' },
   { value: 'reparacion', label: 'Reparación', helper: 'Proveedor repara el mismo equipo. Después se finaliza cuando el equipo vuelve/se entrega.' },
@@ -77,8 +80,7 @@ function emptyAction(item?: WarrantySummary): ActionState {
   };
 }
 
-// Cuando el estado es "8 - RECHAZADO" pedimos solo motivo (sin sub-tipo)
-const REJECT_FIELDS = { noteLabel: 'Motivo del rechazo', notePlaceholder: 'Ej. Daño por mal uso del usuario, fuera de garantía por humedad' };
+const REJECT_FIELDS = { notePlaceholder: 'Ej. Daño por mal uso del usuario, fuera de garantía por humedad' };
 
 function delayClass(days?: number | null) {
   const d = Number(days || 0);
@@ -86,6 +88,43 @@ function delayClass(days?: number | null) {
   if (d >= 7) return 'border-amber-500/40 bg-amber-500/10 text-amber-100';
   return 'border-slate-700 bg-slate-900 text-slate-200';
 }
+
+// Action pill styles
+const ACTION_PILL_ACTIVE: Record<string, string> = {
+  green:   'border-emerald-400 bg-emerald-500 text-white',
+  red:     'border-red-400 bg-red-500 text-white',
+  blue:    'border-blue-400 bg-blue-500 text-white',
+  amber:   'border-amber-400 bg-amber-500 text-white',
+  slate:   'border-slate-400 bg-slate-600 text-white',
+};
+const ACTION_PILL_INACTIVE: Record<string, string> = {
+  green:   'border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10',
+  red:     'border-red-500/40 text-red-300 hover:bg-red-500/10',
+  blue:    'border-blue-500/40 text-blue-300 hover:bg-blue-500/10',
+  amber:   'border-amber-500/40 text-amber-300 hover:bg-amber-500/10',
+  slate:   'border-slate-600 text-slate-300 hover:bg-slate-800',
+};
+
+// History event human-readable labels
+const HISTORY_EVENT_LABELS: Record<string, string> = {
+  status_change:                'Cambio de estado',
+  review_approved:              'Revisión aprobada',
+  review_started:               'Revisión iniciada',
+  review_incomplete:            'Corrección solicitada',
+  sent_to_provider:             'Enviado al proveedor',
+  provider_response_registered: 'Respuesta del proveedor',
+  provider_pickup_requested:    'Retiro solicitado',
+  claim_registered:             'Reclamo registrado',
+  provider_mail_resent:         'Mail reenviado',
+  shipment_confirmed:           'Envío al proveedor confirmado',
+  provider_delivery_generated:  'Remito entrega proveedor generado',
+  provider_delivery_confirmed:  'Entrega al proveedor confirmada',
+  created:                      'Garantía creada',
+  cancelled:                    'Garantía anulada',
+  entry_updated:                'Datos actualizados',
+  remito_dispatched:            'Remito despachado',
+  remito_arrived:               'Remito recibido',
+};
 
 export function WarrantyManagementPage() {
   const [options, setOptions] = useState<WarrantyOptions | null>(null);
@@ -184,7 +223,7 @@ export function WarrantyManagementPage() {
           provider_case_id: state.provider_case_id.trim() || undefined,
           note: state.response_note.trim() || undefined,
         });
-        setMessage('Retiro solicitado por proveedor registrado. Si no está en Chiclana, queda como urgente para traer.');
+        setMessage('Retiro solicitado por proveedor registrado.');
       }
       if (type === 'claim') {
         await registerWarrantyClaim(id, { note: state.claim_note.trim() });
@@ -271,11 +310,11 @@ export function WarrantyManagementPage() {
               <input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} placeholder="ID, SKU, serie, producto..." className="w-full rounded-xl border border-slate-700 bg-slate-900 py-3 pl-10 pr-4 outline-none focus:border-blue-400" />
             </div>
           </label>
-          <Text label="Marca" value={filters.marca} onChange={(v) => setFilters({ ...filters, marca: v })} placeholder="Ej. Samsung" />
-          <Text label="Proveedor" value={filters.proveedor} onChange={(v) => setFilters({ ...filters, proveedor: v })} placeholder="Proveedor" />
-          <Select label="Sucursal" value={filters.sucursal} onChange={(v) => setFilters({ ...filters, sucursal: v })} options={options?.sucursales || []} />
-          <Select label="Estado" value={filters.estado} onChange={(v) => setFilters({ ...filters, estado: v })} options={estados} />
-          <Select label="Demora" value={filters.demora_min} onChange={(v) => setFilters({ ...filters, demora_min: v })} options={[['7', '+7 días sin respuesta'], ['15', '+15 días sin respuesta'], ['30', '+30 días sin respuesta']]} />
+          <FText label="Marca" value={filters.marca} onChange={(v) => setFilters({ ...filters, marca: v })} placeholder="Ej. Samsung" />
+          <FText label="Proveedor" value={filters.proveedor} onChange={(v) => setFilters({ ...filters, proveedor: v })} placeholder="Proveedor" />
+          <FSelect label="Sucursal" value={filters.sucursal} onChange={(v) => setFilters({ ...filters, sucursal: v })} options={options?.sucursales || []} />
+          <FSelect label="Estado" value={filters.estado} onChange={(v) => setFilters({ ...filters, estado: v })} options={estados} />
+          <FSelect label="Demora" value={filters.demora_min} onChange={(v) => setFilters({ ...filters, demora_min: v })} options={[['7', '+7 días'], ['15', '+15 días'], ['30', '+30 días']]} />
         </div>
         <button className="mt-4 rounded-xl bg-blue-500 px-5 py-3 font-black text-white hover:bg-blue-400">Aplicar filtros</button>
       </form>
@@ -304,7 +343,7 @@ function Kpi({ title, value, tone = 'base' }: { title: string; value: number; to
   return <div className={`rounded-3xl border p-4 ${cls}`}><div className="text-xs font-black uppercase tracking-wide text-slate-500">{title}</div><div className="mt-1 text-3xl font-black text-white">{value}</div></div>;
 }
 
-function Text({ label, value, onChange, placeholder = '' }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+function FText({ label, value, onChange, placeholder = '' }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
   return (
     <label>
       <span className="mb-2 block text-sm font-semibold text-slate-300">{label}</span>
@@ -313,7 +352,7 @@ function Text({ label, value, onChange, placeholder = '' }: { label: string; val
   );
 }
 
-function Select({ label, value, options, onChange }: { label: string; value: string; options: string[] | [string, string][]; onChange: (v: string) => void }) {
+function FSelect({ label, value, options, onChange }: { label: string; value: string; options: string[] | [string, string][]; onChange: (v: string) => void }) {
   return (
     <label>
       <span className="mb-2 block text-sm font-semibold text-slate-300">{label}</span>
@@ -325,15 +364,50 @@ function Select({ label, value, options, onChange }: { label: string; value: str
   );
 }
 
+// ── Small helpers ────────────────────────────────────────────────────────────
+
+function MetaItem({ label, value }: { label: string; value?: string | null }) {
+  return (
+    <span className="text-sm text-slate-300">
+      <span className="mr-1 text-slate-500">{label}:</span>
+      {value || '—'}
+    </span>
+  );
+}
+
+function HistoryRow({ event }: { event: AuditEvent }) {
+  const label = HISTORY_EVENT_LABELS[event.event_type] || event.event_type;
+  const newStatus = event.event_type === 'status_change'
+    ? ((event.details?.new_status as string) || event.status || '')
+    : '';
+  return (
+    <div className="flex items-start gap-3 rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2 text-xs">
+      <div className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-600" />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-bold text-slate-200">{label}</span>
+          {newStatus && (
+            <span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-black ${flowToneClass(getWarrantyStatusMeta(newStatus).tone)}`}>
+              {getWarrantyStatusMeta(newStatus).shortLabel}
+            </span>
+          )}
+        </div>
+        {event.message && <div className="mt-0.5 text-slate-400">{event.message}</div>}
+        <div className="mt-1 text-slate-500">
+          {event.created_at}
+          {(event.actor_display_name || event.actor_username) && ` — ${event.actor_display_name || event.actor_username}`}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Constants shared by ManagementCard ──────────────────────────────────────
 
 const CLOSED_PROVIDER_STATUSES = ['8 - RECHAZADO', '9 - ANULADA', '10 - FINALIZADO'];
 
 function normLocation(value?: string | null) {
-  return (value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim()
-    .toUpperCase();
+  return (value || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toUpperCase();
 }
 
 function isDepositLocation(value?: string | null) {
@@ -371,18 +445,26 @@ function nextProviderStatuses(item: WarrantySummary) {
   return [];
 }
 
-function statusHelperText(item: WarrantySummary) {
-  if (item.estado === '2 - PENDIENTE') return 'Ya fue revisada. El próximo paso es Exportación para generar ENV.';
-  if (item.estado === '3 - LISTO PARA ENVIAR') return 'Ya tiene lote ENV. Confirmá el mail enviado al proveedor.';
-  if (item.estado === '4 - ENVIADO AL PROVEEDOR') return 'Mail/ENV enviado. Si el proveedor acepta o avisa retiro, registrá “solicita retiro” para traerla urgente a Chiclana.';
-  if (item.estado === '5 - EN EL PROVEEDOR') return 'El producto está en proveedor. Podés registrar respuesta, rechazo o resolución.';
-  if (item.estado === '6 - RESPONDIDO POR PROVEEDOR') return 'Ya hubo respuesta. Definí resolución, rechazo o anulación.';
-  if (item.estado === '7 - RESUELTO') return 'Ya tiene resolución. Solo falta cerrar/finalizar cuando se ejecute la solución.';
-  if (CLOSED_PROVIDER_STATUSES.includes(item.estado)) return 'Caso cerrado para gestión. No hay acciones operativas disponibles.';
-  return '';
-}
+// ── ManagementCard ───────────────────────────────────────────────────────────
 
-function ManagementCard({ item, state, savingId, update, run }: { item: WarrantySummary; state: ActionState; savingId: string; update: (patch: Partial<ActionState>) => void; run: (type: 'send' | 'response' | 'claim' | 'resend' | 'status' | 'confirm' | 'pickup', override?: Partial<ActionState>) => void }) {
+function ManagementCard({
+  item, state, savingId, update, run,
+}: {
+  item: WarrantySummary;
+  state: ActionState;
+  savingId: string;
+  update: (patch: Partial<ActionState>) => void;
+  run: (type: 'send' | 'response' | 'claim' | 'resend' | 'status' | 'confirm' | 'pickup', override?: Partial<ActionState>) => void;
+}) {
+  // ── Phase 2: dynamic action forms ──────────────────────────────────
+  const [activeAction, setActiveAction] = useState<string | null>(null);
+
+  // ── Phase 3: collapsible history ───────────────────────────────────
+  const [showHistory, setShowHistory] = useState(false);
+  const [history, setHistory] = useState<AuditEvent[] | null>(null);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
+  // ── Computed flags ─────────────────────────────────────────────────
   const canManageProvider = can('warranties.manage_provider');
   const canResponse = can('warranties.register_provider_response');
   const canClaim = can('warranties.register_claim');
@@ -403,85 +485,174 @@ function ManagementCard({ item, state, savingId, update, run }: { item: Warranty
   const canRegisterClaim = canTrackProvider && ['4 - ENVIADO AL PROVEEDOR', '5 - EN EL PROVEEDOR', '6 - RESPONDIDO POR PROVEEDOR'].includes(item.estado);
   const canResendMail = canRegisterClaim && item.estado === '4 - ENVIADO AL PROVEEDOR';
   const canChangeStage = !isClosed && nextStatuses.length > 0;
-  // Necesita traslado: ingresó en sucursal y todavía no llegó al depósito
-  const needsTransport = logisticsBlocked;
   const codeMatches = state.confirm_code.trim().toUpperCase() === (item.shipment_code || '').toUpperCase();
   const helperText = getWarrantyNextStep(item);
+  const statusMeta = getWarrantyStatusMeta(item.estado);
+  const dias = Number(item.dias_sin_respuesta || 0);
+
+  // Only show delay warning if the provider has NOT already responded (estado 6 = responded)
+  const showDelayAlert = dias >= 7
+    && !isPendingConfirm
+    && !isClosed
+    && !isResolvedOpen
+    && logisticsReady
+    && item.estado !== '6 - RESPONDIDO POR PROVEEDOR';
+
+  // ── Available action tabs ──────────────────────────────────────────
+  const actionItems: { id: string; label: string; tone: string }[] = [];
+  if (!isPendingConfirm && !isApprovedPending && !isClosed && !isResolvedOpen) {
+    if (canResponse && canRegisterProviderResponse)
+      actionItems.push({ id: 'response', label: 'Respuesta proveedor', tone: 'green' });
+    if (canResponse && canRegisterPickup)
+      actionItems.push({ id: 'pickup', label: 'Solicitar retiro', tone: 'red' });
+    if (canClaim && canResendMail)
+      actionItems.push({ id: 'resend', label: 'Mail reenviado', tone: 'blue' });
+    if (canClaim && canRegisterClaim)
+      actionItems.push({ id: 'claim', label: 'Reclamo', tone: 'amber' });
+    if (canStatus && canChangeStage)
+      actionItems.push({ id: 'status', label: 'Cambiar estado', tone: 'slate' });
+  }
+
+  function toggleAction(id: string) {
+    setActiveAction((prev) => (prev === id ? null : id));
+  }
+
+  async function handleHistoryToggle() {
+    if (showHistory) { setShowHistory(false); return; }
+    if (history) { setShowHistory(true); return; }
+    setLoadingHistory(true);
+    try {
+      const detail = await fetchWarrantyDetail(item.id_garantia);
+      setHistory(detail.history || []);
+      setShowHistory(true);
+    } catch {
+      setHistory([]);
+      setShowHistory(true);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }
+
   return (
-    <div className={`rounded-3xl border p-4 shadow-xl sm:p-5 ${isApprovedPending ? 'border-violet-500/30 bg-violet-950/20' : 'border-slate-700 bg-slate-950/60'}`}>
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <Link to={`/warranties/${encodeURIComponent(item.id_garantia)}`} className="font-mono text-xl font-black text-white hover:text-blue-200">{item.id_garantia}</Link>
-            <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${flowToneClass(getWarrantyStatusMeta(item.estado).tone)}`}>{getWarrantyStatusMeta(item.estado).shortLabel}</span>
-            {isApprovedPending && (
-              <span className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2.5 py-1 text-xs font-black text-violet-200">
-                ✓ Revisada — pendiente de exportación
-              </span>
-            )}
-            {isPendingConfirm && (
-              <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-black text-amber-200">
-                Lote: {item.shipment_code}
-              </span>
-            )}
-            {item.transit_status === 'en_transito' && (
-              <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-black text-amber-200">
-                <Truck size={12} className="mr-1 inline" />En tránsito {item.remito_interno && `· ${item.remito_interno}`}
-              </span>
-            )}
-            {item.transit_status === 'en_deposito' && (
-              <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-black text-emerald-200">
-                <CheckCircle2 size={12} className="mr-1 inline" />En depósito {item.remito_interno && `· ${item.remito_interno}`}
-              </span>
-            )}
-            {item.estado_retiro_proveedor === 'retiro_solicitado' && (
-              <span className="rounded-full border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-xs font-black text-red-200">
-                <AlertTriangle size={12} className="mr-1 inline" />Retiro solicitado
-              </span>
-            )}
-            {item.estado_retiro_proveedor === 'listo_para_retiro' && (
-              <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-black text-emerald-200">
-                <PackageCheck size={12} className="mr-1 inline" />Listo para retiro
-              </span>
-            )}
-            {!isPendingConfirm && (
-              <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${delayClass(item.dias_sin_respuesta)}`}><Clock size={12} className="mr-1 inline" />{item.dias_sin_respuesta ?? '-'} días sin respuesta</span>
-            )}
-          </div>
-          <div className="mt-2 text-lg font-bold text-slate-100">{item.producto_principal || 'Sin producto'}</div>
-          <div className="mt-2 grid gap-2 text-sm text-slate-300 md:grid-cols-3">
-            <span>SKU: {item.sku || '-'}</span>
-            <span>Serie: {item.serie || '-'}</span>
-            <span>Sucursal: {item.sucursal || '-'}</span>
-            <span>Proveedor: {item.provider_name || '-'}</span>
-            <span>ID de caso: {item.id_de_caso || '-'}</span>
-            <span>Envío: {item.fecha_envio_proveedor || '-'}</span>
-            <span>Última respuesta: {item.fecha_ultima_respuesta || '-'}</span>
-            <span>Último reclamo: {item.fecha_ultimo_reclamo || '-'}</span>
+    <div className={`rounded-3xl border p-4 shadow-xl sm:p-5 ${
+      isClosed
+        ? 'border-slate-700/50 bg-slate-950/40'
+        : isApprovedPending
+        ? 'border-violet-500/30 bg-violet-950/20'
+        : 'border-slate-700 bg-slate-950/60'
+    }`}>
+      {/* ── 1. Header row ───────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Link
+            to={`/warranties/${encodeURIComponent(item.id_garantia)}`}
+            className="font-mono text-xl font-black text-white hover:text-blue-200"
+          >
+            {item.id_garantia}
+          </Link>
+          <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${flowToneClass(statusMeta.tone)}`}>
+            {statusMeta.shortLabel}
+          </span>
+          {isApprovedPending && (
+            <span className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2.5 py-1 text-xs font-black text-violet-200">
+              ✓ Revisada — pendiente de exportación
+            </span>
+          )}
+          {isPendingConfirm && (
+            <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-black text-amber-200">
+              Lote: {item.shipment_code}
+            </span>
+          )}
+          {item.transit_status === 'en_transito' && (
+            <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-black text-amber-200">
+              <Truck size={12} className="mr-1 inline" />En tránsito
+            </span>
+          )}
+          {item.transit_status === 'en_deposito' && (
+            <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-black text-emerald-200">
+              <CheckCircle2 size={12} className="mr-1 inline" />En depósito
+            </span>
+          )}
+          {item.estado_retiro_proveedor === 'retiro_solicitado' && (
+            <span className="rounded-full border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-xs font-black text-red-200">
+              <AlertTriangle size={12} className="mr-1 inline" />Retiro solicitado
+            </span>
+          )}
+          {item.estado_retiro_proveedor === 'listo_para_retiro' && (
+            <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-black text-emerald-200">
+              <PackageCheck size={12} className="mr-1 inline" />Listo para retiro
+            </span>
+          )}
+        </div>
+        {/* Delay badge — always visible on the right */}
+        <span className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-black ${delayClass(item.dias_sin_respuesta)}`}>
+          <Clock size={12} className="mr-1 inline" />
+          {item.dias_sin_respuesta ?? '-'} días sin resp.
+        </span>
+      </div>
+
+      {/* ── 2. Two-column body ──────────────────────────────────────── */}
+      <div className="mt-4 flex flex-col gap-4 xl:flex-row xl:items-start">
+
+        {/* ── LEFT: Product info, location, alerts, next-step ───────── */}
+        <div className="min-w-0 flex-1 space-y-3">
+          {/* Product name */}
+          <div className="text-lg font-bold text-slate-100">{item.producto_principal || 'Sin producto'}</div>
+
+          {/* Meta grid */}
+          <div className="grid gap-x-4 gap-y-1 sm:grid-cols-2 lg:grid-cols-4">
+            <MetaItem label="SKU" value={item.sku} />
+            <MetaItem label="Serie" value={item.serie} />
+            <MetaItem label="Marca" value={item.marca} />
+            <MetaItem label="Sucursal" value={item.sucursal} />
+            {item.provider_name && <MetaItem label="Proveedor" value={item.provider_name} />}
+            {item.id_de_caso && <MetaItem label="ID caso" value={item.id_de_caso} />}
+            {item.fecha_envio_proveedor && <MetaItem label="Envío" value={item.fecha_envio_proveedor} />}
+            {item.fecha_ultima_respuesta && <MetaItem label="Respuesta" value={item.fecha_ultima_respuesta} />}
+            {item.fecha_ultimo_reclamo && <MetaItem label="Reclamo" value={item.fecha_ultimo_reclamo} />}
           </div>
 
-          {/* Ubicación física prominente */}
-          <div className={`mt-3 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold ${
+          {/* Remito badges — internal + provider delivery shown separately */}
+          {(item.remito_interno || item.remito_proveedor) && (
+            <div className="flex flex-wrap gap-2">
+              {item.remito_interno && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-slate-600 px-2.5 py-1 text-xs font-mono text-slate-300">
+                  REM: {item.remito_interno}
+                </span>
+              )}
+              {item.remito_proveedor && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-violet-500/40 bg-violet-500/10 px-2.5 py-1 text-xs font-mono text-violet-200">
+                  {item.remito_proveedor}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Location bar */}
+          <div className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold ${
             item.transit_status === 'en_deposito'
               ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'
               : item.transit_status === 'en_transito'
               ? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
-              : needsTransport
+              : logisticsBlocked
               ? 'border-orange-500/40 bg-orange-500/10 text-orange-100'
               : 'border-slate-700 bg-slate-900 text-slate-200'
           }`}>
-            {item.transit_status === 'en_deposito' ? <CheckCircle2 size={15} /> : item.transit_status === 'en_transito' ? <Truck size={15} /> : <AlertTriangle size={15} />}
+            {item.transit_status === 'en_deposito'
+              ? <CheckCircle2 size={15} />
+              : item.transit_status === 'en_transito'
+              ? <Truck size={15} />
+              : <AlertTriangle size={15} />}
             <span>
               {item.transit_status === 'en_deposito' && `En depósito · ${currentLocationLabel(item)}`}
               {item.transit_status === 'en_transito' && `En tránsito al depósito · desde ${item.sucursal || '-'}`}
               {!item.transit_status && `Lugar actual: ${currentLocationLabel(item)}`}
-              
             </span>
           </div>
 
-          {/* Aviso de traslado / guía de próximo paso */}
-          {needsTransport && (
-            <div className="mt-2 flex items-start gap-2 rounded-xl border border-orange-500/30 bg-orange-500/5 px-3 py-2 text-sm text-orange-200">
+          {/* Transport blocked alert */}
+          {logisticsBlocked && (
+            <div className="flex items-start gap-2 rounded-xl border border-orange-500/30 bg-orange-500/5 px-3 py-2 text-sm text-orange-200">
               <Truck size={15} className="mt-0.5 shrink-0" />
               <span>
                 {item.transit_status === 'en_transito'
@@ -490,33 +661,54 @@ function ManagementCard({ item, state, savingId, update, run }: { item: Warranty
               </span>
             </div>
           )}
-          {item.estado_retiro_proveedor === 'retiro_solicitado' && !logisticsReady && (
-            <div className="mt-2 flex items-start gap-2 rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm font-bold text-red-100">
+
+          {/* Pickup urgency — only show before product is at provider */}
+          {item.estado_retiro_proveedor === 'retiro_solicitado'
+            && !logisticsReady
+            && ['3 - LISTO PARA ENVIAR', '4 - ENVIADO AL PROVEEDOR'].includes(item.estado) && (
+            <div className="flex items-start gap-2 rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm font-bold text-red-100">
               <AlertTriangle size={16} className="mt-0.5 shrink-0" />
               <span>URGENTE: el proveedor avisó retiro, pero la garantía todavía no está en Depósito Chiclana. Traerla con prioridad.</span>
             </div>
           )}
+
+          {/* Ready for pickup */}
           {item.estado_retiro_proveedor === 'listo_para_retiro' && logisticsReady && (
-            <div className="mt-2 flex items-start gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm font-bold text-emerald-100">
+            <div className="flex items-start gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm font-bold text-emerald-100">
               <PackageCheck size={16} className="mt-0.5 shrink-0" />
               <span>Listo para retiro: la garantía está en depósito y el proveedor puede retirarla.</span>
             </div>
           )}
-          {helperText && (
-            <div className="mt-2 rounded-xl border border-slate-700 bg-slate-900/50 px-3 py-2 text-sm text-slate-300">
-              <span className="font-black text-slate-100">Próximo paso: </span>{helperText}
+
+          {/* Next-step block — prominent, color-coded by status tone */}
+          {helperText && !isClosed && (
+            <div className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 text-sm font-bold ${flowToneClass(statusMeta.tone)}`}>
+              <ArrowRight size={15} className="mt-0.5 shrink-0" />
+              <div>
+                <span className="mb-0.5 block text-xs font-black uppercase tracking-wide opacity-70">Próximo paso</span>
+                {helperText}
+              </div>
+            </div>
+          )}
+          {isClosed && helperText && (
+            <div className="rounded-xl border border-slate-700 bg-slate-900/50 px-3 py-2 text-sm text-slate-400">
+              {helperText}
             </div>
           )}
 
-          {Number(item.dias_sin_respuesta || 0) >= 7 && !isPendingConfirm && !isClosed && !isResolvedOpen && logisticsReady && (
-            <div className="mt-2 inline-flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm font-bold text-amber-100">
-              <AlertTriangle size={16} /> Seguimiento requerido
+          {/* Delay alert — only when meaningful */}
+          {showDelayAlert && (
+            <div className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold ${dias >= 15 ? 'border-red-500/40 bg-red-500/10 text-red-100' : 'border-amber-500/30 bg-amber-500/10 text-amber-100'}`}>
+              <AlertTriangle size={16} />
+              {dias >= 15 ? `Demorada: ${dias} días sin respuesta` : `Seguimiento requerido — ${dias} días`}
             </div>
           )}
         </div>
 
+        {/* ── RIGHT: Action panel ────────────────────────────────────── */}
         <div className="w-full space-y-3 xl:w-[440px]">
-          {/* Confirmar envío: garantía exportada esperando confirmación */}
+
+          {/* Confirm shipment panel */}
           {canManageProvider && isPendingConfirm && (
             <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3">
               <div className="mb-1 flex items-center gap-2 text-sm font-black text-amber-200">
@@ -524,7 +716,7 @@ function ManagementCard({ item, state, savingId, update, run }: { item: Warranty
               </div>
               <p className="mb-2 text-xs text-slate-400">
                 El lote <span className="font-mono font-bold text-amber-300">{item.shipment_code}</span> fue generado.
-                Una vez que enviaste el mail al proveedor, ingresá el código del lote para confirmar. Esto no significa retiro físico.
+                Una vez enviado el mail, ingresá el código para confirmar.
               </p>
               {item.shipment_file_name && (
                 <div className="mb-3 flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2">
@@ -563,7 +755,8 @@ function ManagementCard({ item, state, savingId, update, run }: { item: Warranty
               </button>
             </div>
           )}
-          {/* Aprobada en revisión, esperando ser incluida en un lote de exportación */}
+
+          {/* Approved pending — redirect to export */}
           {isApprovedPending && (
             <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 p-3">
               <div className="mb-1 flex items-center gap-2 text-sm font-black text-violet-200">
@@ -576,30 +769,169 @@ function ManagementCard({ item, state, savingId, update, run }: { item: Warranty
               </p>
             </div>
           )}
-          {/* Enviar a proveedor: para garantías ya enviadas anteriormente pero sin seguimiento */}
-          {false && canManageProvider && !hasProvider && !isPendingConfirm && item.estado !== '2 - PENDIENTE' && (
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3">
-              <div className="mb-2 flex items-center gap-2 text-sm font-black text-slate-200"><Send size={16} /> Enviar a proveedor</div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <input value={state.provider_name} onChange={(e) => update({ provider_name: e.target.value })} placeholder="Proveedor" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-blue-400" />
-                <input value={state.provider_case_id} onChange={(e) => update({ provider_case_id: e.target.value })} placeholder="ID de caso" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-blue-400" />
-              </div>
-              <textarea value={state.status_note} onChange={(e) => update({ status_note: e.target.value })} rows={2} placeholder="Observación interna" className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-blue-400" />
-              <button disabled={savingId === `${item.id_garantia}:send` || !state.provider_name.trim()} onClick={() => run('send')} className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-500 px-3 py-2 text-sm font-black text-white hover:bg-blue-400 disabled:opacity-50"><Send size={16} /> Registrar envío</button>
+
+          {/* ── Action tab buttons (Phase 2) ──────────────────────── */}
+          {actionItems.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {actionItems.map((a) => (
+                <button
+                  key={a.id}
+                  onClick={() => toggleAction(a.id)}
+                  className={`rounded-lg border px-3 py-1.5 text-xs font-black transition ${
+                    activeAction === a.id
+                      ? (ACTION_PILL_ACTIVE[a.tone] || 'border-blue-400 bg-blue-500 text-white')
+                      : (ACTION_PILL_INACTIVE[a.tone] || 'border-slate-600 text-slate-300 hover:bg-slate-800')
+                  }`}
+                >
+                  {a.label}
+                </button>
+              ))}
             </div>
           )}
 
-          {canTrackProvider && (canResponse || canClaim || canStatus) && (
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3">
-              <div className="mb-2 flex items-center gap-2 text-sm font-black text-slate-200"><MessageSquareReply size={16} /> Seguimiento</div>
+          {/* ── Active action forms ────────────────────────────────── */}
+
+          {/* RESPONSE form */}
+          {activeAction === 'response' && canResponse && canRegisterProviderResponse && (
+            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-3">
+              <div className="mb-2 flex items-center gap-2 text-sm font-black text-emerald-200">
+                <MessageSquareReply size={16} /> Registrar respuesta del proveedor
+              </div>
               <div className="grid gap-2 sm:grid-cols-2">
-                <select value={effectiveStatus} onChange={(e) => update({ status: e.target.value })} className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-blue-400">
+                <select
+                  value={effectiveStatus}
+                  onChange={(e) => update({ status: e.target.value })}
+                  className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-emerald-400"
+                >
                   {statusOptions.map((st) => <option key={st} value={st}>{st}</option>)}
                 </select>
-                <input value={state.provider_case_id} onChange={(e) => update({ provider_case_id: e.target.value })} placeholder="ID de caso" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-blue-400" />
+                <input
+                  value={state.provider_case_id}
+                  onChange={(e) => update({ provider_case_id: e.target.value })}
+                  placeholder="ID de caso (opcional)"
+                  className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-emerald-400"
+                />
+              </div>
+              <textarea
+                value={state.response_note}
+                onChange={(e) => update({ response_note: e.target.value })}
+                rows={2}
+                placeholder="Descripción de la respuesta / aceptación del proveedor"
+                className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-emerald-400"
+              />
+              <button
+                disabled={savingId === `${item.id_garantia}:response`}
+                onClick={() => run('response', { status: effectiveStatus === item.estado ? '6 - RESPONDIDO POR PROVEEDOR' : effectiveStatus })}
+                className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-3 py-2 text-sm font-black text-white hover:bg-emerald-400 disabled:opacity-50"
+              >
+                {savingId === `${item.id_garantia}:response` ? 'Registrando...' : 'Registrar respuesta'}
+              </button>
+            </div>
+          )}
+
+          {/* PICKUP form */}
+          {activeAction === 'pickup' && canResponse && canRegisterPickup && (
+            <div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-3">
+              <div className="mb-2 flex items-center gap-2 text-sm font-black text-red-200">
+                <Truck size={16} /> Solicitar retiro del proveedor
+              </div>
+              <input
+                value={state.provider_case_id}
+                onChange={(e) => update({ provider_case_id: e.target.value })}
+                placeholder="ID de caso (opcional)"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-red-400"
+              />
+              <textarea
+                value={state.response_note}
+                onChange={(e) => update({ response_note: e.target.value })}
+                rows={2}
+                placeholder="Observación (ej: el proveedor avisa que retira el martes)"
+                className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-red-400"
+              />
+              {!logisticsReady && (
+                <p className="mt-2 rounded-xl bg-red-950/40 px-3 py-2 text-xs text-red-300">
+                  ⚠ La garantía todavía no está en Depósito Chiclana. Registralo igual para marcarla como urgente.
+                </p>
+              )}
+              <button
+                disabled={savingId === `${item.id_garantia}:pickup`}
+                onClick={() => run('pickup')}
+                className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-red-500 px-3 py-2 text-sm font-black text-white hover:bg-red-400 disabled:opacity-50"
+              >
+                {savingId === `${item.id_garantia}:pickup` ? 'Registrando...' : 'Registrar solicitud de retiro'}
+              </button>
+            </div>
+          )}
+
+          {/* RESEND MAIL form */}
+          {activeAction === 'resend' && canClaim && canResendMail && (
+            <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-3">
+              <div className="mb-2 flex items-center gap-2 text-sm font-black text-blue-200">
+                <Send size={16} /> Confirmar mail reenviado
+              </div>
+              <textarea
+                value={state.resend_note}
+                onChange={(e) => update({ resend_note: e.target.value })}
+                rows={2}
+                placeholder="Nota del mail reenviado (opcional). Reinicia el contador de días sin respuesta."
+                className="w-full rounded-xl border border-blue-500/30 bg-blue-500/5 px-3 py-2 text-sm outline-none focus:border-blue-400"
+              />
+              <button
+                disabled={savingId === `${item.id_garantia}:resend`}
+                onClick={() => run('resend')}
+                className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-500 px-3 py-2 text-sm font-black text-white hover:bg-blue-400 disabled:opacity-50"
+              >
+                {savingId === `${item.id_garantia}:resend` ? 'Registrando...' : 'Confirmar reenvío de mail'}
+              </button>
+            </div>
+          )}
+
+          {/* CLAIM form */}
+          {activeAction === 'claim' && canClaim && canRegisterClaim && (
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3">
+              <div className="mb-2 flex items-center gap-2 text-sm font-black text-amber-200">
+                <AlertTriangle size={16} /> Registrar reclamo / seguimiento
+              </div>
+              <textarea
+                value={state.claim_note}
+                onChange={(e) => update({ claim_note: e.target.value })}
+                rows={2}
+                placeholder="Descripción del reclamo o nota de seguimiento interno"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-amber-400"
+              />
+              <button
+                disabled={savingId === `${item.id_garantia}:claim` || !state.claim_note.trim()}
+                onClick={() => run('claim')}
+                className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 px-3 py-2 text-sm font-black text-white hover:bg-amber-400 disabled:opacity-50"
+              >
+                {savingId === `${item.id_garantia}:claim` ? 'Registrando...' : 'Registrar reclamo'}
+              </button>
+            </div>
+          )}
+
+          {/* STATUS CHANGE form */}
+          {activeAction === 'status' && canStatus && canChangeStage && !isResolvedOpen && (
+            <div className="rounded-2xl border border-slate-700 bg-slate-900/60 p-3">
+              <div className="mb-2 flex items-center gap-2 text-sm font-black text-slate-200">
+                <ArrowRight size={16} /> Cambiar estado
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <select
+                  value={effectiveStatus}
+                  onChange={(e) => update({ status: e.target.value })}
+                  className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                >
+                  {statusOptions.map((st) => <option key={st} value={st}>{st}</option>)}
+                </select>
+                <input
+                  value={state.provider_case_id}
+                  onChange={(e) => update({ provider_case_id: e.target.value })}
+                  placeholder="ID de caso"
+                  className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                />
               </div>
 
-              {/* Fase 12: resolución normalizada. RESUELTO no es FINALIZADO. */}
+              {/* Resolution sub-form for estado 7 */}
               {effectiveStatus === '7 - RESUELTO' && (() => {
                 const rt = RESOLUTION_TYPES.find((r) => r.value === state.resultado_resolucion);
                 return (
@@ -621,13 +953,13 @@ function ManagementCard({ item, state, savingId, update, run }: { item: Warranty
                         <input value={state.numero_nota_credito} onChange={(e) => update({ numero_nota_credito: e.target.value, resolution_reference: e.target.value })} placeholder="N° nota de crédito" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-emerald-400" />
                         <input value={state.importe_nota_credito} onChange={(e) => update({ importe_nota_credito: e.target.value })} placeholder="Importe NC" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-emerald-400" />
                         <input type="date" value={state.fecha_nota_credito} onChange={(e) => update({ fecha_nota_credito: e.target.value })} className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-emerald-400" />
-                        <textarea value={state.resolution_note} onChange={(e) => update({ resolution_note: e.target.value })} rows={2} placeholder="Observación administrativa de la NC" className="sm:col-span-3 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-emerald-400" />
+                        <textarea value={state.resolution_note} onChange={(e) => update({ resolution_note: e.target.value })} rows={2} placeholder="Observación de la NC" className="sm:col-span-3 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-emerald-400" />
                       </div>
                     )}
                     {state.resultado_resolucion === 'reparacion' && (
                       <div className="grid gap-2 sm:grid-cols-3">
                         <input type="date" value={state.fecha_reparacion} onChange={(e) => update({ fecha_reparacion: e.target.value })} className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-emerald-400" />
-                        <textarea value={state.detalle_reparacion || state.resolution_note} onChange={(e) => update({ detalle_reparacion: e.target.value, resolution_note: e.target.value })} rows={2} placeholder="Detalle de reparación realizada" className="sm:col-span-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-emerald-400" />
+                        <textarea value={state.detalle_reparacion || state.resolution_note} onChange={(e) => update({ detalle_reparacion: e.target.value, resolution_note: e.target.value })} rows={2} placeholder="Detalle de reparación" className="sm:col-span-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-emerald-400" />
                       </div>
                     )}
                     {state.resultado_resolucion === 'cambio_equipo' && (
@@ -645,7 +977,7 @@ function ManagementCard({ item, state, savingId, update, run }: { item: Warranty
                 );
               })()}
 
-              {/* Sub-formulario para "8 - RECHAZADO": solo motivo */}
+              {/* Rejection reason */}
               {effectiveStatus === '8 - RECHAZADO' && (
                 <div className="mt-2 rounded-xl border border-red-500/30 bg-red-500/5 p-3">
                   <div className="mb-2 flex items-center gap-1.5 text-xs font-black uppercase tracking-wide text-red-300">
@@ -661,7 +993,7 @@ function ManagementCard({ item, state, savingId, update, run }: { item: Warranty
                 </div>
               )}
 
-              {/* Si ya tenía datos de resolución guardados, mostrarlos */}
+              {/* Existing resolution data display */}
               {!FINAL_STATUSES.includes(state.status) && (item.resolution_note || item.resolution_reference || item.resultado_resolucion) && (
                 <div className="mt-2 rounded-xl border border-slate-700 bg-slate-900/40 px-3 py-2 text-xs text-slate-400">
                   <CheckCircle2 size={12} className="mr-1 inline text-emerald-400" />
@@ -685,57 +1017,127 @@ function ManagementCard({ item, state, savingId, update, run }: { item: Warranty
                 </div>
               )}
 
-              <textarea value={state.response_note} onChange={(e) => update({ response_note: e.target.value })} rows={2} placeholder="Respuesta del proveedor / aceptación / observación" className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-blue-400" />
-              {canResendMail && (
-                <textarea value={state.resend_note} onChange={(e) => update({ resend_note: e.target.value })} rows={2} placeholder="Nota del mail reenviado (opcional). Reinicia días sin respuesta." className="mt-2 w-full rounded-xl border border-blue-500/40 bg-blue-500/5 px-3 py-2 text-sm outline-none focus:border-blue-400" />
-              )}
-              <textarea value={state.claim_note} onChange={(e) => update({ claim_note: e.target.value })} rows={2} placeholder="Reclamo o seguimiento interno" className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-blue-400" />
-              <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                {canResponse && canRegisterProviderResponse && <button disabled={savingId === `${item.id_garantia}:response`} onClick={() => run('response', { status: effectiveStatus === item.estado ? '6 - RESPONDIDO POR PROVEEDOR' : effectiveStatus })} className="rounded-xl bg-emerald-500 px-3 py-2 text-sm font-black text-white hover:bg-emerald-400 disabled:opacity-50">Respuesta</button>}
-                {canResponse && canRegisterPickup && <button disabled={savingId === `${item.id_garantia}:pickup`} onClick={() => run('pickup')} className="rounded-xl border border-red-500/50 px-3 py-2 text-sm font-black text-red-100 hover:bg-red-500/10 disabled:opacity-50">Solicita retiro</button>}
-                {canClaim && canResendMail && <button disabled={savingId === `${item.id_garantia}:resend`} onClick={() => run('resend')} className="rounded-xl border border-blue-500/50 px-3 py-2 text-sm font-black text-blue-100 hover:bg-blue-500/10 disabled:opacity-50">Mail reenviado</button>}
-                {canClaim && canRegisterClaim && <button disabled={savingId === `${item.id_garantia}:claim` || !state.claim_note.trim()} onClick={() => run('claim')} className="rounded-xl border border-amber-500/50 px-3 py-2 text-sm font-black text-amber-100 hover:bg-amber-500/10 disabled:opacity-50">Reclamo</button>}
-                {canStatus && canChangeStage && (() => {
-                  const isResuelto = effectiveStatus === '7 - RESUELTO';
-                  const isRechazado = effectiveStatus === '8 - RECHAZADO';
-                  const isFinal = isResuelto || isRechazado;
-                  const isProviderPickup = effectiveStatus === '5 - EN EL PROVEEDOR';
-                  const blocked = effectiveStatus === item.estado || (isResuelto && !state.resultado_resolucion) || (isProviderPickup && !logisticsReady) || savingId === `${item.id_garantia}:status`;
-                  const label = effectiveStatus === item.estado ? 'Elegí próximo estado' : isProviderPickup ? 'Proveedor retiró' : isResuelto ? 'Marcar resuelto' : isRechazado ? 'Marcar rechazado' : 'Cambiar estado';
-                  return (
-                    <button
-                      disabled={blocked}
-                      onClick={() => run('status', { status: effectiveStatus })}
-                      className={`rounded-xl px-3 py-2 text-sm font-black disabled:opacity-50 ${isResuelto ? 'bg-emerald-500 text-white hover:bg-emerald-400' : isRechazado ? 'bg-red-500 text-white hover:bg-red-400' : 'border border-slate-600 text-slate-100 hover:bg-slate-800'}`}
-                      title={isProviderPickup && !logisticsReady ? 'Primero tiene que llegar a Depósito Chiclana' : isResuelto && !state.resultado_resolucion ? 'Elegí cómo se resolvió antes de marcar' : ''}
-                    >
-                      {label}
-                    </button>
-                  );
-                })()}
-              </div>
+              <textarea
+                value={state.status_note}
+                onChange={(e) => update({ status_note: e.target.value })}
+                rows={2}
+                placeholder="Observación interna (opcional)"
+                className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-blue-400"
+              />
+              {(() => {
+                const isResuelto = effectiveStatus === '7 - RESUELTO';
+                const isRechazado = effectiveStatus === '8 - RECHAZADO';
+                const isProviderPickup = effectiveStatus === '5 - EN EL PROVEEDOR';
+                const blocked = effectiveStatus === item.estado
+                  || (isResuelto && !state.resultado_resolucion)
+                  || (isProviderPickup && !logisticsReady)
+                  || savingId === `${item.id_garantia}:status`;
+                const label = effectiveStatus === item.estado
+                  ? 'Elegí próximo estado'
+                  : isProviderPickup
+                  ? 'Proveedor retiró'
+                  : isResuelto
+                  ? 'Marcar resuelto'
+                  : isRechazado
+                  ? 'Marcar rechazado'
+                  : 'Cambiar estado';
+                return (
+                  <button
+                    disabled={blocked}
+                    onClick={() => run('status', { status: effectiveStatus })}
+                    title={
+                      isProviderPickup && !logisticsReady
+                        ? 'Primero tiene que llegar a Depósito Chiclana'
+                        : isResuelto && !state.resultado_resolucion
+                        ? 'Elegí cómo se resolvió antes de marcar'
+                        : ''
+                    }
+                    className={`mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-black disabled:opacity-50 ${
+                      isResuelto
+                        ? 'bg-emerald-500 text-white hover:bg-emerald-400'
+                        : isRechazado
+                        ? 'bg-red-500 text-white hover:bg-red-400'
+                        : 'border border-slate-600 text-slate-100 hover:bg-slate-800'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })()}
             </div>
           )}
-          {canStatus && item.estado === '7 - RESUELTO' && (
+
+          {/* FINALIZE panel — always shown for estado 7 (RESUELTO) */}
+          {canStatus && isResolvedOpen && (
             <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-3">
-              <div className="mb-1 flex items-center gap-2 text-sm font-black text-emerald-200"><CheckCircle2 size={16} /> Resolución cargada</div>
+              <div className="mb-1 flex items-center gap-2 text-sm font-black text-emerald-200">
+                <CheckCircle2 size={16} /> Resolución cargada — pendiente de cierre
+              </div>
               <p className="mb-2 text-xs text-slate-400">
-                La garantía ya está RESUELTA como {item.resultado_resolucion_label || item.resultado_resolucion || 'resolución registrada'}. Finalizala solo cuando la NC, reparación o cambio ya quede cerrado.
+                Garantía RESUELTA como{' '}
+                <span className="font-semibold text-emerald-300">
+                  {item.resultado_resolucion_label || item.resultado_resolucion || 'resolución registrada'}
+                </span>.
+                Finalizá solo cuando la NC, reparación o cambio quede efectivamente cerrado.
               </p>
-              <textarea value={state.finalizacion} onChange={(e) => update({ finalizacion: e.target.value })} rows={2} placeholder="Resumen de cierre / qué se entregó o aplicó" className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-emerald-400" />
-              <button disabled={savingId === `${item.id_garantia}:status`} onClick={() => run('status', { status: '10 - FINALIZADO' })} className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-3 py-2 text-sm font-black text-white hover:bg-emerald-400 disabled:opacity-50">
+              <textarea
+                value={state.finalizacion}
+                onChange={(e) => update({ finalizacion: e.target.value })}
+                rows={2}
+                placeholder="Resumen de cierre / qué se entregó o aplicó"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-emerald-400"
+              />
+              <button
+                disabled={savingId === `${item.id_garantia}:status`}
+                onClick={() => run('status', { status: '10 - FINALIZADO' })}
+                className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-3 py-2 text-sm font-black text-white hover:bg-emerald-400 disabled:opacity-50"
+              >
                 Finalizar garantía
               </button>
             </div>
           )}
+
+          {/* Closed state info */}
           {isClosed && (
-            <div className="rounded-2xl border border-slate-700 bg-slate-900/50 p-3 text-sm text-slate-300">
-              Caso cerrado. Las acciones de proveedor quedan ocultas para evitar cambios duplicados o fuera de flujo.
+            <div className="rounded-2xl border border-slate-700 bg-slate-900/50 p-3 text-sm text-slate-400">
+              Caso cerrado. Las acciones operativas quedan ocultas.
             </div>
           )}
-          <Link to={`/warranties/${encodeURIComponent(item.id_garantia)}`} className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-600 px-3 py-2 text-sm font-black text-slate-100 hover:bg-slate-900">Ver detalle <ArrowRight size={16} /></Link>
         </div>
       </div>
+
+      {/* ── Bottom bar: Ver detalle + Historial ───────────────────────────── */}
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-800 pt-3">
+        <Link
+          to={`/warranties/${encodeURIComponent(item.id_garantia)}`}
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-600 px-3 py-2 text-sm font-black text-slate-100 hover:bg-slate-900"
+        >
+          Ver detalle completo <ArrowRight size={16} />
+        </Link>
+        <button
+          onClick={handleHistoryToggle}
+          disabled={loadingHistory}
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-3 py-2 text-sm font-bold text-slate-300 hover:bg-slate-900 disabled:opacity-50"
+        >
+          <History size={15} />
+          {loadingHistory ? 'Cargando...' : showHistory ? 'Ocultar historial' : 'Ver historial'}
+        </button>
+      </div>
+
+      {/* ── Phase 3: Timeline / History ───────────────────────────────────── */}
+      {showHistory && history && (
+        <div className="mt-3 space-y-1.5 border-t border-slate-800 pt-3">
+          <div className="mb-2 text-xs font-black uppercase tracking-wide text-slate-500">
+            Historial de eventos ({history.length})
+          </div>
+          {history.length === 0 && (
+            <p className="text-sm text-slate-400">No hay eventos registrados para esta garantía.</p>
+          )}
+          {history.map((event) => (
+            <HistoryRow key={event.id} event={event} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

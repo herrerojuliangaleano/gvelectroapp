@@ -806,6 +806,7 @@ export interface WarrantySummary {
   fecha_finalizacion?: string;
   finalizacion?: string;
   remito_interno?: string;
+  remito_proveedor?: string;
   transit_status?: string;
   dias_sin_respuesta?: number | null;
   synced_to_google_sheet?: boolean;

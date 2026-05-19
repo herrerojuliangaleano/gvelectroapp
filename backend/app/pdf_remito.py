@@ -300,3 +300,211 @@ def generate_remito_pdf(remito: dict[str, Any], warranties: list[dict[str, Any]]
 
     doc.build(story)
     return buffer.getvalue()
+
+
+# ── PDF profesional para entrega al proveedor (RP-YYYY-XXXX) ────────────────
+
+PROVIDER_GREEN = HexColor("#1A7A4A")
+SOFT_GREEN     = HexColor("#EAF7EF")
+
+def generate_provider_delivery_pdf(remito: dict[str, Any], warranties: list[dict[str, Any]]) -> bytes:
+    """Genera el PDF profesional para remitos de entrega al proveedor (deposito_a_proveedor).
+
+    Diseño limpio orientado al proveedor:
+      - Título: REMITO DE ENTREGA A PROVEEDOR
+      - Número RP-YYYY-XXXX destacado
+      - Proveedor visible y prominente
+      - Tabla de productos sin información interna
+      - Bloques de firma: 'Entregado conforme' / 'Recibido conforme'
+      - Sin leyendas de logística interna
+    """
+    buffer  = BytesIO()
+    brand_key = remito.get("company_brand", "gv_electro") or "gv_electro"
+    brand     = BRANDS.get(str(brand_key), BRANDS["gv_electro"])
+    accent    = brand["accent"]
+    proveedor = str(remito.get("proveedor") or remito.get("destino_deposito") or "—")
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=1.35 * cm,
+        rightMargin=1.35 * cm,
+        topMargin=1.25 * cm,
+        bottomMargin=1.5 * cm,
+    )
+    base = getSampleStyleSheet()
+
+    def S(name: str, **kwargs) -> ParagraphStyle:
+        return ParagraphStyle(name, parent=base["Normal"], **kwargs)
+
+    s_title  = S("pd_title",  fontSize=20, fontName="Helvetica-Bold", textColor=accent, alignment=TA_RIGHT, leading=23)
+    s_sub    = S("pd_sub",    fontSize=8,  fontName="Helvetica-Bold", textColor=TEXT_GREY, alignment=TA_RIGHT, leading=10)
+    s_num    = S("pd_num",    fontSize=13, fontName="Helvetica-Bold", textColor=black, alignment=TA_RIGHT)
+    s_date   = S("pd_date",   fontSize=8,  fontName="Helvetica", textColor=TEXT_GREY, alignment=TA_RIGHT)
+    s_label  = S("pd_label",  fontSize=7,  fontName="Helvetica-Bold", textColor=LABEL_GREY, leading=8)
+    s_val    = S("pd_val",    fontSize=10, fontName="Helvetica", textColor=black, leading=12)
+    s_val_b  = S("pd_val_b",  fontSize=10, fontName="Helvetica-Bold", textColor=black, leading=12)
+    s_th     = S("pd_th",     fontSize=7,  fontName="Helvetica-Bold", textColor=white, alignment=TA_LEFT)
+    s_td     = S("pd_td",     fontSize=8,  fontName="Helvetica", textColor=black, leading=9)
+    s_small  = S("pd_small",  fontSize=7,  fontName="Helvetica", textColor=LABEL_GREY, leading=9)
+    s_note   = S("pd_note",   fontSize=8,  fontName="Helvetica", textColor=TEXT_GREY, leading=10)
+    s_sec    = S("pd_sec",    fontSize=10, fontName="Helvetica-Bold", textColor=black, spaceBefore=2)
+    s_footer = S("pd_footer", fontSize=6.5, fontName="Helvetica", textColor=LABEL_GREY, alignment=TA_CENTER, spaceBefore=4)
+
+    story: list[Any] = []
+
+    # ── Header: logo + título ─────────────────────────────────────────
+    logo = _logo_image(str(brand_key))
+    logo_cell: Any = logo if logo else Paragraph(f"<b>{brand['name']}</b>", s_val_b)
+
+    hdr = Table(
+        [[
+            logo_cell,
+            [
+                Paragraph("REMITO DE ENTREGA A PROVEEDOR", s_title),
+                Paragraph("GARANTÍAS — ENTREGA FÍSICA", s_sub),
+                Spacer(1, 0.12 * cm),
+                Paragraph(f'N° <b>{remito.get("remito_code", "")}</b>', s_num),
+                Paragraph(remito.get("created_at_display", ""), s_date),
+            ],
+        ]],
+        colWidths=[4.2 * cm, None],
+    )
+    hdr.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+    story.append(hdr)
+    story.append(Spacer(1, 0.15 * cm))
+    story.append(HRFlowable(width="100%", thickness=2, color=accent))
+    story.append(Spacer(1, 0.35 * cm))
+
+    # ── Info: empresa / origen / proveedor ────────────────────────────
+    info_rows = [
+        [Paragraph("EMPRESA", s_label), Paragraph("DEPÓSITO ORIGEN", s_label), Paragraph("PROVEEDOR DESTINATARIO", s_label)],
+        [
+            Paragraph(brand["name"], s_val_b),
+            Paragraph(remito.get("origen_sucursal", "—"), s_val_b),
+            Paragraph(proveedor, s_val_b),
+        ],
+    ]
+    info = Table(info_rows, colWidths=[5.3 * cm, 5.3 * cm, None])
+    info.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), SOFT_GREEN),
+        ("BOX", (0, 0), (-1, -1), 0.5, BORDER_GREY),
+        ("INNERGRID", (0, 0), (-1, -1), 0.25, BORDER_GREY),
+        ("LEFTPADDING", (0, 0), (-1, -1), 7),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    story.append(info)
+    story.append(Spacer(1, 0.22 * cm))
+    story.append(Paragraph(
+        "Este documento certifica la entrega física de productos en garantía al proveedor indicado. "
+        "No representa resolución de garantía ni nota de crédito.",
+        s_note,
+    ))
+    if remito.get("nota"):
+        story.append(Spacer(1, 0.14 * cm))
+        story.append(Paragraph(f'Observación: <b>{remito.get("nota")}</b>', s_note))
+
+    story.append(Spacer(1, 0.35 * cm))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=BORDER_GREY))
+    story.append(Spacer(1, 0.25 * cm))
+
+    # ── Tabla de productos ────────────────────────────────────────────
+    story.append(Paragraph(f"PRODUCTOS ENTREGADOS — {len(warranties)} unidad(es)", s_sec))
+    story.append(Spacer(1, 0.22 * cm))
+
+    rows: list[list[Any]] = [[
+        Paragraph("ID GARANTÍA", s_th),
+        Paragraph("PRODUCTO", s_th),
+        Paragraph("SKU / MODELO", s_th),
+        Paragraph("N° SERIE", s_th),
+        Paragraph("MARCA", s_th),
+    ]]
+    for w in warranties:
+        marca = str(w.get("marca", "—") or "—")
+        rows.append([
+            Paragraph(str(w.get("warranty_code", "")), s_td),
+            Paragraph(str(w.get("producto", ""))[:48], s_td),
+            Paragraph(str(w.get("sku", "—") or "—"), s_td),
+            Paragraph(str(w.get("serie", "—") or "—"), s_td),
+            Paragraph(marca[:20], s_td),
+        ])
+
+    ts = [
+        ("BACKGROUND", (0, 0), (-1, 0), PROVIDER_GREEN),
+        ("TEXTCOLOR", (0, 0), (-1, 0), white),
+        ("GRID", (0, 0), (-1, -1), 0.25, BORDER_GREY),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]
+    for i in range(1, len(rows)):
+        if i % 2 == 0:
+            ts.append(("BACKGROUND", (0, i), (-1, i), LIGHT_ROW))
+
+    prod_table = Table(rows, colWidths=[3.5 * cm, 5.5 * cm, 2.5 * cm, 2.5 * cm, None], repeatRows=1)
+    prod_table.setStyle(TableStyle(ts))
+    story.append(prod_table)
+    story.append(Spacer(1, 0.9 * cm))
+
+    # ── Bloques de firma ──────────────────────────────────────────────
+    ctrl = Table(
+        [[
+            [
+                Paragraph("ENTREGADO CONFORME", s_label),
+                Spacer(1, 0.16 * cm),
+                Paragraph(f"Empresa: <b>{brand['name']}</b>", s_small),
+                Spacer(1, 0.14 * cm),
+                Paragraph("Nombre y DNI: ______________________________", s_small),
+                Spacer(1, 0.18 * cm),
+                Paragraph("Firma: ______________________________________", s_small),
+                Spacer(1, 0.14 * cm),
+                Paragraph("Fecha: _____ / _____ / _______", s_small),
+            ],
+            [
+                Paragraph("RECIBIDO CONFORME", s_label),
+                Spacer(1, 0.16 * cm),
+                Paragraph(f"Proveedor: <b>{proveedor}</b>", s_small),
+                Spacer(1, 0.14 * cm),
+                Paragraph("Nombre y DNI: ______________________________", s_small),
+                Spacer(1, 0.18 * cm),
+                Paragraph("Firma: ______________________________________", s_small),
+                Spacer(1, 0.14 * cm),
+                Paragraph("Fecha: _____ / _____ / _______", s_small),
+            ],
+        ]],
+        colWidths=[8.9 * cm, None],
+    )
+    ctrl.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.75, accent),
+        ("LINEAFTER", (0, 0), (0, -1), 0.5, BORDER_GREY),
+        ("BACKGROUND", (0, 0), (-1, -1), HexColor("#F9FFF9")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    story.append(ctrl)
+    story.append(Spacer(1, 0.4 * cm))
+
+    story.append(Paragraph("Observaciones:", s_label))
+    story.append(Spacer(1, 0.12 * cm))
+    story.append(Paragraph("_" * 118, s_small))
+    story.append(Spacer(1, 0.16 * cm))
+    story.append(Paragraph("_" * 118, s_small))
+
+    # Footer
+    story.append(Spacer(1, 0.45 * cm))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=BORDER_GREY))
+    story.append(Paragraph(
+        f"Remito generado automáticamente — {brand['name']} — Sistema de Garantías",
+        s_footer,
+    ))
+
+    doc.build(story)
+    return buffer.getvalue()

@@ -406,6 +406,7 @@ class WarrantySummary(BaseModel):
     fecha_finalizacion: str = ""
     finalizacion: str = ""
     remito_interno: str = ""
+    remito_proveedor: str = ""
     transit_status: str = ""  # '' | 'en_transito' | 'en_deposito'
     synced_to_google_sheet: bool = False
     fecha_ultima_sincronizacion: str = ""
@@ -1615,6 +1616,7 @@ def ensure_warranty_tables(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "guarantees", "fecha_solicitud_retiro_proveedor", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "guarantees", "fecha_retiro_proveedor", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "guarantees", "nota_retiro_proveedor", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "guarantees", "remito_proveedor",      "TEXT NOT NULL DEFAULT ''")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_guarantees_code ON guarantees(warranty_code)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_guarantees_status ON guarantees(status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_guarantees_review_status ON guarantees(review_status)")
@@ -2315,6 +2317,7 @@ def row_to_summary(row: sqlite3.Row, items: list[sqlite3.Row]) -> WarrantySummar
         fecha_finalizacion=format_datetime_ar(parse_iso_datetime(row["fecha_finalizacion"])) if "fecha_finalizacion" in row.keys() and row["fecha_finalizacion"] else "",
         finalizacion=str(row["finalizacion"] or "") if "finalizacion" in row.keys() else "",
         remito_interno=str(row["remito_interno"] or "") if "remito_interno" in row.keys() else "",
+        remito_proveedor=str(row["remito_proveedor"] or "") if "remito_proveedor" in row.keys() else "",
         transit_status=str(row["transit_status"] or "") if "transit_status" in row.keys() else "",
         synced_to_google_sheet=bool(row["synced_to_google_sheet"]),
         fecha_ultima_sincronizacion=format_datetime_ar(parse_iso_datetime(row["last_google_sync_at"])) if row["last_google_sync_at"] else "",

@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 
 from ..audit import audit
 from ..auth import require_current_user, require_permission
-from ..pdf_remito import BRANDS, generate_remito_pdf, get_company_brand
+from ..pdf_remito import BRANDS, generate_provider_delivery_pdf, generate_remito_pdf, get_company_brand
 from ..permissions import has_permission
 from ..users import load_roles, load_users
 from .notifications import notify_many
@@ -148,6 +148,22 @@ def next_remito_code(conn: sqlite3.Connection, brand: str) -> str:
     return f"{code}-R-{year}-{(last + 1):04d}"
 
 
+def next_provider_delivery_code(conn: sqlite3.Connection) -> str:
+    """Genera códigos RP-YYYY-XXXX para remitos de entrega al proveedor (distintos de GV-R-/ABC-R-)."""
+    year   = now_ar().year
+    prefix = f"RP-{year}-"
+    rows   = conn.execute(
+        "SELECT remito_code FROM warranty_remitos WHERE remito_code LIKE ? ORDER BY id DESC",
+        (f"{prefix}%",),
+    ).fetchall()
+    last = 0
+    for row in rows:
+        m = re.fullmatch(rf"RP-{year}-(\d+)", str(row["remito_code"] or ""))
+        if m:
+            last = max(last, int(m.group(1)))
+    return f"RP-{year}-{(last + 1):04d}"
+
+
 def load_warranties_for_ids(conn: sqlite3.Connection, ids: list[str]) -> list[dict[str, Any]]:
     """Carga datos básicos de garantías para mostrar en el detalle del remito."""
     if not ids:
@@ -155,7 +171,7 @@ def load_warranties_for_ids(conn: sqlite3.Connection, ids: list[str]) -> list[di
     placeholders = ",".join("?" * len(ids))
     g_rows = conn.execute(
         f"""
-        SELECT g.warranty_code, gi.producto, gi.sku, gi.serie, gi.falla
+        SELECT g.warranty_code, gi.producto, gi.sku, gi.marca, gi.serie, gi.falla
         FROM guarantees g
         LEFT JOIN guarantee_items gi ON gi.guarantee_id = g.id
         WHERE g.warranty_code IN ({placeholders})
@@ -173,6 +189,7 @@ def load_warranties_for_ids(conn: sqlite3.Connection, ids: list[str]) -> list[di
                 "warranty_code": wc,
                 "producto":      str(gr["producto"] or ""),
                 "sku":           str(gr["sku"] or ""),
+                "marca":         str(gr["marca"] or ""),
                 "serie":         str(gr["serie"] or ""),
                 "falla":         str(gr["falla"] or ""),
             })
@@ -835,7 +852,7 @@ def generate_provider_delivery_remito(
             raise HTTPException(400, "Estas garantías no están listas para retiro del proveedor: " + ", ".join(invalid))
 
         brand    = _resolve_remito_brand(conn, origen_deposito, company_id)
-        rem_code = next_remito_code(conn, brand)
+        rem_code = next_provider_delivery_code(conn)
         conn.execute(
             """INSERT INTO warranty_remitos
                 (remito_code, shipment_code, tipo_remito, company_brand, origen_sucursal,
@@ -849,7 +866,7 @@ def generate_provider_delivery_remito(
             g = conn.execute("SELECT id FROM guarantees WHERE warranty_code = ?", (wcode,)).fetchone()
             conn.execute(
                 """UPDATE guarantees
-                   SET remito_interno = ?, updated_at = ?, updated_by = ?, updated_by_name = ?
+                   SET remito_proveedor = ?, updated_at = ?, updated_by = ?, updated_by_name = ?
                    WHERE warranty_code = ?""",
                 (rem_code, now, actor, actor_nm, wcode),
             )
@@ -1187,7 +1204,10 @@ def download_remito_pdf(
         # Esto corrige remitos viejos que hayan quedado con company_brand legacy.
         remito_dict["company_brand"] = _resolve_remito_brand(conn, remito_dict.get("origen_sucursal", ""), "")
 
-    pdf_bytes = generate_remito_pdf(remito_dict, warranties_data)
+    if remito_dict.get("tipo_remito") == "deposito_a_proveedor":
+        pdf_bytes = generate_provider_delivery_pdf(remito_dict, warranties_data)
+    else:
+        pdf_bytes = generate_remito_pdf(remito_dict, warranties_data)
     filename  = f"{remito_code}.pdf"
     audit("warranties.remito.pdf", user=_user, resource_type="warranty_remito", resource_id=remito_code)
     return Response(

@@ -118,7 +118,7 @@ export function flowToneClass(tone: FlowTone) {
   return map[tone];
 }
 
-export function getWarrantyNextStep(item: Pick<WarrantySummary, 'estado' | 'review_status' | 'origen_ingreso' | 'ubicacion_actual' | 'transit_status' | 'shipment_code' | 'fecha_envio_proveedor' | 'estado_retiro_proveedor' | 'resultado_resolucion'>) {
+export function getWarrantyNextStep(item: Pick<WarrantySummary, 'estado' | 'review_status' | 'origen_ingreso' | 'ubicacion_actual' | 'transit_status' | 'shipment_code' | 'fecha_envio_proveedor' | 'estado_retiro_proveedor' | 'resultado_resolucion' | 'fecha_ultima_respuesta'>) {
   if (item.estado === '10 - FINALIZADO') return 'Caso finalizado. No requiere acciones.';
   if (item.estado === '9 - ANULADA') return 'Caso anulado. No requiere acciones operativas.';
   if (item.estado === '8 - RECHAZADO') return 'Caso rechazado. Revisar cierre administrativo si corresponde.';
@@ -142,7 +142,11 @@ export function getWarrantyNextStep(item: Pick<WarrantySummary, 'estado' | 'revi
     }
     return 'Esperar respuesta, reenviar mail o registrar solicitud de retiro.';
   }
-  if (item.estado === '5 - EN EL PROVEEDOR') return 'Cargar respuesta, rechazo o resolución del proveedor.';
+  if (item.estado === '5 - EN EL PROVEEDOR') {
+    return item.fecha_ultima_respuesta
+      ? 'El proveedor ya respondió. Verificar y definir resolución, rechazo o avanzar estado.'
+      : 'Cargar respuesta, rechazo o resolución del proveedor.';
+  }
   if (item.estado === '6 - RESPONDIDO POR PROVEEDOR') return 'Definir resolución, rechazo o anulación.';
   if (item.estado === '7 - RESUELTO') return item.resultado_resolucion ? 'Ejecutar la resolución y finalizar cuando esté cerrada.' : 'Completar tipo de resolución.';
   return getWarrantyStatusMeta(item.estado).helper;
