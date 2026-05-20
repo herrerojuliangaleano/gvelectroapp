@@ -724,7 +724,10 @@ def generate_deposit_transfer_remito(
             g = conn.execute("SELECT id FROM guarantees WHERE warranty_code = ?", (wcode,)).fetchone()
             conn.execute(
                 """UPDATE guarantees
-                   SET remito_interno = ?, updated_at = ?, updated_by = ?, updated_by_name = ?
+                   SET remito_interno    = ?,
+                       transit_status   = 'en_transito',
+                       ubicacion_actual = 'en_transito',
+                       updated_at = ?, updated_by = ?, updated_by_name = ?
                    WHERE warranty_code = ?""",
                 (code, now, actor, actor_nm, wcode),
             )
@@ -866,7 +869,10 @@ def generate_provider_delivery_remito(
             g = conn.execute("SELECT id FROM guarantees WHERE warranty_code = ?", (wcode,)).fetchone()
             conn.execute(
                 """UPDATE guarantees
-                   SET remito_proveedor = ?, updated_at = ?, updated_by = ?, updated_by_name = ?
+                   SET remito_proveedor  = ?,
+                       transit_status   = 'en_transito',
+                       ubicacion_actual = 'en_transito_proveedor',
+                       updated_at = ?, updated_by = ?, updated_by_name = ?
                    WHERE warranty_code = ?""",
                 (rem_code, now, actor, actor_nm, wcode),
             )
@@ -959,7 +965,9 @@ def generate_remitos(
                 g = conn.execute("SELECT id FROM guarantees WHERE warranty_code = ?", (wcode,)).fetchone()
                 conn.execute(
                     """UPDATE guarantees
-                       SET remito_interno = ?,
+                       SET remito_interno    = ?,
+                           transit_status   = 'en_transito',
+                           ubicacion_actual = 'en_transito',
                            updated_at = ?, updated_by = ?, updated_by_name = ?
                        WHERE warranty_code = ?""",
                     (code, now, actor, actor_nm, wcode),

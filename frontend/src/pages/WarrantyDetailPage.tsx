@@ -49,6 +49,7 @@ export function WarrantyDetailPage() {
   const [deposito, setDeposito] = useState('');
   const [lugarLlegada, setLugarLlegada] = useState('');
   const [ubicacionActual, setUbicacionActual] = useState('');
+  const [sucursalResponsable, setSucursalResponsable] = useState('');
   const [observaciones, setObservaciones] = useState('');
   const [photosReference, setPhotosReference] = useState('');
   const [note, setNote] = useState('');
@@ -90,6 +91,7 @@ export function WarrantyDetailPage() {
     setDeposito(s.deposito || '');
     setLugarLlegada(s.lugar_llegada || s.deposito || '');
     setUbicacionActual(s.ubicacion_actual || '');
+    setSucursalResponsable(s.sucursal_responsable || '');
     setObservaciones(s.observaciones || '');
     setPhotosReference(s.photos_reference || '');
     setFechaIngreso(s.ingreso_iso || '');
@@ -134,6 +136,7 @@ export function WarrantyDetailPage() {
       const updated = await updateWarranty(id, {
         estado, sucursal, deposito, lugar_llegada: lugarLlegada,
         ubicacion_actual: ubicacionActual || undefined,
+        sucursal_responsable: sucursalResponsable || undefined,
         observaciones, photos_reference: photosReference,
         append_observation: note.trim() || undefined,
         items,
@@ -354,9 +357,10 @@ export function WarrantyDetailPage() {
               {s.tipo_ingreso_label && <Info label="Tipo de ingreso" value={s.tipo_ingreso_label} />}
               {s.origen_ingreso && <Info label="Origen" value={s.origen_ingreso === 'sucursal' ? 'Sucursal' : 'Depósito'} />}
               {s.ubicacion_actual_label && <Info label="Ubicación actual" value={s.ubicacion_actual_label} />}
-              {s.sucursal_responsable && s.sucursal_responsable !== s.sucursal && (
-                <Info label="Sucursal responsable" value={s.sucursal_responsable} />
-              )}
+              {s.sucursal_responsable
+                ? <Info label="Sucursal responsable" value={s.sucursal_responsable} />
+                : s.origen_ingreso === 'deposito' && <Info label="Sucursal responsable" value="Sin asignar ⚠" />
+              }
             </div>
           </div>
         )}
@@ -646,9 +650,19 @@ export function WarrantyDetailPage() {
                     <span className="font-semibold text-slate-200">{s.sucursal}</span>
                   </span>
                 )}
+                {/* Sucursal responsable: always show when set; warn if missing on depot-loaded */}
+                {(s.sucursal_responsable || s.origen_ingreso === 'deposito') && (
+                  <span>
+                    <span className="text-slate-500">Suc. responsable: </span>
+                    {s.sucursal_responsable
+                      ? <span className="font-semibold text-slate-200">{s.sucursal_responsable}</span>
+                      : <span className="font-semibold text-amber-400">Sin asignar ⚠</span>
+                    }
+                  </span>
+                )}
                 {s.ubicacion_actual_label && (
                   <span>
-                    <span className="text-slate-500">Ubicación registrada: </span>
+                    <span className="text-slate-500">Ubicación: </span>
                     <span className="font-semibold text-blue-200">{s.ubicacion_actual_label}</span>
                   </span>
                 )}
@@ -666,6 +680,18 @@ export function WarrantyDetailPage() {
               <Select label="Depósito destino" value={deposito} onChange={setDeposito} options={options?.depositos || []} allowEmpty />
               <Select label="Lugar de llegada" value={lugarLlegada} onChange={setLugarLlegada} options={options?.depositos || []} allowEmpty />
             </div>
+            {/* Sucursal responsable — editable para items cargados en depósito */}
+            {(s.origen_ingreso === 'deposito' || sucursalResponsable) && (
+              <div className="mt-3">
+                <Select
+                  label={`Sucursal responsable${s.origen_ingreso === 'deposito' && !sucursalResponsable ? ' ⚠ sin asignar' : ''}`}
+                  value={sucursalResponsable}
+                  onChange={setSucursalResponsable}
+                  options={options?.sucursales || []}
+                  allowEmpty
+                />
+              </div>
+            )}
           </div>
 
           {/* C) Observaciones + fotos + nota */}

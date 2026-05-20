@@ -848,6 +848,7 @@ export interface WarrantyUpdatePayload {
   deposito?: string;
   lugar_llegada?: string;
   ubicacion_actual?: string;
+  sucursal_responsable?: string;
   observaciones?: string;
   photos_reference?: string;
   append_observation?: string;
