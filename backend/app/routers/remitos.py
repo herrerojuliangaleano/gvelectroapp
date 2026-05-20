@@ -988,7 +988,7 @@ def generate_remitos(
 
 @router.get("/")
 def list_remitos(
-    _user:           Annotated[Any, Depends(require_permission("warranties.remitos.view"))],
+    user:            Annotated[Any, Depends(require_current_user)],
     shipment_code:   str = "",
     remito_code:     str = "",
     status:          str = "",
@@ -996,10 +996,48 @@ def list_remitos(
     origen_sucursal: str = "",
     limit:           int = Query(default=100, ge=1, le=500),
 ):
+    """Lista remitos internos.
+
+    - warranties.remitos.view → seguimiento global, ve todos los remitos.
+    - warranties.remitos.generate (sin view) → solo ve remitos creados por él
+      o cuya sucursal de origen coincida con su sucursal asignada.
+    - Cualquier otro permiso de remitos también accede (dispatch/receive/delete).
+    - Sin ninguno de estos permisos → 403.
+    """
+    _require_any(
+        user,
+        "warranties.remitos.view",
+        "warranties.remitos.generate",
+        "warranties.remitos.dispatch",
+        "warranties.remitos.receive",
+        "warranties.remitos.delete",
+        "warranties.remitos.deposit_transfer",
+        "warranties.remitos.provider_delivery",
+    )
+    global_view = getattr(user, "has", lambda _p: False)("warranties.remitos.view")
+    actor       = str(getattr(user, "username", "") or "")
+    user_branch = str(getattr(user, "branch_name", "") or getattr(user, "sucursal", "") or "").strip()
+
     with db_connect() as conn:
         ensure_remito_tables(conn)
         sql    = "SELECT * FROM warranty_remitos WHERE 1=1"
         params: list[Any] = []
+
+        # Scope: si no tiene seguimiento global, restringir a sus propios remitos
+        # o los de su sucursal de origen.
+        if not global_view:
+            scope_conditions: list[str] = []
+            scope_params: list[Any] = []
+            if actor:
+                scope_conditions.append("created_by = ?")
+                scope_params.append(actor)
+            if user_branch:
+                scope_conditions.append("LOWER(origen_sucursal) = LOWER(?)")
+                scope_params.append(user_branch)
+            if scope_conditions:
+                sql += " AND (" + " OR ".join(scope_conditions) + ")"
+                params.extend(scope_params)
+
         if shipment_code:
             sql += " AND shipment_code = ?"
             params.append(shipment_code)
