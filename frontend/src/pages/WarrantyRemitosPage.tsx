@@ -391,6 +391,7 @@ export function WarrantyRemitosPage() {
       setPdResult({ count: res.count, remitos: res.remitos });
       setPdNota('');
       setPdSelected(new Set());
+      setFilterStatus('');
       await loadProviderDelivery();
       if (canFollow()) await load();
     } catch (e: unknown) {
@@ -442,6 +443,7 @@ export function WarrantyRemitosPage() {
       });
       setTransferResult({ count: res.count, remitos: res.remitos });
       setTransferNota('');
+      setFilterStatus('');
       await loadDepositTransfer();
     } catch (e: unknown) {
       setTransferError((e as Error).message || 'No se pudo generar el movimiento');
@@ -480,6 +482,8 @@ export function WarrantyRemitosPage() {
       setGenNota('');
       setSelectedCodes(new Set());
       setAvailableWarranties([]);
+      // Reset filter so the newly-created pendiente remito is immediately visible
+      setFilterStatus('');
       await load();
     } catch (e: unknown) {
       setGenError((e as Error).message || 'Error al generar remitos');
