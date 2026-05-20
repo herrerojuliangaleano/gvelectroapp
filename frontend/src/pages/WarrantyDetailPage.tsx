@@ -46,6 +46,7 @@ export function WarrantyDetailPage() {
   const [sucursal, setSucursal] = useState('');
   const [deposito, setDeposito] = useState('');
   const [lugarLlegada, setLugarLlegada] = useState('');
+  const [ubicacionActual, setUbicacionActual] = useState('');
   const [observaciones, setObservaciones] = useState('');
   const [photosReference, setPhotosReference] = useState('');
   const [note, setNote] = useState('');
@@ -86,6 +87,7 @@ export function WarrantyDetailPage() {
     setSucursal(s.sucursal || '');
     setDeposito(s.deposito || '');
     setLugarLlegada(s.lugar_llegada || s.deposito || '');
+    setUbicacionActual(s.ubicacion_actual || '');
     setObservaciones(s.observaciones || '');
     setPhotosReference(s.photos_reference || '');
     setFechaIngreso(s.ingreso_iso || '');
@@ -129,6 +131,7 @@ export function WarrantyDetailPage() {
     try {
       const updated = await updateWarranty(id, {
         estado, sucursal, deposito, lugar_llegada: lugarLlegada,
+        ubicacion_actual: ubicacionActual || undefined,
         observaciones, photos_reference: photosReference,
         append_observation: note.trim() || undefined,
         items,
@@ -393,46 +396,112 @@ export function WarrantyDetailPage() {
           REVIEW BLOCK (only for INGRESO + non-final + has permissions)
       ══════════════════════════════════════════════════════════════════ */}
       {canShowReviewBlock && (
-        <div className={`rounded-3xl border p-5 shadow-xl ${s.review_status === 'en_revision' ? 'border-violet-500/40 bg-violet-500/5' : 'border-slate-700 bg-slate-950/60'}`}>
+        <div className={`rounded-3xl border p-5 shadow-xl ${s.review_status === 'en_revision' ? 'border-violet-500/40 bg-violet-500/5' : s.review_status === 'requiere_correccion' ? 'border-amber-500/30 bg-amber-500/5' : 'border-slate-700 bg-slate-950/60'}`}>
+
+          {/* Header */}
           <div className="flex flex-wrap items-center gap-3">
             <h2 className="text-xl font-black">Revisión interna</h2>
             <span className={`rounded-full border px-3 py-1 text-xs font-black ${flowToneClass(reviewMeta.tone)}`}>
               {s.review_status_label || reviewMeta.label}
             </span>
           </div>
+
+          {/* Flow indicator */}
+          <div className="mt-4 flex items-center gap-1 overflow-x-auto pb-1 text-xs font-bold">
+            {[
+              { key: 'pendiente_revision', label: '① Pendiente' },
+              { key: 'en_revision',        label: '② En revisión' },
+              { key: null,                 label: '③ Decisión', split: true },
+            ].map((step) => {
+              const isActive = step.split
+                ? (s.review_status === 'revisada' || s.review_status === 'requiere_correccion')
+                : s.review_status === step.key;
+              return (
+                <div key={step.label} className="flex items-center gap-1">
+                  <span className={`whitespace-nowrap rounded-full px-2.5 py-1 ${isActive ? 'bg-violet-500/20 text-violet-100' : 'text-slate-500'}`}>
+                    {step.label}
+                  </span>
+                  {step.label !== '③ Decisión' && <span className="text-slate-700">›</span>}
+                </div>
+              );
+            })}
+            <span className={`ml-1 whitespace-nowrap rounded-full px-2.5 py-1 ${s.review_status === 'revisada' ? 'bg-emerald-500/20 text-emerald-200' : 'text-slate-600'}`}>✓ Aprobada</span>
+            <span className="text-slate-700 mx-1">/</span>
+            <span className={`whitespace-nowrap rounded-full px-2.5 py-1 ${s.review_status === 'requiere_correccion' ? 'bg-amber-500/20 text-amber-200' : 'text-slate-600'}`}>⚠ Corrección</span>
+          </div>
+
+          {/* Helper text per state */}
+          <p className="mt-3 text-sm text-slate-400">{reviewMeta.helper}</p>
+
+          {/* Reviewed-by info */}
+          {s.reviewed_by_name && (s.review_status === 'en_revision' || s.review_status === 'revisada') && (
+            <div className="mt-2 text-xs text-slate-500">
+              {s.review_status === 'en_revision' ? 'Tomada en revisión por' : 'Revisada por'}: <span className="text-slate-300 font-semibold">{s.reviewed_by_name}</span>
+            </div>
+          )}
+
+          {/* State: requires correction — info box */}
+          {s.review_status === 'requiere_correccion' && s.review_note && (
+            <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
+              <div className="text-xs font-bold uppercase tracking-wide text-amber-400 mb-1">Motivo de corrección solicitada</div>
+              <p className="text-sm text-amber-100">{s.review_note}</p>
+            </div>
+          )}
+
+          {/* State: approved — success */}
           {reviewAlreadyApproved ? (
-            <div className="mt-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm font-bold text-emerald-100">
-              Revisión aprobada. Esta garantía ya no necesita acciones de revisión interna.
+            <div className="mt-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4">
+              <div className="flex items-center gap-2 text-emerald-200 font-bold">
+                <CheckCircle2 size={16} /> Revisión aprobada
+              </div>
+              {s.review_note && <p className="mt-1 text-sm text-emerald-100/80">{s.review_note}</p>}
+              <p className="mt-1 text-xs text-emerald-300/60">Esta garantía ya no necesita acciones de revisión interna.</p>
             </div>
           ) : (
-            <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
+            <div className="mt-4 space-y-4">
               <label>
-                <span className="mb-2 block text-sm font-semibold text-slate-300">Nota de revisión</span>
+                <span className="mb-2 block text-sm font-semibold text-slate-300">
+                  {s.review_status === 'en_revision' ? 'Nota de revisión (opcional)' : 'Nota interna (opcional)'}
+                </span>
                 <textarea value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} rows={3}
-                  placeholder="Observación interna de revisión..."
+                  placeholder={s.review_status === 'en_revision' ? 'Ej: Serie verificada, falla reproducible, aprobado para gestión...' : 'Observación interna de revisión...'}
                   className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 outline-none focus:border-blue-400" />
               </label>
-              <div className="flex flex-col gap-2">
+
+              <div className="flex flex-wrap gap-3">
+                {/* Tomar en revisión: solo si NO está en revisión ni aprobada */}
                 {can('warranties.review') && s.review_status !== 'en_revision' && s.review_status !== 'revisada' && (
                   <button disabled={saving} onClick={() => reviewAction('take')}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-violet-500/50 px-4 py-3 font-black text-violet-100 hover:bg-violet-500/10 disabled:opacity-50">
+                    className="inline-flex items-center gap-2 rounded-xl border border-violet-500/50 bg-violet-500/10 px-5 py-3 font-black text-violet-100 hover:bg-violet-500/20 disabled:opacity-50">
                     <Eye size={18} /> Tomar en revisión
                   </button>
                 )}
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  {can('warranties.mark_incomplete') && (
-                    <button disabled={saving} onClick={() => reviewAction('incomplete')}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-500/50 px-4 py-3 font-black text-amber-100 hover:bg-amber-500/10 disabled:opacity-50">
-                      <AlertTriangle size={18} /> Requiere corrección
-                    </button>
-                  )}
-                  {can('warranties.approve_review') && (
-                    <button disabled={saving} onClick={() => reviewAction('approve')}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 font-black text-white hover:bg-emerald-400 disabled:opacity-50">
-                      <CheckCircle2 size={18} /> Aprobar revisión
-                    </button>
-                  )}
-                </div>
+
+                {/* Acciones disponibles cuando está en revisión */}
+                {s.review_status === 'en_revision' && (
+                  <>
+                    {can('warranties.mark_incomplete') && (
+                      <button disabled={saving} onClick={() => reviewAction('incomplete')}
+                        className="inline-flex items-center gap-2 rounded-xl border border-amber-500/50 px-5 py-3 font-black text-amber-100 hover:bg-amber-500/10 disabled:opacity-50">
+                        <AlertTriangle size={18} /> Pedir corrección
+                      </button>
+                    )}
+                    {can('warranties.approve_review') && (
+                      <button disabled={saving} onClick={() => reviewAction('approve')}
+                        className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 font-black text-white hover:bg-emerald-400 disabled:opacity-50">
+                        <CheckCircle2 size={18} /> Aprobar revisión
+                      </button>
+                    )}
+                  </>
+                )}
+
+                {/* Si requiere corrección, también puede aprobarse directamente */}
+                {s.review_status === 'requiere_correccion' && can('warranties.approve_review') && (
+                  <button disabled={saving} onClick={() => reviewAction('approve')}
+                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 font-black text-white hover:bg-emerald-400 disabled:opacity-50">
+                    <CheckCircle2 size={18} /> Aprobar de todas formas
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -541,8 +610,42 @@ export function WarrantyDetailPage() {
           {/* B) Ubicación física */}
           <div className="mt-3 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
             <div className="mb-3 text-xs font-bold uppercase tracking-wide text-slate-500">Ubicación física</div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Select label="Depósito / lugar actual" value={deposito} onChange={setDeposito} options={options?.depositos || []} allowEmpty />
+
+            {/* Contexto: dónde se originó el equipo */}
+            {(s.origen_ingreso || s.sucursal) && (
+              <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm">
+                {s.origen_ingreso && (
+                  <span>
+                    <span className="text-slate-500">Origen: </span>
+                    <span className="font-semibold text-slate-200">
+                      {s.origen_ingreso === 'sucursal' ? 'Sucursal' : 'Depósito'}
+                    </span>
+                  </span>
+                )}
+                {s.sucursal && (
+                  <span>
+                    <span className="text-slate-500">Sucursal de carga: </span>
+                    <span className="font-semibold text-slate-200">{s.sucursal}</span>
+                  </span>
+                )}
+                {s.ubicacion_actual_label && (
+                  <span>
+                    <span className="text-slate-500">Ubicación registrada: </span>
+                    <span className="font-semibold text-blue-200">{s.ubicacion_actual_label}</span>
+                  </span>
+                )}
+              </div>
+            )}
+
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <SelectLabeled
+                label="Ubicación actual del equipo"
+                value={ubicacionActual}
+                onChange={setUbicacionActual}
+                options={buildLocationOptions(options)}
+                allowEmpty
+              />
+              <Select label="Depósito destino" value={deposito} onChange={setDeposito} options={options?.depositos || []} allowEmpty />
               <Select label="Lugar de llegada" value={lugarLlegada} onChange={setLugarLlegada} options={options?.depositos || []} allowEmpty />
             </div>
           </div>
@@ -811,6 +914,38 @@ function Select({ label, value, options, onChange, allowEmpty = false }: {
       </select>
     </label>
   );
+}
+
+function SelectLabeled({ label, value, options, onChange, allowEmpty = false }: {
+  label: string;
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (v: string) => void;
+  allowEmpty?: boolean;
+}) {
+  return (
+    <label>
+      <span className="mb-1.5 block text-sm font-semibold text-slate-300">{label}</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm outline-none focus:border-blue-400">
+        {allowEmpty && <option value="">Sin definir</option>}
+        {options.map((op) => <option key={op.value} value={op.value}>{op.label}</option>)}
+      </select>
+    </label>
+  );
+}
+
+function buildLocationOptions(options: WarrantyOptions | null): { value: string; label: string }[] {
+  const sucursales = (options?.sucursales || []).map((s) => ({ value: s, label: `📍 ${s}` }));
+  const depositos  = (options?.depositos  || []).map((d) => ({ value: d, label: `🏭 ${d}` }));
+  const transit: { value: string; label: string }[] = [
+    { value: 'en_transito',           label: '🚚 En tránsito' },
+    { value: 'proveedor',             label: '🔧 En el proveedor' },
+    { value: 'en_transito_proveedor', label: '📦 En tránsito al proveedor' },
+    { value: 'devuelto',              label: '↩ Devuelto' },
+    { value: 'entregado',             label: '✓ Entregado al cliente' },
+  ];
+  return [...sucursales, ...depositos, ...transit];
 }
 
 function ReadOnlyItem({ row }: { row: any }) {

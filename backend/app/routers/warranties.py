@@ -446,6 +446,7 @@ class WarrantyUpdateRequest(BaseModel):
     sucursal: str | None = None
     deposito: str | None = None
     lugar_llegada: str | None = None
+    ubicacion_actual: str | None = None
     observaciones: str | None = None
     photos_reference: str | None = None
     append_observation: str | None = None
@@ -6176,6 +6177,11 @@ def update_warranty(warranty_id: str, data: WarrantyUpdateRequest, user: Annotat
             notes.append(f"Depósito: {row['deposito'] or '-'} → {data.deposito.strip() or '-'}")
         if data.lugar_llegada is not None and data.lugar_llegada.strip() != str(row["lugar_llegada"] or ""):
             updates["lugar_llegada"] = data.lugar_llegada.strip()
+        if data.ubicacion_actual is not None and data.ubicacion_actual.strip() != str(row["ubicacion_actual"] or ""):
+            old_ub = str(row["ubicacion_actual"] or "-")
+            new_ub = data.ubicacion_actual.strip()
+            updates["ubicacion_actual"] = new_ub
+            notes.append(f"Ubicación: {old_ub} → {new_ub or '-'}")
         if data.observaciones is not None:
             updates["observations"] = data.observaciones.strip()
         if data.photos_reference is not None:
