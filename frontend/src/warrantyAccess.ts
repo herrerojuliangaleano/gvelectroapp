@@ -1,7 +1,7 @@
 import type { CurrentUser } from './types';
 import { can } from './api/client';
 
-const PRIVILEGED_ROLES = new Set(['SUPERADMIN', 'GERENTE', 'ADMINISTRADOR', 'ADMIN', 'GESTOR', 'GESTOR_GARANTIAS']);
+const PRIVILEGED_ROLES = new Set(['SUPERADMIN', 'GERENTE', 'ADMINISTRADOR', 'ADMIN', 'GESTOR', 'GESTOR_GARANTIAS', 'JEFE_POSVENTA']);
 
 export function roleKeys(user: CurrentUser | null | undefined): string[] {
   if (!user) return [];
@@ -67,5 +67,22 @@ export function canGenerateProviderDelivery(user: CurrentUser | null | undefined
 }
 
 export function isGestorGarantias(user: CurrentUser | null | undefined): boolean {
-  return roleKeys(user).includes('GESTOR_GARANTIAS');
+  const roles = roleKeys(user);
+  return roles.includes('GESTOR_GARANTIAS') || roles.includes('GESTOR');
+}
+
+export function isJefePosventa(user: CurrentUser | null | undefined): boolean {
+  return roleKeys(user).includes('JEFE_POSVENTA');
+}
+
+export function isEncargadoSucursal(user: CurrentUser | null | undefined): boolean {
+  return roleKeys(user).includes('ENCARGADO_SUCURSAL');
+}
+
+export function canSeeGestorPanel(user: CurrentUser | null | undefined): boolean {
+  return !isPlainDepositOperator(user) && (can('warranties.gestor.panel') || can('warranties.manage'));
+}
+
+export function canSeeSucursalLogistics(user: CurrentUser | null | undefined): boolean {
+  return can('warranties.sucursal.logistics') || can('warranties.remitos.dispatch');
 }

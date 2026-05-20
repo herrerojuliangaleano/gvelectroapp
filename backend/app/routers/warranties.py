@@ -101,7 +101,7 @@ PROVIDER_PICKUP_STATUSES = {
 # Aunque el catálogo de permisos haya quedado viejo o se le hayan colado permisos,
 # si su único rol operativo es DEPOSITO no debe poder revisar, exportar, gestionar proveedor
 # ni resolver garantías. Debe poder cargar cliente en depósito, recibir remitos y mover depósito→depósito.
-WARRANTY_PRIVILEGED_ROLES = {"SUPERADMIN", "GERENTE", "ADMINISTRADOR", "ADMIN", "GESTOR"}
+WARRANTY_PRIVILEGED_ROLES = {"SUPERADMIN", "GERENTE", "ADMINISTRADOR", "ADMIN", "GESTOR", "GESTOR_GARANTIAS", "JEFE_POSVENTA"}
 
 def _user_role_keys(user: Any) -> set[str]:
     values = [getattr(user, "role", ""), *(getattr(user, "roles", []) or [])]
@@ -3770,6 +3770,9 @@ def list_warranties(
     proveedor: str = "",
     tipo_ingreso: str = "",
     origen_ingreso: str = "",
+    transit_status: str = "",
+    ubicacion_actual: str = "",
+    estado_retiro_proveedor: str = "",
     demora_min: int = Query(default=0, ge=0, le=3650),
     fecha_desde: str = "",
     fecha_hasta: str = "",
@@ -3891,6 +3894,15 @@ def list_warranties(
         if demora_min and (item.dias_sin_respuesta is None or item.dias_sin_respuesta < demora_min):
             return False
         if review_key and not review_status_matches(item.review_status, review_status):
+            return False
+        transit_key = str(transit_status or "").strip().lower()
+        if transit_key and item.transit_status != transit_key:
+            return False
+        ubicacion_key = str(ubicacion_actual or "").strip().lower()
+        if ubicacion_key and item.ubicacion_actual != ubicacion_key:
+            return False
+        retiro_key = str(estado_retiro_proveedor or "").strip().lower()
+        if retiro_key and item.estado_retiro_proveedor != retiro_key:
             return False
         ingreso_date = parse_date_filter(item.ingreso)
         if date_from and ingreso_date and ingreso_date < date_from:
