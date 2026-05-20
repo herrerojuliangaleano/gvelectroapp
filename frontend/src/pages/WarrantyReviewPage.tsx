@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck, Clock, Eye, Filter, RefreshCw, Search } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck, Clock, Eye, Filter, RefreshCw, Search, ExternalLink } from 'lucide-react';
 import { approveWarrantyReview, can, fetchWarrantyOptions, fetchWarrantyReviewQueue, markWarrantyIncomplete, takeWarrantyIntoReview } from '../api/client';
 import type { WarrantyListResponse, WarrantyOptions, WarrantySummary } from '../types';
 
@@ -12,6 +12,7 @@ function statusPill(reviewStatus?: string) {
 }
 
 export function WarrantyReviewPage() {
+  const navigate = useNavigate();
   const [options, setOptions] = useState<WarrantyOptions | null>(null);
   const [data, setData] = useState<WarrantyListResponse | null>(null);
   const [filters, setFilters] = useState({ q: '', sucursal: '', deposito: '' });
@@ -54,13 +55,15 @@ export function WarrantyReviewPage() {
       const payload = { note: (notes[id] || '').trim() || undefined };
       if (type === 'take') {
         await takeWarrantyIntoReview(id, payload);
-        setMessage('Garantía tomada en revisión interna.');
+        // Navegar al detalle para que el revisor vea todos los datos
+        navigate(`/warranties/${encodeURIComponent(id)}?from=revision`);
+        return;
       } else if (type === 'incomplete') {
         await markWarrantyIncomplete(id, payload);
-        setMessage('Garantía marcada para corrección.');
+        setMessage('Garantía devuelta a sucursal para corrección.');
       } else {
         await approveWarrantyReview(id, payload);
-        setMessage('Garantía aprobada y pasada a pendiente.');
+        setMessage('Garantía aprobada y pasada a gestión.');
       }
       setNotes((prev) => ({ ...prev, [id]: '' }));
       await load(filters);
@@ -128,20 +131,63 @@ export function WarrantyReviewPage() {
 
       {loading && <div className="rounded-2xl border border-slate-700 bg-slate-950/60 p-5 text-slate-300">Cargando garantías...</div>}
       {!loading && data?.items.length === 0 && <div className="rounded-2xl border border-slate-700 bg-slate-950/60 p-5 text-slate-300">No hay garantías para revisar.</div>}
-      <div className="space-y-3">
-        {data?.items.map((item) => (
-          <ReviewCard
-            key={item.id_garantia}
-            item={item}
-            note={notes[item.id_garantia] || ''}
-            setNote={(value) => setNotes((prev) => ({ ...prev, [item.id_garantia]: value }))}
-            saving={savingId === item.id_garantia}
-            onTake={() => action(item.id_garantia, 'take')}
-            onIncomplete={() => action(item.id_garantia, 'incomplete')}
-            onApprove={() => action(item.id_garantia, 'approve')}
-          />
-        ))}
-      </div>
+
+      {/* En revisión actualmente — acciones rápidas disponibles */}
+      {!loading && (data?.items || []).filter(i => i.review_status === 'en_revision').length > 0 && (
+        <div>
+          <div className="mb-2 text-xs font-black uppercase tracking-wide text-violet-400">En revisión activa</div>
+          <div className="space-y-3">
+            {(data?.items || []).filter(i => i.review_status === 'en_revision').map((item) => (
+              <ReviewCard
+                key={item.id_garantia}
+                item={item}
+                note={notes[item.id_garantia] || ''}
+                setNote={(value) => setNotes((prev) => ({ ...prev, [item.id_garantia]: value }))}
+                saving={savingId === item.id_garantia}
+                onIncomplete={() => action(item.id_garantia, 'incomplete')}
+                onApprove={() => action(item.id_garantia, 'approve')}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Pendientes de ser tomadas */}
+      {!loading && (data?.items || []).filter(i => !i.review_status || i.review_status === 'pendiente_revision').length > 0 && (
+        <div>
+          <div className="mb-2 text-xs font-black uppercase tracking-wide text-blue-400">Pendientes de revisión</div>
+          <div className="space-y-3">
+            {(data?.items || []).filter(i => !i.review_status || i.review_status === 'pendiente_revision').map((item) => (
+              <ReviewCard
+                key={item.id_garantia}
+                item={item}
+                note={notes[item.id_garantia] || ''}
+                setNote={(value) => setNotes((prev) => ({ ...prev, [item.id_garantia]: value }))}
+                saving={savingId === item.id_garantia}
+                onTake={() => action(item.id_garantia, 'take')}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Esperando corrección de sucursal */}
+      {!loading && (data?.items || []).filter(i => i.review_status === 'requiere_correccion').length > 0 && (
+        <div>
+          <div className="mb-2 text-xs font-black uppercase tracking-wide text-amber-400">Esperando corrección de sucursal</div>
+          <div className="space-y-3">
+            {(data?.items || []).filter(i => i.review_status === 'requiere_correccion').map((item) => (
+              <ReviewCard
+                key={item.id_garantia}
+                item={item}
+                note={notes[item.id_garantia] || ''}
+                setNote={(value) => setNotes((prev) => ({ ...prev, [item.id_garantia]: value }))}
+                saving={savingId === item.id_garantia}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -164,50 +210,153 @@ function Select({ label, value, options, onChange }: { label: string; value: str
   );
 }
 
-function ReviewCard({ item, note, setNote, saving, onTake, onIncomplete, onApprove }: { item: WarrantySummary; note: string; setNote: (value: string) => void; saving: boolean; onTake: () => void; onIncomplete: () => void; onApprove: () => void }) {
+function ReviewCard({
+  item, note, setNote, saving,
+  onTake, onIncomplete, onApprove,
+}: {
+  item: WarrantySummary;
+  note: string;
+  setNote: (v: string) => void;
+  saving: boolean;
+  onTake?: () => void;
+  onIncomplete?: () => void;
+  onApprove?: () => void;
+}) {
+  const isPending    = !item.review_status || item.review_status === 'pendiente_revision';
   const isInProgress = item.review_status === 'en_revision';
   const isCorrection = item.review_status === 'requiere_correccion';
-  const canActOnReview = can('warranties.mark_incomplete') || can('warranties.approve_review') || can('warranties.review');
+
+  const detailUrl = `/warranties/${encodeURIComponent(item.id_garantia)}?from=revision`;
+
   return (
-    <div className={`rounded-3xl border bg-slate-950/60 p-4 shadow-xl sm:p-5 ${isInProgress ? 'border-violet-500/40' : 'border-slate-700'}`}>
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <Link to={`/warranties/${encodeURIComponent(item.id_garantia)}`} className="font-mono text-xl font-black text-white hover:text-blue-200">{item.id_garantia}</Link>
-            <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${statusPill(item.review_status)}`}>{item.review_status_label || item.review_status || 'Pendiente de revisión'}</span>
-            <span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs font-bold text-slate-300">{item.estado || 'Sin estado'}</span>
-          </div>
-          <div className="mt-2 text-lg font-bold text-slate-100">{item.producto_principal || 'Sin producto'}</div>
-          <div className="mt-2 grid gap-2 text-sm text-slate-300 md:grid-cols-3">
-            <span>SKU: {item.sku || '-'}</span>
-            <span>Serie: {item.serie || '-'}</span>
-            <span>Sucursal: {item.sucursal || '-'}</span>
-            <span>Lugar actual: {item.ubicacion_actual_label || item.lugar_llegada || item.deposito || '-'}</span>
-            <span>Tipo ingreso: {item.tipo_ingreso_label || item.tipo_ingreso || '-'}</span>
-            <span>Responsable: {item.responsable || '-'}</span>
-          </div>
-          {item.falla && <div className="mt-3 rounded-xl bg-slate-900 p-3 text-sm text-slate-300"><b>Falla:</b> {item.falla}</div>}
-          {item.review_note && <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100"><b>Última observación de revisión:</b> {item.review_note}</div>}
-          {isCorrection && <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">La sucursal debe corregir la base. Al guardar la corrección, vuelve a Pendiente de revisión.</div>}
-          <Link to={`/warranties/${encodeURIComponent(item.id_garantia)}`} className="mt-3 inline-flex text-sm font-bold text-blue-300 hover:text-blue-200">Ver detalle y corregir datos</Link>
+    <div className={`rounded-3xl border bg-slate-950/60 p-4 shadow-xl sm:p-5 transition-colors
+      ${isInProgress ? 'border-violet-500/40 bg-violet-500/[0.03]' : isCorrection ? 'border-amber-500/30' : 'border-slate-700'}`}>
+
+      {/* ── Info principal ───────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Link to={detailUrl} className="font-mono text-xl font-black text-white hover:text-blue-200">
+          {item.id_garantia}
+        </Link>
+        <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${statusPill(item.review_status)}`}>
+          {item.review_status_label || 'Pendiente de revisión'}
+        </span>
+        <span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs font-bold text-slate-300">
+          {item.estado || 'Sin estado'}
+        </span>
+        {item.dias_pendiente != null && Number(item.dias_pendiente) > 0 && (
+          <span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-slate-400">
+            {item.dias_pendiente}d
+          </span>
+        )}
+      </div>
+
+      <div className="mt-1 text-lg font-bold text-slate-100">{item.producto_principal || 'Sin producto'}</div>
+
+      <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-slate-400">
+        {item.sku      && <span><span className="text-slate-500">SKU:</span> {item.sku}</span>}
+        {item.serie    && <span><span className="text-slate-500">Serie:</span> {item.serie}</span>}
+        {item.sucursal && <span><span className="text-slate-500">Sucursal:</span> <span className="text-slate-200">{item.sucursal}</span></span>}
+        {(item.ubicacion_actual_label || item.ubicacion_actual) && (
+          <span><span className="text-slate-500">Lugar actual:</span> <span className="text-slate-200">{item.ubicacion_actual_label || item.ubicacion_actual}</span></span>
+        )}
+        {item.tipo_ingreso_label && <span><span className="text-slate-500">Tipo:</span> {item.tipo_ingreso_label}</span>}
+        {item.responsable && <span><span className="text-slate-500">Responsable:</span> {item.responsable}</span>}
+      </div>
+
+      {item.falla && (
+        <div className="mt-3 rounded-xl bg-slate-900 px-4 py-2.5 text-sm text-slate-300">
+          <span className="font-bold text-slate-400">Falla: </span>{item.falla}
         </div>
-        {canActOnReview && (
-          <div className="w-full rounded-2xl border border-slate-800 bg-slate-900/60 p-3 lg:w-96">
-            <label>
-              <span className="mb-2 block text-sm font-semibold text-slate-300">Nota de revisión</span>
-              <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="Nota interna. Obligatoria si pedís corrección..." className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-blue-400" />
-            </label>
-            <div className="mt-3 flex flex-col gap-2">
-              {can('warranties.review') && !isInProgress && (
-                <button disabled={saving} onClick={onTake} className="inline-flex items-center justify-center gap-2 rounded-xl border border-violet-500/50 px-3 py-2 text-sm font-black text-violet-100 hover:bg-violet-500/10 disabled:opacity-50">
-                  <Eye size={16} /> Tomar en revisión
-                </button>
-              )}
-              <div className="grid gap-2 sm:grid-cols-2">
-                {can('warranties.mark_incomplete') && <button disabled={saving || !note.trim()} title={!note.trim() ? 'Escribí qué tiene que corregirse' : undefined} onClick={onIncomplete} className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-500/50 px-3 py-2 text-sm font-black text-amber-100 hover:bg-amber-500/10 disabled:opacity-50"><AlertTriangle size={16} /> Pedir corrección</button>}
-                {can('warranties.approve_review') && <button disabled={saving} onClick={onApprove} className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-3 py-2 text-sm font-black text-white hover:bg-emerald-400 disabled:opacity-50"><CheckCircle2 size={16} /> Aprobar</button>}
+      )}
+
+      {/* Nota de corrección previa */}
+      {item.review_note && (
+        <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-100">
+          <span className="font-bold">Nota de revisión: </span>{item.review_note}
+        </div>
+      )}
+
+      {/* ── CTA según estado ─────────────────────────────────────────── */}
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+
+        {/* ESTADO: pendiente — único CTA es "Tomar en revisión" */}
+        {isPending && can('warranties.review') && onTake && (
+          <div className="flex flex-col gap-1">
+            <button
+              disabled={saving}
+              onClick={onTake}
+              className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-3 font-black text-white hover:bg-violet-500 disabled:opacity-50"
+            >
+              <Eye size={18} /> Tomar en revisión
+              <ArrowRight size={16} className="ml-1" />
+            </button>
+            <span className="text-xs text-slate-500 pl-1">Abre el detalle completo para revisar y decidir</span>
+          </div>
+        )}
+
+        {/* ESTADO: en revisión — Continuar + acciones rápidas */}
+        {isInProgress && (
+          <div className="flex flex-col gap-3 w-full sm:flex-row sm:items-end sm:justify-between">
+            <Link
+              to={detailUrl}
+              className="inline-flex items-center gap-2 rounded-xl border border-violet-500/50 bg-violet-500/10 px-5 py-3 font-black text-violet-100 hover:bg-violet-500/20"
+            >
+              <ExternalLink size={16} /> Continuar revisión
+            </Link>
+
+            {/* Acciones rápidas si quiere resolver desde la lista */}
+            {(can('warranties.mark_incomplete') || can('warranties.approve_review')) && (
+              <div className="flex flex-col gap-2 sm:items-end">
+                <span className="text-xs text-slate-500">Acciones rápidas (desde aquí):</span>
+                <div className="flex gap-2">
+                  <label className="flex-1">
+                    <textarea
+                      value={note}
+                      onChange={(e) => setNote(e.target.value)}
+                      rows={2}
+                      placeholder="Nota interna (obligatoria si pedís corrección)..."
+                      className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs outline-none focus:border-blue-400"
+                    />
+                  </label>
+                  <div className="flex flex-col gap-2">
+                    {can('warranties.mark_incomplete') && onIncomplete && (
+                      <button
+                        disabled={saving || !note.trim()}
+                        title={!note.trim() ? 'Escribí el motivo de corrección' : undefined}
+                        onClick={onIncomplete}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/50 px-3 py-2 text-xs font-black text-amber-100 hover:bg-amber-500/10 disabled:opacity-40"
+                      >
+                        <AlertTriangle size={14} /> Corrección
+                      </button>
+                    )}
+                    {can('warranties.approve_review') && onApprove && (
+                      <button
+                        disabled={saving}
+                        onClick={onApprove}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3 py-2 text-xs font-black text-white hover:bg-emerald-400 disabled:opacity-50"
+                      >
+                        <CheckCircle2 size={14} /> Aprobar
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
+          </div>
+        )}
+
+        {/* ESTADO: requiere corrección — solo info + link */}
+        {isCorrection && (
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+            <p className="text-sm text-amber-200/70">
+              Esperando que la sucursal corrija los datos. Vuelve automáticamente a revisión al guardar.
+            </p>
+            <Link
+              to={detailUrl}
+              className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-slate-600 px-4 py-2 text-sm font-bold text-slate-300 hover:bg-slate-900"
+            >
+              <ExternalLink size={14} /> Ver detalle
+            </Link>
           </div>
         )}
       </div>

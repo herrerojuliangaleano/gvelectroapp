@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState, type ReactNode } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, ChevronUp,
   Copy, Eye, Package, PencilLine, RefreshCw, Save, ShieldCheck,
@@ -36,6 +36,8 @@ function historyIcon(eventType: string) {
 export function WarrantyDetailPage() {
   const { warrantyId = '' } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const fromRevision = searchParams.get('from') === 'revision';
   const id = decodeURIComponent(warrantyId);
 
   const [data, setData] = useState<WarrantyDetailResponse | null>(null);
@@ -278,8 +280,11 @@ export function WarrantyDetailPage() {
             <button onClick={load} className="inline-flex items-center gap-2 rounded-xl border border-slate-600 px-3 py-2 text-sm font-bold text-slate-100 hover:bg-slate-900">
               <RefreshCw size={15} /> Actualizar
             </button>
-            <Link to="/warranties" className="inline-flex items-center gap-2 rounded-xl border border-slate-600 px-3 py-2 text-sm font-bold text-slate-100 hover:bg-slate-900">
-              <ArrowLeft size={15} /> Volver
+            <Link
+              to={fromRevision ? '/warranties/revision' : '/warranties'}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-600 px-3 py-2 text-sm font-bold text-slate-100 hover:bg-slate-900"
+            >
+              <ArrowLeft size={15} /> {fromRevision ? 'Volver a revisión' : 'Volver'}
             </Link>
           </div>
         </div>
@@ -459,50 +464,63 @@ export function WarrantyDetailPage() {
             </div>
           ) : (
             <div className="mt-4 space-y-4">
-              <label>
-                <span className="mb-2 block text-sm font-semibold text-slate-300">
-                  {s.review_status === 'en_revision' ? 'Nota de revisión (opcional)' : 'Nota interna (opcional)'}
-                </span>
-                <textarea value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} rows={3}
-                  placeholder={s.review_status === 'en_revision' ? 'Ej: Serie verificada, falla reproducible, aprobado para gestión...' : 'Observación interna de revisión...'}
-                  className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 outline-none focus:border-blue-400" />
-              </label>
 
-              <div className="flex flex-wrap gap-3">
-                {/* Tomar en revisión: solo si NO está en revisión ni aprobada */}
-                {can('warranties.review') && s.review_status !== 'en_revision' && s.review_status !== 'revisada' && (
+              {/* Pendiente + viene de revisión: CTA prominente para tomar */}
+              {s.review_status !== 'en_revision' && s.review_status !== 'revisada' && s.review_status !== 'requiere_correccion' && can('warranties.review') && (
+                <div className="rounded-2xl border border-violet-500/30 bg-violet-500/5 p-4">
+                  <p className="mb-3 text-sm text-slate-300">
+                    {fromRevision
+                      ? 'Estás en el detalle para revisar. Tomala en revisión para activar Aprobar / Pedir corrección.'
+                      : 'Tomá la garantía en revisión para validar los datos y aprobarla o devolverla a corrección.'}
+                  </p>
                   <button disabled={saving} onClick={() => reviewAction('take')}
-                    className="inline-flex items-center gap-2 rounded-xl border border-violet-500/50 bg-violet-500/10 px-5 py-3 font-black text-violet-100 hover:bg-violet-500/20 disabled:opacity-50">
+                    className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-3 font-black text-white hover:bg-violet-500 disabled:opacity-50">
                     <Eye size={18} /> Tomar en revisión
                   </button>
-                )}
+                </div>
+              )}
 
-                {/* Acciones disponibles cuando está en revisión */}
-                {s.review_status === 'en_revision' && (
-                  <>
-                    {can('warranties.mark_incomplete') && (
-                      <button disabled={saving} onClick={() => reviewAction('incomplete')}
-                        className="inline-flex items-center gap-2 rounded-xl border border-amber-500/50 px-5 py-3 font-black text-amber-100 hover:bg-amber-500/10 disabled:opacity-50">
-                        <AlertTriangle size={18} /> Pedir corrección
-                      </button>
-                    )}
-                    {can('warranties.approve_review') && (
-                      <button disabled={saving} onClick={() => reviewAction('approve')}
-                        className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 font-black text-white hover:bg-emerald-400 disabled:opacity-50">
-                        <CheckCircle2 size={18} /> Aprobar revisión
-                      </button>
-                    )}
-                  </>
-                )}
+              {/* Nota — solo mostrar cuando está en revisión o requiere corrección */}
+              {(s.review_status === 'en_revision' || s.review_status === 'requiere_correccion') && (
+                <label>
+                  <span className="mb-2 block text-sm font-semibold text-slate-300">
+                    Nota de revisión
+                    {s.review_status === 'en_revision' && <span className="ml-1 text-xs font-normal text-slate-500">(obligatoria si pedís corrección)</span>}
+                  </span>
+                  <textarea value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} rows={3}
+                    placeholder="Ej: Serie verificada, falla reproducible — o motivo por el que hay que corregir..."
+                    className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 outline-none focus:border-blue-400" />
+                </label>
+              )}
 
-                {/* Si requiere corrección, también puede aprobarse directamente */}
-                {s.review_status === 'requiere_correccion' && can('warranties.approve_review') && (
-                  <button disabled={saving} onClick={() => reviewAction('approve')}
-                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 font-black text-white hover:bg-emerald-400 disabled:opacity-50">
-                    <CheckCircle2 size={18} /> Aprobar de todas formas
-                  </button>
-                )}
-              </div>
+              {/* Acciones cuando está en revisión */}
+              {s.review_status === 'en_revision' && (
+                <div className="flex flex-wrap gap-3">
+                  {can('warranties.mark_incomplete') && (
+                    <button
+                      disabled={saving || !reviewNote.trim()}
+                      title={!reviewNote.trim() ? 'Escribí el motivo de corrección antes de enviar' : undefined}
+                      onClick={() => reviewAction('incomplete')}
+                      className="inline-flex items-center gap-2 rounded-xl border border-amber-500/50 px-5 py-3 font-black text-amber-100 hover:bg-amber-500/10 disabled:opacity-40">
+                      <AlertTriangle size={18} /> Pedir corrección
+                    </button>
+                  )}
+                  {can('warranties.approve_review') && (
+                    <button disabled={saving} onClick={() => reviewAction('approve')}
+                      className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 font-black text-white hover:bg-emerald-400 disabled:opacity-50">
+                      <CheckCircle2 size={18} /> Aprobar revisión
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Corrección: puede aprobarse directamente si el gestor decide omitir la re-revisión */}
+              {s.review_status === 'requiere_correccion' && can('warranties.approve_review') && (
+                <button disabled={saving} onClick={() => reviewAction('approve')}
+                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 font-black text-white hover:bg-emerald-400 disabled:opacity-50">
+                  <CheckCircle2 size={18} /> Aprobar directamente
+                </button>
+              )}
             </div>
           )}
         </div>
