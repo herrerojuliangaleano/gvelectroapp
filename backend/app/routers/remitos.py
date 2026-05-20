@@ -1006,11 +1006,11 @@ def list_remitos(
 ):
     """Lista remitos internos.
 
-    - warranties.remitos.view → seguimiento global, ve todos los remitos.
-    - warranties.remitos.generate (sin view) → solo ve remitos creados por él
-      o cuya sucursal de origen coincida con su sucursal asignada.
-    - Cualquier otro permiso de remitos también accede (dispatch/receive/delete).
-    - Sin ninguno de estos permisos → 403.
+    Cualquier permiso de remitos (view, generate, dispatch, receive, delete,
+    deposit_transfer, provider_delivery) da acceso a ver todos los remitos.
+    Esto simplifica el seguimiento: un generador de sucursal puede ver el
+    estado de los remitos que creó, sin necesidad de un permiso extra.
+    Sin ninguno de estos permisos → 403.
     """
     _require_any(
         user,
@@ -1022,29 +1022,11 @@ def list_remitos(
         "warranties.remitos.deposit_transfer",
         "warranties.remitos.provider_delivery",
     )
-    global_view = getattr(user, "has", lambda _p: False)("warranties.remitos.view")
-    actor       = str(getattr(user, "username", "") or "")
-    user_branch = str(getattr(user, "branch_name", "") or getattr(user, "sucursal", "") or "").strip()
 
     with db_connect() as conn:
         ensure_remito_tables(conn)
         sql    = "SELECT * FROM warranty_remitos WHERE 1=1"
         params: list[Any] = []
-
-        # Scope: si no tiene seguimiento global, restringir a sus propios remitos
-        # o los de su sucursal de origen.
-        if not global_view:
-            scope_conditions: list[str] = []
-            scope_params: list[Any] = []
-            if actor:
-                scope_conditions.append("created_by = ?")
-                scope_params.append(actor)
-            if user_branch:
-                scope_conditions.append("LOWER(origen_sucursal) = LOWER(?)")
-                scope_params.append(user_branch)
-            if scope_conditions:
-                sql += " AND (" + " OR ".join(scope_conditions) + ")"
-                params.extend(scope_params)
 
         if shipment_code:
             sql += " AND shipment_code = ?"

@@ -345,8 +345,8 @@ export function WarrantyDetailPage() {
           <Info label="ID de caso" value={s.id_de_caso} />
           <Info label="Envío proveedor" value={s.fecha_envio_proveedor} />
           <Info label="Última respuesta" value={s.fecha_ultima_respuesta} />
-          {s.remito_interno && <Info label="Remito interno" value={s.remito_interno} />}
-          {s.remito_proveedor && <Info label="Remito proveedor" value={s.remito_proveedor} />}
+          {(can('warranties.remitos.view') || can('warranties.remitos.generate') || can('warranties.remitos.dispatch') || can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer') || can('warranties.remitos.provider_delivery')) && s.remito_interno && <Info label="Remito interno" value={s.remito_interno} />}
+          {(can('warranties.remitos.view') || can('warranties.remitos.generate') || can('warranties.remitos.dispatch') || can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer') || can('warranties.remitos.provider_delivery')) && s.remito_proveedor && <Info label="Remito proveedor" value={s.remito_proveedor} />}
         </div>
 
         {/* origin + location block */}

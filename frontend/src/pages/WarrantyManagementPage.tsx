@@ -468,6 +468,7 @@ function ManagementCard({
   const canResponse = can('warranties.register_provider_response');
   const canClaim = can('warranties.register_claim');
   const canStatus = can('warranties.change_status');
+  const canSeeRemitos = can('warranties.remitos.view') || can('warranties.remitos.generate') || can('warranties.remitos.dispatch') || can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer') || can('warranties.remitos.provider_delivery') || can('warranties.remitos.delete');
   const hasProvider = Boolean(item.provider_name || item.fecha_envio_proveedor);
   const isPendingConfirm = Boolean(item.shipment_code) && !item.fecha_envio_proveedor;
   const isApprovedPending = item.estado === '2 - PENDIENTE' && !item.shipment_code;
@@ -611,8 +612,8 @@ function ManagementCard({
             {item.fecha_ultimo_reclamo && <MetaItem label="Reclamo" value={item.fecha_ultimo_reclamo} />}
           </div>
 
-          {/* Remito badges — internal + provider delivery shown separately */}
-          {(item.remito_interno || item.remito_proveedor) && (
+          {/* Remito badges — solo visibles para usuarios con permiso de remitos */}
+          {canSeeRemitos && (item.remito_interno || item.remito_proveedor) && (
             <div className="flex flex-wrap gap-2">
               {item.remito_interno && (
                 <span className="inline-flex items-center gap-1 rounded-full border border-slate-600 px-2.5 py-1 text-xs font-mono text-slate-300">
@@ -664,7 +665,7 @@ function ManagementCard({
               <Truck size={15} className="mt-0.5 shrink-0" />
               <span>
                 {item.transit_status === 'en_transito'
-                  ? `Esperando llegada a Depósito Chiclana${item.remito_interno ? ` · ${item.remito_interno}` : ''}. No corresponde avanzar proveedor hasta confirmar recepción.`
+                  ? `Esperando llegada a Depósito Chiclana${canSeeRemitos && item.remito_interno ? ` · ${item.remito_interno}` : ''}. No corresponde avanzar proveedor hasta confirmar recepción.`
                   : `Esta garantía ingresó en ${item.sucursal || 'sucursal'} y debe ir primero a Depósito Chiclana por remito interno.`}
               </span>
             </div>

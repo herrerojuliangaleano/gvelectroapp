@@ -4,7 +4,7 @@ import {
   AlertTriangle, ArrowRight, CheckCircle2, Clock,
   MapPin, Package, RefreshCw, Send, Truck,
 } from 'lucide-react';
-import { fetchWarranties, getCurrentUserFromStorage } from '../api/client';
+import { can, fetchWarranties, getCurrentUserFromStorage } from '../api/client';
 import type { WarrantySummary, WarrantyListResponse } from '../types';
 import { computeLogisticsAlerts, flowToneClass, getWarrantyStatusMeta } from '../warrantyFlow';
 
@@ -71,10 +71,10 @@ function SucursalCard({ item }: { item: WarrantySummary }) {
         <span>{item.ubicacion_actual_label || item.ubicacion_actual || 'En sucursal'}</span>
       </div>
 
-      {/* Remito info if any */}
-      {item.remito_interno && (
+      {/* Remito info — solo para usuarios con permiso de remitos */}
+      {(can('warranties.remitos.view') || can('warranties.remitos.generate') || can('warranties.remitos.dispatch')) && item.remito_interno && (
         <div className="mt-2 rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-1.5 font-mono text-xs text-slate-300">
-          Remito: {item.remito_interno}
+          REM: {item.remito_interno}
         </div>
       )}
 
