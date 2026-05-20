@@ -882,24 +882,39 @@ def status_matches(value: Any, expected: Any) -> bool:
     return canonical_status_key(value) == canonical_status_key(expected)
 
 
-def review_status_matches(value: Any, expected: str) -> bool:
-    current = canonical_status_key(value)
-    wanted = canonical_status_key(expected)
-    aliases = {
-        canonical_status_key(REVIEW_PENDING): canonical_status_key(REVIEW_PENDING),
-        canonical_status_key("Pendiente de revisión"): canonical_status_key(REVIEW_PENDING),
-        canonical_status_key("pending"): canonical_status_key(REVIEW_PENDING),
-        canonical_status_key(REVIEW_IN_PROGRESS): canonical_status_key(REVIEW_IN_PROGRESS),
-        canonical_status_key("En revisión"): canonical_status_key(REVIEW_IN_PROGRESS),
-        canonical_status_key("En revision"): canonical_status_key(REVIEW_IN_PROGRESS),
-        canonical_status_key(REVIEW_INCOMPLETE): canonical_status_key(REVIEW_INCOMPLETE),
-        canonical_status_key("Requiere corrección"): canonical_status_key(REVIEW_INCOMPLETE),
-        canonical_status_key("Incompleta"): canonical_status_key(REVIEW_INCOMPLETE),
-        canonical_status_key("incompleta"): canonical_status_key(REVIEW_INCOMPLETE),
-        canonical_status_key(REVIEW_APPROVED): canonical_status_key(REVIEW_APPROVED),
-        canonical_status_key("Revisada"): canonical_status_key(REVIEW_APPROVED),
+def _canonical_review_status(value: Any) -> str:
+    """Normaliza un valor de review_status a su constante canónica.
+
+    NO usa canonical_status_key() porque esa función mapea 'EN REVISION' y
+    'PENDIENTE REVISION' a 'INGRESO' (para compatibilidad con estados operativos
+    viejos), lo que hace que pendiente_revision y en_revision sean indistinguibles.
+    """
+    s = normalize_text(value)
+    if not s:
+        return REVIEW_PENDING
+    # Quitar prefijo numérico si existiera
+    s = re.sub(r"^\d+\s+", "", s).strip()
+    aliases: dict[str, str] = {
+        # pendiente_revision
+        "PENDIENTE REVISION":          REVIEW_PENDING,
+        "PENDIENTE DE REVISION":       REVIEW_PENDING,
+        "PENDING":                     REVIEW_PENDING,
+        # en_revision
+        "EN REVISION":                 REVIEW_IN_PROGRESS,
+        "EN REVISION INTERNA":         REVIEW_IN_PROGRESS,
+        # requiere_correccion
+        "REQUIERE CORRECCION":         REVIEW_INCOMPLETE,
+        "CORRECCION PENDIENTE":        REVIEW_INCOMPLETE,
+        "INCOMPLETA":                  REVIEW_INCOMPLETE,
+        # revisada
+        "REVISADA":                    REVIEW_APPROVED,
     }
-    return aliases.get(current, current) == aliases.get(wanted, wanted)
+    return aliases.get(s, s)
+
+
+def review_status_matches(value: Any, expected: str) -> bool:
+    """Compara review_status con normalización propia (sin canonical_status_key)."""
+    return _canonical_review_status(value) == _canonical_review_status(expected)
 
 
 def header_key(value: Any) -> str:
