@@ -4,8 +4,6 @@ import {
   ArrowRight,
   Building2,
   CheckCircle2,
-  ChevronDown,
-  ChevronUp,
   Clock,
   Download,
   FileText,
@@ -14,21 +12,16 @@ import {
   Printer,
   RefreshCw,
   Send,
-  Trash2,
   Truck,
 } from 'lucide-react';
 import {
   can,
-  confirmRemitoArrival,
   confirmRemitoArrivalByCode,
-  deleteRemito,
-  dispatchRemito,
   downloadRemitoPdf,
   fetchAvailableWarrantiesForRemito,
   fetchAvailableWarrantiesForDepositTransfer,
   fetchAvailableWarrantiesForProviderDelivery,
   fetchDepositTransferOptions,
-  fetchRemitos,
   fetchWarrantyOptions,
   generateDepositTransferRemito,
   generateProviderDeliveryRemito,
@@ -40,98 +33,17 @@ import type {
   ProviderDeliveryWarranty,
   WarrantyOptions,
   WarrantyRemitoInfo,
-  WarrantyRemitosResponse,
 } from '../types';
 
 // ── Permisos ──────────────────────────────────────────────────────────────────
-const canView             = () => can('warranties.remitos.view')     || can('warranties.remitos.generate') || can('warranties.remitos.dispatch') || can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer');
-const canFollow           = () => can('warranties.remitos.view') || can('warranties.remitos.generate');
 const canGenerate         = () => can('warranties.remitos.generate');
 const canDispatch         = () => can('warranties.remitos.dispatch');
 const canReceive          = () => can('warranties.remitos.receive');
 const canDepositTransfer  = () => can('warranties.remitos.deposit_transfer');
-const canDelete           = () => can('warranties.remitos.delete');
 const canProviderDelivery = () => can('warranties.remitos.provider_delivery');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function statusBadge(status: WarrantyRemitoInfo['status']) {
-  if (status === 'llegado')     return <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-xs font-semibold text-emerald-300">LLEGADO</span>;
-  if (status === 'en_transito') return <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-xs font-semibold text-amber-300">EN TRÁNSITO</span>;
-  return <span className="rounded-full bg-slate-600/40 px-2 py-0.5 text-xs font-semibold text-slate-300">PENDIENTE</span>;
-}
-
-/**
- * Calcula el tiempo transcurrido entre dos ISO timestamps (o desde now si no hay fin).
- * Devuelve un objeto con horas totales y un string legible: "Xh", "X días Yh", etc.
- */
-function calcDuration(startIso?: string | null, endIso?: string | null): { label: string; hours: number } | null {
-  if (!startIso) return null;
-  const start = new Date(startIso).getTime();
-  const end   = endIso ? new Date(endIso).getTime() : Date.now();
-  const ms    = end - start;
-  if (ms < 0) return null;
-  const totalMinutes = Math.floor(ms / 60000);
-  const totalHours   = Math.floor(ms / 3600000);
-  if (totalMinutes < 60) return { label: `${totalMinutes} min`, hours: 0 };
-  if (totalHours < 24)   return { label: `${totalHours}h`, hours: totalHours };
-  const days  = Math.floor(totalHours / 24);
-  const remH  = totalHours % 24;
-  const label = remH > 0 ? `${days}d ${remH}h` : `${days}d`;
-  return { label, hours: totalHours };
-}
-
-/** Chip de duración: naranja si > 2 días en tránsito, rojo si > 5 días */
-function TransitTimer({ remito }: { remito: WarrantyRemitoInfo }) {
-  if (remito.status === 'pendiente') {
-    const d = calcDuration(remito.created_at);
-    if (!d) return null;
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-slate-600 bg-slate-800/80 px-2 py-0.5 text-xs text-slate-400">
-        <Clock className="h-3 w-3" /> Creado hace {d.label}
-      </span>
-    );
-  }
-
-  if (remito.status === 'en_transito') {
-    const d = calcDuration(remito.fecha_despacho, null);
-    if (!d) return null;
-    const color = d.hours >= 120
-      ? 'border-red-500/40 bg-red-500/10 text-red-300'
-      : d.hours >= 48
-      ? 'border-amber-500/40 bg-amber-500/15 text-amber-300'
-      : 'border-amber-500/30 bg-amber-500/10 text-amber-200';
-    const urgent = d.hours >= 120 ? ' ⚠' : '';
-    return (
-      <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${color}`}>
-        <Truck className="h-3 w-3" /> {d.label} en tránsito{urgent}
-      </span>
-    );
-  }
-
-  if (remito.status === 'llegado') {
-    const d = calcDuration(remito.fecha_despacho, remito.fecha_llegada);
-    if (!d) return null;
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-300">
-        <CheckCircle2 className="h-3 w-3" /> Tránsito: {d.label}
-      </span>
-    );
-  }
-
-  return null;
-}
-
-function brandBadge(brand: string) {
-  if (brand === 'abc_electro') {
-    return <span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-xs font-semibold text-blue-300">ABC Electro</span>;
-  }
-  return <span className="rounded-full bg-sky-500/20 px-2 py-0.5 text-xs font-semibold text-sky-300">GV Electro</span>;
-}
-
-function countByStatus(items: WarrantyRemitoInfo[] | undefined, status: WarrantyRemitoInfo['status']) {
-  return (items ?? []).filter((r) => r.status === status).length;
-}
 function centralWarrantyDepositName(options: WarrantyOptions | null): string {
   const configured = options?.warranty_central_deposit?.name?.trim();
   if (configured && configured.toLowerCase().includes('chiclana')) return configured;
@@ -180,13 +92,6 @@ async function printRemitoPdf(remitoCode: string): Promise<void> {
 
 export function WarrantyRemitosPage() {
   const [options, setOptions] = useState<WarrantyOptions | null>(null);
-  const [data, setData] = useState<WarrantyRemitosResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
-  // Filters
-  const [filterShipment, setFilterShipment] = useState('');
-  const [filterStatus, setFilterStatus] = useState('');
 
   // Generate remitos form
   const [genDestino, setGenDestino] = useState('');
@@ -226,18 +131,6 @@ export function WarrantyRemitosPage() {
   const [quickError, setQuickError] = useState('');
   const [quickResult, setQuickResult] = useState('');
 
-  // Per-remito action state
-  const [confirmDelete, setConfirmDelete] = useState<Record<string, boolean>>({});
-  const [deleteLoading, setDeleteLoading] = useState<Record<string, boolean>>({});
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({});
-  const [actionError, setActionError] = useState<Record<string, string>>({});
-  const [printLoading, setPrintLoading] = useState<Record<string, boolean>>({});
-  const [dispatchLugar, setDispatchLugar] = useState<Record<string, string>>({});
-  const [arrivalCode, setArrivalCode] = useState<Record<string, string>>({});
-  const [arrivalLugar, setArrivalLugar] = useState<Record<string, string>>({});
-  const [arrivalNota, setArrivalNota] = useState<Record<string, string>>({});
-
   const centralDepositName = centralWarrantyDepositName(options);
   const currentUser = useMemo(() => getCurrentUserFromStorage(), []);
   const userBranchName = (currentUser?.branch_name || currentUser?.sucursal || '').trim();
@@ -259,27 +152,9 @@ export function WarrantyRemitosPage() {
         loadAvailableWarranties(userBranchName);
       }
     }).catch(() => {});
-    if (canFollow()) load();
     if (canDepositTransfer()) loadDepositTransfer();
     if (canProviderDelivery()) loadProviderDelivery();
   }, []);
-
-  async function load() {
-    if (!canFollow()) return;
-    setLoading(true);
-    setError('');
-    try {
-      const params: Record<string, string> = {};
-      if (filterShipment.trim()) params.remito_code = filterShipment.trim().toUpperCase();
-      if (filterStatus) params.status = filterStatus;
-      const res = await fetchRemitos(params);
-      setData(res);
-    } catch (e: unknown) {
-      setError((e as Error).message || 'Error al cargar remitos');
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function loadAvailableWarranties(suc: string) {
     if (!suc.trim()) {
@@ -391,9 +266,7 @@ export function WarrantyRemitosPage() {
       setPdResult({ count: res.count, remitos: res.remitos });
       setPdNota('');
       setPdSelected(new Set());
-      setFilterStatus('');
       await loadProviderDelivery();
-      if (canFollow()) await load();
     } catch (e: unknown) {
       setPdError((e as Error).message || 'Error al generar el remito de entrega');
     } finally {
@@ -443,7 +316,6 @@ export function WarrantyRemitosPage() {
       });
       setTransferResult({ count: res.count, remitos: res.remitos });
       setTransferNota('');
-      setFilterStatus('');
       await loadDepositTransfer();
     } catch (e: unknown) {
       setTransferError((e as Error).message || 'No se pudo generar el movimiento');
@@ -482,27 +354,10 @@ export function WarrantyRemitosPage() {
       setGenNota('');
       setSelectedCodes(new Set());
       setAvailableWarranties([]);
-      // Reset filter so the newly-created pendiente remito is immediately visible
-      setFilterStatus('');
-      await load();
     } catch (e: unknown) {
       setGenError((e as Error).message || 'Error al generar remitos');
     } finally {
       setGenLoading(false);
-    }
-  }
-
-  async function handleDispatch(remito: WarrantyRemitoInfo) {
-    const lugar = (dispatchLugar[remito.remito_code] || '').trim();
-    setActionLoading((p) => ({ ...p, [remito.remito_code]: true }));
-    setActionError((p) => ({ ...p, [remito.remito_code]: '' }));
-    try {
-      await dispatchRemito(remito.remito_code, { lugar_salida: lugar || remito.origen_sucursal });
-      await load();
-    } catch (e: unknown) {
-      setActionError((p) => ({ ...p, [remito.remito_code]: (e as Error).message || 'Error' }));
-    } finally {
-      setActionLoading((p) => ({ ...p, [remito.remito_code]: false }));
     }
   }
 
@@ -524,37 +379,10 @@ export function WarrantyRemitosPage() {
       setQuickResult(`Remito ${result.remito_code} confirmado como llegado.`);
       setQuickCode('');
       setQuickLugar('');
-      await load();
     } catch (err: unknown) {
       setQuickError((err as Error).message || 'No se pudo confirmar el remito');
     } finally {
       setQuickLoading(false);
-    }
-  }
-
-  async function handleArrival(remito: WarrantyRemitoInfo) {
-    const code = (arrivalCode[remito.remito_code] || '').trim();
-    if (!code) {
-      setActionError((p) => ({ ...p, [remito.remito_code]: 'Ingresá el código del remito para confirmar la llegada.' }));
-      return;
-    }
-    if (code.toUpperCase() !== remito.remito_code.toUpperCase()) {
-      setActionError((p) => ({ ...p, [remito.remito_code]: `El código "${code}" no coincide con este remito.` }));
-      return;
-    }
-    setActionLoading((p) => ({ ...p, [remito.remito_code]: true }));
-    setActionError((p) => ({ ...p, [remito.remito_code]: '' }));
-    try {
-      await confirmRemitoArrival(remito.remito_code, {
-        remito_code: code,
-        lugar_llegada: (arrivalLugar[remito.remito_code] || '').trim() || undefined,
-        nota: (arrivalNota[remito.remito_code] || '').trim() || undefined,
-      });
-      await load();
-    } catch (e: unknown) {
-      setActionError((p) => ({ ...p, [remito.remito_code]: (e as Error).message || 'Error' }));
-    } finally {
-      setActionLoading((p) => ({ ...p, [remito.remito_code]: false }));
     }
   }
 
@@ -572,37 +400,6 @@ export function WarrantyRemitosPage() {
     }
   }
 
-  async function handlePrint(remitoCode: string) {
-    setPrintLoading((p) => ({ ...p, [remitoCode]: true }));
-    try {
-      await printRemitoPdf(remitoCode);
-    } catch (e: unknown) {
-      alert((e as Error).message || 'Error al imprimir');
-    } finally {
-      setPrintLoading((p) => ({ ...p, [remitoCode]: false }));
-    }
-  }
-
-  async function handleDelete(remitoCode: string) {
-    setDeleteLoading((p) => ({ ...p, [remitoCode]: true }));
-    setActionError((p) => ({ ...p, [remitoCode]: '' }));
-    try {
-      await deleteRemito(remitoCode);
-      setConfirmDelete((p) => ({ ...p, [remitoCode]: false }));
-      await load();
-    } catch (e: unknown) {
-      setActionError((p) => ({ ...p, [remitoCode]: (e as Error).message || 'Error al eliminar' }));
-    } finally {
-      setDeleteLoading((p) => ({ ...p, [remitoCode]: false }));
-    }
-  }
-
-  function toggleExpanded(code: string) {
-    setExpanded((p) => ({ ...p, [code]: !p[code] }));
-  }
-
-  const viewable = canView();
-  const follower = canFollow();
   const depositTransfer = canDepositTransfer();
   const generator = canGenerate();
   const dispatcher = canDispatch();
@@ -624,15 +421,6 @@ export function WarrantyRemitosPage() {
     () => (pdFilterProvider ? (pdProviders.get(pdFilterProvider) ?? []) : pdWarranties),
     [pdFilterProvider, pdProviders, pdWarranties],
   );
-  const remitos = useMemo<WarrantyRemitoInfo[]>(() => (Array.isArray(data?.items) ? data.items : []), [data]);
-  const totalRemitos = typeof data?.total === 'number' ? data.total : remitos.length;
-
-  const stats = useMemo(() => ({
-    total: totalRemitos,
-    pendientes: countByStatus(remitos, 'pendiente'),
-    transito: countByStatus(remitos, 'en_transito'),
-    llegados: countByStatus(remitos, 'llegado'),
-  }), [remitos, totalRemitos]);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4">
@@ -657,24 +445,6 @@ export function WarrantyRemitosPage() {
               </div>
             </div>
           </div>
-          {follower && <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[420px]">
-            <div className="rounded-2xl border border-slate-700/70 bg-slate-950/60 p-3 text-center">
-              <div className="text-xl font-black text-white">{stats.total}</div>
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">Total</div>
-            </div>
-            <div className="rounded-2xl border border-slate-700/70 bg-slate-950/60 p-3 text-center">
-              <div className="text-xl font-black text-slate-200">{stats.pendientes}</div>
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">Pendientes</div>
-            </div>
-            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 text-center">
-              <div className="text-xl font-black text-amber-200">{stats.transito}</div>
-              <div className="text-[11px] uppercase tracking-wide text-amber-300/70">En tránsito</div>
-            </div>
-            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-center">
-              <div className="text-xl font-black text-emerald-200">{stats.llegados}</div>
-              <div className="text-[11px] uppercase tracking-wide text-emerald-300/70">Llegados</div>
-            </div>
-          </div>}
         </div>
       </div>
 
@@ -1169,219 +939,7 @@ export function WarrantyRemitosPage() {
         </section>
       )}
 
-      {/* Lista / seguimiento global */}
-      {follower && (
-        <section className="rounded-3xl border border-slate-800 bg-slate-950 p-5">
-          <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center">
-            <h2 className="flex items-center gap-2 text-lg font-black text-white">
-              <Truck className="h-5 w-5 text-slate-400" />
-              Seguimiento de remitos
-              {data && <span className="ml-1 text-sm font-normal text-slate-400">({totalRemitos})</span>}
-            </h2>
-            <div className="lg:ml-auto flex flex-wrap items-center gap-2">
-              <input
-                className="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
-                placeholder="Buscar REM / código"
-                value={filterShipment}
-                onChange={(e) => setFilterShipment(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && load()}
-              />
-              <select
-                className="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-              >
-                <option value="">Todos</option>
-                <option value="pendiente">Pendiente</option>
-                <option value="en_transito">En tránsito</option>
-                <option value="llegado">Llegado</option>
-              </select>
-              <button onClick={load} className="flex items-center gap-1 rounded-2xl bg-slate-800 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-700">
-                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-                Actualizar
-              </button>
-            </div>
-          </div>
-
-          {error && (
-            <div className="mb-3 flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
-              <AlertTriangle className="h-4 w-4 shrink-0" />{error}
-            </div>
-          )}
-
-          {loading && !data && (
-            <div className="py-10 text-center text-slate-400">
-              <RefreshCw className="mx-auto mb-2 h-6 w-6 animate-spin" />Cargando...
-            </div>
-          )}
-
-          {!loading && data && remitos.length === 0 && (
-            <div className="rounded-2xl border border-slate-800 bg-slate-900 py-12 text-center text-slate-400">
-              <Truck className="mx-auto mb-3 h-10 w-10 opacity-30" />
-              <p>No hay remitos que coincidan con los filtros</p>
-            </div>
-          )}
-
-          <div className="space-y-3">
-            {remitos.map((remito) => {
-              const isExp       = expanded[remito.remito_code] ?? false;
-              const actLoad     = actionLoading[remito.remito_code] ?? false;
-              const actErr      = actionError[remito.remito_code] ?? '';
-              const printing    = printLoading[remito.remito_code] ?? false;
-              const delConfirm  = confirmDelete[remito.remito_code] ?? false;
-              const delLoading  = deleteLoading[remito.remito_code] ?? false;
-
-              return (
-                <div key={remito.remito_code} className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
-                  <div className="flex flex-wrap items-start gap-3 p-4">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-mono text-base font-black text-white">{remito.remito_code}</span>
-                        {statusBadge(remito.status)}
-                        {brandBadge(remito.company_brand)}
-                        <TransitTimer remito={remito} />
-                      </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-slate-400">
-                        <span className="flex items-center gap-1"><Building2 className="h-3.5 w-3.5" />{remito.origen_sucursal}</span>
-                        <ArrowRight className="h-3.5 w-3.5" />
-                        <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{remito.destino_deposito}</span>
-                      </div>
-                      <div className="mt-1 text-xs text-slate-500">
-                        Remito interno · {remito.warranties_count} garantía(s) · {remito.created_at_display} · {remito.created_by_name || 'Sistema'}
-                      </div>
-                    </div>
-
-                    <div className="ml-auto flex flex-wrap items-center gap-2">
-                      <button onClick={() => handleDownloadPdf(remito.remito_code)} className="flex items-center gap-1 rounded-xl border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-300 hover:border-blue-500 hover:text-blue-300" title="Descargar PDF">
-                        <Download className="h-4 w-4" />PDF
-                      </button>
-                      <button onClick={() => handlePrint(remito.remito_code)} disabled={printing} className="flex items-center gap-1 rounded-xl border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-300 hover:border-violet-500 hover:text-violet-300 disabled:opacity-50" title="Imprimir directamente">
-                        {printing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />} Imprimir
-                      </button>
-                      <button onClick={() => toggleExpanded(remito.remito_code)} className="flex items-center gap-1 rounded-xl border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-300 hover:border-slate-500">
-                        {isExp ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                        {isExp ? 'Ocultar' : 'Detalle'}
-                      </button>
-
-                      {canDelete() && !delConfirm && (
-                        <button onClick={() => setConfirmDelete((p) => ({ ...p, [remito.remito_code]: true }))} className="flex items-center gap-1 rounded-xl border border-red-800/60 bg-slate-800 px-3 py-1.5 text-sm text-red-400 hover:border-red-500 hover:bg-red-500/10" title="Eliminar remito">
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      )}
-                      {canDelete() && delConfirm && (
-                        <div className="flex items-center gap-1">
-                          <span className="text-xs text-red-400">¿Eliminar?</span>
-                          <button onClick={() => handleDelete(remito.remito_code)} disabled={delLoading} className="flex items-center gap-1 rounded-xl bg-red-600 px-3 py-1.5 text-sm font-bold text-white hover:bg-red-500 disabled:opacity-50">
-                            {delLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />} Sí
-                          </button>
-                          <button onClick={() => setConfirmDelete((p) => ({ ...p, [remito.remito_code]: false }))} className="rounded-xl border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-300 hover:border-slate-500">No</button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {remito.status !== 'pendiente' && (
-                    <div className="border-t border-slate-800 px-4 py-2 text-xs text-slate-400">
-                      {remito.status === 'en_transito' && (
-                        <span className="flex items-center gap-1.5 text-amber-300"><Truck className="h-3.5 w-3.5" />Despachado el {remito.fecha_despacho_display} · {remito.despachado_por_name}</span>
-                      )}
-                      {remito.status === 'llegado' && (
-                        <span className="flex items-center gap-1.5 text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" />Llegó el {remito.fecha_llegada_display} · recibido por {remito.recibido_por_name}</span>
-                      )}
-                    </div>
-                  )}
-
-                  {isExp && (
-                    <div className="space-y-4 border-t border-slate-800 p-4">
-                      {remito.warranties && remito.warranties.length > 0 && (
-                        <div className="overflow-x-auto rounded-xl border border-slate-800">
-                          <table className="w-full text-sm">
-                            <thead className="bg-slate-950 text-left text-xs text-slate-400">
-                              <tr>
-                                <th className="px-3 py-2">ID</th>
-                                <th className="px-3 py-2">Producto</th>
-                                <th className="px-3 py-2">SKU</th>
-                                <th className="px-3 py-2">Serie</th>
-                                <th className="px-3 py-2">Falla</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-800">
-                              {remito.warranties.map((w) => (
-                                <tr key={`${remito.remito_code}-${w.warranty_code}`}>
-                                  <td className="px-3 py-2 font-mono text-xs font-bold text-slate-300">{w.warranty_code}</td>
-                                  <td className="px-3 py-2 text-white"><div className="max-w-[160px] truncate">{w.producto}</div></td>
-                                  <td className="px-3 py-2 text-slate-300">{w.sku || '—'}</td>
-                                  <td className="px-3 py-2 text-slate-300">{w.serie || '—'}</td>
-                                  <td className="px-3 py-2 text-slate-400">{w.falla || '—'}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-
-                      {remito.nota && <p className="text-sm text-slate-400"><span className="font-semibold text-slate-300">Nota:</span> {remito.nota}</p>}
-
-                      {actErr && (
-                        <div className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
-                          <AlertTriangle className="h-4 w-4 shrink-0" />{actErr}
-                        </div>
-                      )}
-
-                      {remito.status === 'pendiente' && dispatcher && (
-                        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4 space-y-3">
-                          <h3 className="flex items-center gap-2 text-sm font-black text-amber-300"><Send className="h-4 w-4" />Despachar desde sucursal</h3>
-                          <p className="text-xs text-slate-400">Marca el remito como en tránsito y mueve las garantías a ubicación “en tránsito”.</p>
-                          <div className="flex flex-col gap-1">
-                            <label className="text-xs font-semibold text-slate-400">Lugar de salida (opcional)</label>
-                            <input className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-amber-500 focus:outline-none" placeholder={remito.origen_sucursal} value={dispatchLugar[remito.remito_code] ?? ''} onChange={(e) => setDispatchLugar((p) => ({ ...p, [remito.remito_code]: e.target.value }))} />
-                          </div>
-                          <button onClick={() => handleDispatch(remito)} disabled={actLoad} className="flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white hover:bg-amber-500 disabled:opacity-50">
-                            {actLoad ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />} Confirmar despacho
-                          </button>
-                        </div>
-                      )}
-
-                      {(remito.status === 'en_transito' || remito.status === 'pendiente') && receiver && (
-                        <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-3">
-                          <h3 className="flex items-center gap-2 text-sm font-black text-emerald-300"><CheckCircle2 className="h-4 w-4" />Confirmar llegada al depósito</h3>
-                          {remito.status === 'pendiente' && <p className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs text-slate-400">Todavía no fue marcado como despachado. Al confirmar llegada se completa el traslado en un solo paso.</p>}
-                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                            <div className="flex flex-col gap-1">
-                              <label className="text-xs font-semibold text-slate-400">Código del remito</label>
-                              <input className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-sm text-white placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none" placeholder={remito.remito_code} value={arrivalCode[remito.remito_code] ?? ''} onChange={(e) => setArrivalCode((p) => ({ ...p, [remito.remito_code]: e.target.value }))} />
-                              {(arrivalCode[remito.remito_code] || '') && (arrivalCode[remito.remito_code] || '').toUpperCase() !== remito.remito_code.toUpperCase() && <p className="text-xs text-red-400">El código no coincide.</p>}
-                            </div>
-                            <div className="flex flex-col gap-1">
-                              <label className="text-xs font-semibold text-slate-400">Ubicación interna (opcional)</label>
-                              <input className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none" placeholder="Ej. Estante A3 / Sector Garantías" value={arrivalLugar[remito.remito_code] ?? ''} onChange={(e) => setArrivalLugar((p) => ({ ...p, [remito.remito_code]: e.target.value }))} />
-                            </div>
-                            <div className="flex flex-col gap-1 sm:col-span-2">
-                              <label className="text-xs font-semibold text-slate-400">Nota (opcional)</label>
-                              <input className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none" placeholder="Novedad al recibir..." value={arrivalNota[remito.remito_code] ?? ''} onChange={(e) => setArrivalNota((p) => ({ ...p, [remito.remito_code]: e.target.value }))} />
-                            </div>
-                          </div>
-                          <button onClick={() => handleArrival(remito)} disabled={actLoad} className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
-                            {actLoad ? <RefreshCw className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Confirmar llegada
-                          </button>
-                        </div>
-                      )}
-
-                      {remito.status === 'llegado' && (
-                        <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300">
-                          <CheckCircle2 className="h-4 w-4" />Remito completo — los productos llegaron al depósito de destino.
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      <section className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4">
+      <section className=”rounded-2xl border border-slate-800 bg-slate-950/80 p-4”>
         <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Flujo operativo</h3>
         <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400">
           <span className="flex items-center gap-1.5"><span className="rounded-full bg-slate-600/40 px-2 py-0.5 font-semibold text-slate-300">PENDIENTE</span>PDF generado</span>

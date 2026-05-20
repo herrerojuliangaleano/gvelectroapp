@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { can, fetchWarranties, getCurrentUserFromStorage } from '../api/client';
 import type { WarrantySummary, WarrantyListResponse } from '../types';
-import { computeLogisticsAlerts, flowToneClass, getWarrantyStatusMeta } from '../warrantyFlow';
+import { computeLogisticsAlerts } from '../warrantyFlow';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -14,7 +14,6 @@ const FINAL_ESTADOS = new Set(['10 - FINALIZADO', '9 - ANULADA', '8 - RECHAZADO'
 
 function SucursalCard({ item }: { item: WarrantySummary }) {
   const alerts = computeLogisticsAlerts(item).filter((a) => a.targetRole === 'encargado' || a.targetRole === 'all');
-  const statusMeta = getWarrantyStatusMeta(item.estado);
   const isUrgent = item.estado_retiro_proveedor === 'retiro_solicitado';
 
   return (
@@ -33,9 +32,6 @@ function SucursalCard({ item }: { item: WarrantySummary }) {
           >
             {item.id_garantia}
           </Link>
-          <span className={`rounded-full border px-2 py-0.5 text-xs font-black ${flowToneClass(statusMeta.tone)}`}>
-            {statusMeta.shortLabel}
-          </span>
           {isUrgent && (
             <span className="rounded-full border border-red-500/50 bg-red-500/10 px-2 py-0.5 text-xs font-black text-red-200">
               ⚠ Retiro solicitado
