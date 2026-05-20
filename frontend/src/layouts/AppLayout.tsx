@@ -1,5 +1,5 @@
 import {
-  Activity, Archive, BarChart2, Bell, Building2, Calculator, ChevronDown, ChevronRight, CircleDollarSign, ClipboardList, Cloud, FileSpreadsheet, FileText, Globe2, History, Home, Info, KeyRound, LogOut, Menu, Send, Settings, ShieldCheck, SlidersHorizontal, Truck, User, UserCog, Wrench, X,
+  Activity, Archive, BarChart2, Bell, Building2, Calculator, ChevronDown, ChevronRight, CircleDollarSign, ClipboardList, Cloud, FileSpreadsheet, FileText, Globe2, History, Home, Info, KeyRound, LayoutDashboard, LogOut, MapPin, Menu, Send, Settings, ShieldCheck, SlidersHorizontal, Truck, User, UserCog, Wrench, X,
 } from 'lucide-react';
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import { useEffect, useMemo, useState } from 'react';
@@ -11,7 +11,7 @@ import { UpdatePrompt } from '../components/UpdatePrompt';
 import { can, fetchNotifications, fetchSystemStatus, fetchUnreadNotificationsCount, getCurrentUserFromStorage, logout } from '../api/client';
 import { cleanupPushNotifications, initPushNotifications } from '../services/pushNotifications';
 import type { SystemPublicStatus } from '../types';
-import { canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantyReview, canSeeWarrantySync, canUseBranchDispatch, canUseRemitosHub, isPlainDepositOperator } from '../warrantyAccess';
+import { canSeeGestorPanel, canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantyReview, canSeeWarrantySync, canSeeSucursalLogistics, canUseBranchDispatch, canUseRemitosHub, isPlainDepositOperator } from '../warrantyAccess';
 
 type NavItemDef = {
   to: string;
@@ -130,16 +130,18 @@ export function AppLayout({ children }: { children: ReactNode }) {
           { to: '/budgets/new', icon: <Calculator size={16} />, label: 'Presupuestos', permission: 'budgets.view' },
         ] },
         { to: '/warranties', icon: <ShieldCheck size={18} />, label: 'Garantías', children: [
-          { to: '/warranties/dashboard', icon: <Activity size={16} />, label: 'Panel', visible: canSeeWarrantyDashboard(user) },
-          { to: '/warranties', icon: <ShieldCheck size={16} />, label: 'Listado', visible: canSeeWarrantyList(user), exact: true },
-          { to: '/warranties/new', icon: <ShieldCheck size={16} />, label: 'Nueva garantía', permission: 'warranties.create' },
-          { to: '/warranties/revision', icon: <ClipboardList size={16} />, label: 'Revisión', visible: canSeeWarrantyReview(user) },
-          { to: '/warranties/gestion', icon: <Building2 size={16} />, label: 'Gestión', visible: canSeeWarrantyProviderManagement(user) },
-          { to: '/warranties/remitos',  icon: <Truck size={16} />, label: isPlainDepositOperator(user) ? 'Recepción / movimientos' : 'Remitos', visible: canUseRemitosHub(user) },
-          { to: '/warranties/despacho', icon: <Send  size={16} />, label: 'Despacho a depósito', visible: canUseBranchDispatch(user) },
-          { to: '/warranties/export', icon: <FileSpreadsheet size={16} />, label: 'Exportación', visible: canSeeWarrantyExport(user) },
-          { to: '/warranties/sync', icon: <Cloud size={16} />, label: 'Sincronización', visible: canSeeWarrantySync(user) },
-          { to: '/warranties/config', icon: <SlidersHorizontal size={16} />, label: 'Configuración', visible: canSeeWarrantyConfig(user) },
+          { to: '/warranties/dashboard',  icon: <Activity size={16} />,         label: 'Panel',                   visible: canSeeWarrantyDashboard(user) },
+          { to: '/warranties/gestor',     icon: <LayoutDashboard size={16} />,   label: 'Panel gestor',            visible: canSeeGestorPanel(user) },
+          { to: '/warranties/sucursal',   icon: <MapPin size={16} />,            label: 'Mi sucursal',             visible: canSeeSucursalLogistics(user) },
+          { to: '/warranties',            icon: <ShieldCheck size={16} />,       label: 'Listado',                 visible: canSeeWarrantyList(user), exact: true },
+          { to: '/warranties/new',        icon: <ShieldCheck size={16} />,       label: 'Nueva garantía',          permission: 'warranties.create' },
+          { to: '/warranties/revision',   icon: <ClipboardList size={16} />,     label: 'Revisión',                visible: canSeeWarrantyReview(user) },
+          { to: '/warranties/gestion',    icon: <Building2 size={16} />,         label: 'Gestión',                 visible: canSeeWarrantyProviderManagement(user) },
+          { to: '/warranties/remitos',    icon: <Truck size={16} />,             label: isPlainDepositOperator(user) ? 'Recepción / movimientos' : 'Remitos', visible: canUseRemitosHub(user) },
+          { to: '/warranties/despacho',   icon: <Send size={16} />,              label: 'Despacho a depósito',     visible: canUseBranchDispatch(user) },
+          { to: '/warranties/export',     icon: <FileSpreadsheet size={16} />,   label: 'Exportación',             visible: canSeeWarrantyExport(user) },
+          { to: '/warranties/sync',       icon: <Cloud size={16} />,             label: 'Sincronización',          visible: canSeeWarrantySync(user) },
+          { to: '/warranties/config',     icon: <SlidersHorizontal size={16} />, label: 'Configuración',           visible: canSeeWarrantyConfig(user) },
         ] },
       ] },
       { title: 'Gestión interna', items: [
@@ -183,6 +185,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
       { to: '/venta/nueva', icon: <Globe2 size={19} />, label: 'Venta', permission: 'sales_web.create' },
       { to: '/venta/mis-solicitudes', icon: <ClipboardList size={19} />, label: 'Mis ventas', permission: 'sales_web.view' },
       { to: '/warranties/new', icon: <ShieldCheck size={19} />, label: 'Garantía', permission: 'warranties.create' },
+      { to: '/warranties/sucursal', icon: <MapPin size={19} />, label: 'Sucursal', visible: canSeeSucursalLogistics(user) },
+      { to: '/warranties/gestor', icon: <LayoutDashboard size={19} />, label: 'Gestor', visible: canSeeGestorPanel(user) },
       { to: '/warranties/remitos', icon: <Truck size={19} />, label: isPlainDepositOperator(user) ? 'Recepción' : 'Remitos', visible: canUseRemitosHub(user) },
       { to: '/warranties/despacho', icon: <Send size={19} />, label: 'Despacho', visible: canUseBranchDispatch(user) },
       { to: '/warranties/gestion', icon: <Building2 size={19} />, label: 'Gestión', visible: canSeeWarrantyProviderManagement(user) },
