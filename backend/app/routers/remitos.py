@@ -1006,10 +1006,10 @@ def list_remitos(
 ):
     """Lista remitos internos.
 
-    Cualquier permiso de remitos (view, generate, dispatch, receive, delete,
-    deposit_transfer, provider_delivery) da acceso a ver todos los remitos.
-    Esto simplifica el seguimiento: un generador de sucursal puede ver el
-    estado de los remitos que creó, sin necesidad de un permiso extra.
+    Regla de scope:
+      - warranties.remitos.view  → ve TODOS los remitos (gestores/posventa global)
+      - cualquier otro permiso   → ve solo los remitos de su propia sucursal
+                                   (origen_sucursal coincide con branch_name del usuario)
     Sin ninguno de estos permisos → 403.
     """
     _require_any(
@@ -1023,10 +1023,19 @@ def list_remitos(
         "warranties.remitos.provider_delivery",
     )
 
+    # Scope: usuarios sin 'view' global solo ven su propia sucursal.
+    user_is_global = has_permission(user, "warranties.remitos.view")
+    user_branch    = (getattr(user, "branch_name", None) or "").strip()
+
     with db_connect() as conn:
         ensure_remito_tables(conn)
         sql    = "SELECT * FROM warranty_remitos WHERE 1=1"
         params: list[Any] = []
+
+        # Aplicar filtro de sucursal para usuarios no-globales
+        if not user_is_global and user_branch:
+            sql += " AND LOWER(origen_sucursal) = LOWER(?)"
+            params.append(user_branch)
 
         if shipment_code:
             sql += " AND shipment_code = ?"

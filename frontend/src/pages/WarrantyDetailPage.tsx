@@ -241,6 +241,7 @@ export function WarrantyDetailPage() {
     (can('warranties.manage') || can('warranties.create')) &&
     (can('warranties.manage') || (entryBaseStatusOk && entryBaseReviewOk));
   const canEditOperational = can('warranties.manage') && !isReadOnly;
+  const hasRemitoPermission = can('warranties.remitos.view') || can('warranties.remitos.generate') || can('warranties.remitos.dispatch') || can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer') || can('warranties.remitos.provider_delivery');
   const reviewAlreadyApproved = s.review_status === 'revisada';
   const canShowReviewBlock = stateConfig.showReviewBlock &&
     (can('warranties.review') || can('warranties.mark_incomplete') || can('warranties.approve_review')) &&
@@ -345,8 +346,8 @@ export function WarrantyDetailPage() {
           <Info label="ID de caso" value={s.id_de_caso} />
           <Info label="Envío proveedor" value={s.fecha_envio_proveedor} />
           <Info label="Última respuesta" value={s.fecha_ultima_respuesta} />
-          {(can('warranties.remitos.view') || can('warranties.remitos.generate') || can('warranties.remitos.dispatch') || can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer') || can('warranties.remitos.provider_delivery')) && s.remito_interno && <Info label="Remito interno" value={s.remito_interno} />}
-          {(can('warranties.remitos.view') || can('warranties.remitos.generate') || can('warranties.remitos.dispatch') || can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer') || can('warranties.remitos.provider_delivery')) && s.remito_proveedor && <Info label="Remito proveedor" value={s.remito_proveedor} />}
+          {hasRemitoPermission && s.remito_interno && <Info label="Remito interno" value={s.remito_interno} />}
+          {hasRemitoPermission && s.remito_proveedor && <Info label="Remito proveedor" value={s.remito_proveedor} />}
         </div>
 
         {/* origin + location block */}
@@ -791,7 +792,12 @@ export function WarrantyDetailPage() {
                   const details = event.details as Record<string, unknown> | undefined;
                   const oldStatus = details?.old_status as string | undefined;
                   const newStatus = details?.new_status as string | undefined;
-                  const remitoCode = details?.remito_code as string | undefined;
+                  // Backend stores remito code in details.remito (not details.remito_code)
+                  const remitoCode = (details?.remito ?? details?.remito_code) as string | undefined;
+                  // Message: show full note if user has remito permission, otherwise strip codes
+                  const displayMessage = hasRemitoPermission
+                    ? event.message
+                    : event.message?.replace(/\b(?:[A-Z]{2,6}-R-\d{4}-\d{4}|RP-\d{4}-\d{4})\b/g, '').replace(/\s{2,}/g, ' ').replace(/·\s*$/, '').trim() || null;
                   return (
                     <div key={event.id} className={`relative flex gap-3 pb-4 ${idx === data.history.length - 1 ? '' : ''}`}>
                       {/* dot */}
@@ -814,10 +820,10 @@ export function WarrantyDetailPage() {
                             <span className="text-slate-200">{getWarrantyStatusMeta(newStatus).shortLabel}</span>
                           </div>
                         )}
-                        {remitoCode && (
+                        {hasRemitoPermission && remitoCode && (
                           <div className="mt-1 text-xs text-slate-400">Remito: <span className="font-mono text-slate-200">{remitoCode}</span></div>
                         )}
-                        {event.message && <div className="mt-1 text-sm text-slate-300">{event.message}</div>}
+                        {displayMessage && <div className="mt-1 text-sm text-slate-300">{displayMessage}</div>}
                         <div className="mt-1.5 flex flex-wrap gap-2 text-xs text-slate-500">
                           <span>{event.created_at}</span>
                           {(event.actor_display_name || event.actor_username) && (

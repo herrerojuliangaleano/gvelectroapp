@@ -370,11 +370,19 @@ function MetaItem({ label, value }: { label: string; value?: string | null }) {
   );
 }
 
+// Strip remito codes from messages shown in management (no one sees them here)
+const REMITO_CODE_RE = /\b(?:[A-Z]{2,6}-R-\d{4}-\d{4}|RP-\d{4}-\d{4})\b/g;
+function sanitizeRemitoMessage(msg: string | undefined | null): string | null {
+  if (!msg) return null;
+  return msg.replace(REMITO_CODE_RE, '').replace(/\s{2,}/g, ' ').replace(/·\s*$/, '').trim() || null;
+}
+
 function HistoryRow({ event }: { event: AuditEvent }) {
   const label = historyEventLabel(event.event_type);
   const newStatus = event.event_type === 'status_change'
     ? ((event.details?.new_status as string) || event.status || '')
     : '';
+  const displayMessage = sanitizeRemitoMessage(event.message);
   return (
     <div className="flex items-start gap-3 rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2 text-xs">
       <div className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-600" />
@@ -387,7 +395,7 @@ function HistoryRow({ event }: { event: AuditEvent }) {
             </span>
           )}
         </div>
-        {event.message && <div className="mt-0.5 text-slate-400">{event.message}</div>}
+        {displayMessage && <div className="mt-0.5 text-slate-400">{displayMessage}</div>}
         <div className="mt-1 text-slate-500">
           {event.created_at}
           {(event.actor_display_name || event.actor_username) && ` — ${event.actor_display_name || event.actor_username}`}
@@ -412,7 +420,7 @@ function isDepositLocation(value?: string | null) {
 
 function currentLocationLabel(item: WarrantySummary) {
   if (item.transit_status === 'en_transito') {
-    return `En tránsito a Depósito Chiclana${item.remito_interno ? ` · ${item.remito_interno}` : ''}`;
+    return 'En tránsito a Depósito Chiclana';
   }
   // When the product is physically at the provider, append the provider name
   if (item.ubicacion_actual === 'proveedor' && item.provider_name) {
@@ -468,7 +476,6 @@ function ManagementCard({
   const canResponse = can('warranties.register_provider_response');
   const canClaim = can('warranties.register_claim');
   const canStatus = can('warranties.change_status');
-  const canSeeRemitos = can('warranties.remitos.view') || can('warranties.remitos.generate') || can('warranties.remitos.dispatch') || can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer') || can('warranties.remitos.provider_delivery') || can('warranties.remitos.delete');
   const hasProvider = Boolean(item.provider_name || item.fecha_envio_proveedor);
   const isPendingConfirm = Boolean(item.shipment_code) && !item.fecha_envio_proveedor;
   const isApprovedPending = item.estado === '2 - PENDIENTE' && !item.shipment_code;
@@ -612,21 +619,6 @@ function ManagementCard({
             {item.fecha_ultimo_reclamo && <MetaItem label="Reclamo" value={item.fecha_ultimo_reclamo} />}
           </div>
 
-          {/* Remito badges — solo visibles para usuarios con permiso de remitos */}
-          {canSeeRemitos && (item.remito_interno || item.remito_proveedor) && (
-            <div className="flex flex-wrap gap-2">
-              {item.remito_interno && (
-                <span className="inline-flex items-center gap-1 rounded-full border border-slate-600 px-2.5 py-1 text-xs font-mono text-slate-300">
-                  REM: {item.remito_interno}
-                </span>
-              )}
-              {item.remito_proveedor && (
-                <span className="inline-flex items-center gap-1 rounded-full border border-violet-500/40 bg-violet-500/10 px-2.5 py-1 text-xs font-mono text-violet-200">
-                  {item.remito_proveedor}
-                </span>
-              )}
-            </div>
-          )}
 
           {/* Location bar */}
           {(() => {
@@ -665,7 +657,7 @@ function ManagementCard({
               <Truck size={15} className="mt-0.5 shrink-0" />
               <span>
                 {item.transit_status === 'en_transito'
-                  ? `Esperando llegada a Depósito Chiclana${canSeeRemitos && item.remito_interno ? ` · ${item.remito_interno}` : ''}. No corresponde avanzar proveedor hasta confirmar recepción.`
+                  ? 'Esperando llegada a Depósito Chiclana. No corresponde avanzar proveedor hasta confirmar recepción.'
                   : `Esta garantía ingresó en ${item.sucursal || 'sucursal'} y debe ir primero a Depósito Chiclana por remito interno.`}
               </span>
             </div>
