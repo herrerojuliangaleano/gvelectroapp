@@ -233,8 +233,9 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
         "permissions": [
             "profile.view", "employees.photo.upload_own", "payroll_receipts.view_own", "payroll_receipts.sign_own", "payroll_receipts.observe_own", "about.view", "system.status.view",
             # Ve sus garantías, carga, genera y despacha remitos internos
+            # SIN warranties.remitos.view → solo ve remitos de su propia sucursal (scope branch)
             "warranties.view", "warranties.create", "warranties.sucursal.logistics",
-            "warranties.remitos.view", "warranties.remitos.generate", "warranties.remitos.dispatch",
+            "warranties.remitos.generate", "warranties.remitos.dispatch",
             "notifications.view", "push.subscribe",
         ],
     },
@@ -254,7 +255,8 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
         "permissions": [
             "profile.view", "employees.photo.upload_own", "payroll_receipts.view_own", "payroll_receipts.sign_own", "payroll_receipts.observe_own", "about.view", "system.status.view",
             "warranties.view", "warranties.create",
-            "warranties.remitos.view", "warranties.remitos.generate", "warranties.remitos.dispatch",
+            # SIN warranties.remitos.view → solo ve remitos de su propia sucursal (scope branch)
+            "warranties.remitos.generate", "warranties.remitos.dispatch",
             "budgets.view", "budgets.create", "budgets.save",
             "sales_web.view", "sales_web.create", "sales_web.cancel_own", "notifications.view", "push.subscribe",
         ],
