@@ -19,7 +19,7 @@ import {
   sendWarrantyToProvider,
 } from '../api/client';
 import type { AuditEvent, WarrantyListResponse, WarrantyOptions, WarrantySummary } from '../types';
-import { CANONICAL_WARRANTY_STATUSES, flowToneClass, getWarrantyNextStep, getWarrantyStatusMeta } from '../warrantyFlow';
+import { CANONICAL_WARRANTY_STATUSES, computeLogisticsAlerts, flowToneClass, getWarrantyNextStep, getWarrantyStatusMeta, historyEventLabel } from '../warrantyFlow';
 
 const PROVIDER_STATUSES = CANONICAL_WARRANTY_STATUSES.filter((status) => status !== '1 - INGRESO');
 const FINAL_STATUSES = ['10 - FINALIZADO'];
@@ -105,26 +105,6 @@ const ACTION_PILL_INACTIVE: Record<string, string> = {
   slate:   'border-slate-600 text-slate-300 hover:bg-slate-800',
 };
 
-// History event human-readable labels
-const HISTORY_EVENT_LABELS: Record<string, string> = {
-  status_change:                'Cambio de estado',
-  review_approved:              'Revisión aprobada',
-  review_started:               'Revisión iniciada',
-  review_incomplete:            'Corrección solicitada',
-  sent_to_provider:             'Enviado al proveedor',
-  provider_response_registered: 'Respuesta del proveedor',
-  provider_pickup_requested:    'Retiro solicitado',
-  claim_registered:             'Reclamo registrado',
-  provider_mail_resent:         'Mail reenviado',
-  shipment_confirmed:           'Envío al proveedor confirmado',
-  provider_delivery_generated:  'Remito entrega proveedor generado',
-  provider_delivery_confirmed:  'Entrega al proveedor confirmada',
-  created:                      'Garantía creada',
-  cancelled:                    'Garantía anulada',
-  entry_updated:                'Datos actualizados',
-  remito_dispatched:            'Remito despachado',
-  remito_arrived:               'Remito recibido',
-};
 
 export function WarrantyManagementPage() {
   const [options, setOptions] = useState<WarrantyOptions | null>(null);
@@ -145,6 +125,7 @@ export function WarrantyManagementPage() {
       enProveedor: items.filter((item) => item.estado === '5 - EN EL PROVEEDOR').length,
       demoradas: items.filter((item) => Number(item.dias_sin_respuesta || 0) >= 7).length,
       finalizadas: items.filter((item) => FINAL_STATUSES.includes(item.estado)).length,
+      logisticaPendiente: items.filter((item) => computeLogisticsAlerts(item).some((a) => a.priority === 'high')).length,
     };
   }, [data]);
 
@@ -291,12 +272,13 @@ export function WarrantyManagementPage() {
       {error && <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-red-100">{error}</div>}
       {message && <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4 text-emerald-100">{message}</div>}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
         <Kpi title="Total" value={stats.total} />
         <Kpi title="Listo p/ enviar" value={stats.listoParaEnviar} tone="warn" />
         <Kpi title="Enviadas" value={stats.enviadas} />
         <Kpi title="En proveedor" value={stats.enProveedor} />
         <Kpi title="Demoradas +7" value={stats.demoradas} tone="warn" />
+        <Kpi title="Log. urgente" value={stats.logisticaPendiente} tone={stats.logisticaPendiente > 0 ? 'danger' : 'base'} />
         <Kpi title="Finalizadas" value={stats.finalizadas} tone="ok" />
       </div>
 
@@ -338,9 +320,22 @@ export function WarrantyManagementPage() {
   );
 }
 
-function Kpi({ title, value, tone = 'base' }: { title: string; value: number; tone?: 'base' | 'warn' | 'ok' }) {
-  const cls = tone === 'warn' ? 'border-amber-500/30 bg-amber-500/10' : tone === 'ok' ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-slate-700 bg-slate-950/50';
-  return <div className={`rounded-3xl border p-4 ${cls}`}><div className="text-xs font-black uppercase tracking-wide text-slate-500">{title}</div><div className="mt-1 text-3xl font-black text-white">{value}</div></div>;
+function Kpi({ title, value, tone = 'base' }: { title: string; value: number; tone?: 'base' | 'warn' | 'danger' | 'ok' }) {
+  const cls =
+    tone === 'danger' ? 'border-red-500/40 bg-red-500/10' :
+    tone === 'warn'   ? 'border-amber-500/30 bg-amber-500/10' :
+    tone === 'ok'     ? 'border-emerald-500/30 bg-emerald-500/10' :
+    'border-slate-700 bg-slate-950/50';
+  const txtCls =
+    tone === 'danger' ? 'text-red-300' :
+    tone === 'warn'   ? 'text-amber-300' :
+    tone === 'ok'     ? 'text-emerald-300' : 'text-white';
+  return (
+    <div className={`rounded-3xl border p-4 ${cls}`}>
+      <div className="text-xs font-black uppercase tracking-wide text-slate-500">{title}</div>
+      <div className={`mt-1 text-3xl font-black ${txtCls}`}>{value}</div>
+    </div>
+  );
 }
 
 function FText({ label, value, onChange, placeholder = '' }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
@@ -376,7 +371,7 @@ function MetaItem({ label, value }: { label: string; value?: string | null }) {
 }
 
 function HistoryRow({ event }: { event: AuditEvent }) {
-  const label = HISTORY_EVENT_LABELS[event.event_type] || event.event_type;
+  const label = historyEventLabel(event.event_type);
   const newStatus = event.event_type === 'status_change'
     ? ((event.details?.new_status as string) || event.status || '')
     : '';
@@ -708,6 +703,25 @@ function ManagementCard({
               {helperText}
             </div>
           )}
+
+          {/* Logistics context (read-only) — visible to Posventa as context */}
+          {(() => {
+            const logAlerts = computeLogisticsAlerts(item).filter((a) => a.targetRole !== 'gestor' || a.type === 'pickup_needed');
+            if (logAlerts.length === 0) return null;
+            return (
+              <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2 text-xs text-slate-400">
+                <div className="mb-1.5 font-bold uppercase tracking-wide text-slate-500">Estado logístico</div>
+                <div className="space-y-1">
+                  {logAlerts.map((alert, idx) => (
+                    <div key={idx} className={`flex items-center gap-1.5 ${alert.priority === 'high' ? 'text-red-300' : 'text-amber-300'}`}>
+                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${alert.priority === 'high' ? 'bg-red-400' : 'bg-amber-400'}`} />
+                      {alert.message}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Delay alert — only when meaningful */}
           {showDelayAlert && (

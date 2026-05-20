@@ -146,6 +146,8 @@ export function WarrantiesListPage() {
         actions={<>
           <button onClick={() => load()} className={secondaryButtonClass}><RefreshCw size={18} /> Actualizar</button>
           {can('warranties.manage') && <button onClick={resyncCounters} className={secondaryButtonClass}><RefreshCw size={18} /> Recalcular contadores</button>}
+          {can('warranties.gestor.panel') || can('warranties.manage') ? <Link to="/warranties/gestor" className={subtleButtonClass}><Building2 size={18} /> Panel gestor</Link> : null}
+          {can('warranties.sucursal.logistics') || can('warranties.remitos.dispatch') ? <Link to="/warranties/sucursal" className={subtleButtonClass}><Building2 size={18} /> Mi sucursal</Link> : null}
           {can('warranties.review') && <Link to="/warranties/revision" className={subtleButtonClass}><ClipboardCheck size={18} /> Revisión</Link>}
           {can('warranties.manage_provider') && <Link to="/warranties/gestion" className={subtleButtonClass}><Building2 size={18} /> Gestión proveedor</Link>}
           {can('warranties.create') && <Link to="/warranties/new" className={primaryButtonClass}><Plus size={18} /> Nueva garantía</Link>}

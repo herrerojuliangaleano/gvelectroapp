@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { can, getCurrentUserFromStorage, getToken } from './api/client';
 import { AppLayout } from './layouts/AppLayout';
-import { canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantyReview, canSeeWarrantySync, canUseBranchDispatch, canUseRemitosHub } from './warrantyAccess';
+import { canSeeGestorPanel, canSeeSucursalLogistics, canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantyReview, canSeeWarrantySync, canUseBranchDispatch, canUseRemitosHub } from './warrantyAccess';
 import { AboutSystemPage } from './pages/AboutSystemPage';
 import { AdminRolesPage } from './pages/AdminRolesPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
@@ -38,6 +38,8 @@ import { WarrantyManagementPage } from './pages/WarrantyManagementPage';
 import { WarrantyExportPage } from './pages/WarrantyExportPage';
 import { WarrantySyncPage } from './pages/WarrantySyncPage';
 import { WarrantyConfigPage } from './pages/WarrantyConfigPage';
+import { WarrantyGestorPage } from './pages/WarrantyGestorPage';
+import { WarrantySucursalPage } from './pages/WarrantySucursalPage';
 import { WarrantyRemitosPage } from './pages/WarrantyRemitosPage';
 import { BranchDispatchPage } from './pages/BranchDispatchPage';
 import { SalesBIImportPage } from './pages/SalesBIImportPage';
@@ -75,6 +77,9 @@ function defaultRedirect() {
   if (can('sales_web.view')) return <Navigate to="/venta/mis-solicitudes" replace />;
   if (can('price_updates.view') || can('cost_updates.view')) return <Navigate to="/precios-costos" replace />;
   if (can('payroll_receipts.view_own') || can('payroll_receipts.view_all')) return <Navigate to="/recibos" replace />;
+  if (can('warranties.gestor.panel') || can('warranties.manage')) return <Navigate to="/warranties/gestor" replace />;
+  if (can('warranties.manage_provider')) return <Navigate to="/warranties/gestion" replace />;
+  if (can('warranties.sucursal.logistics')) return <Navigate to="/warranties/sucursal" replace />;
   if (can('warranties.view')) return <Navigate to="/warranties" replace />;
   if (can('warranties.create')) return <Navigate to="/warranties/new" replace />;
   if (can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer')) return <Navigate to="/warranties/remitos" replace />;
@@ -114,6 +119,8 @@ export default function App() {
       <Route path="/warranties/new" element={<ProtectedLayout permission="warranties.create"><WarrantyCreatePage /></ProtectedLayout>} />
       <Route path="/warranties/revision" element={<ProtectedLayout allowed={() => canSeeWarrantyReview(getCurrentUserFromStorage())}><WarrantyReviewPage /></ProtectedLayout>} />
       <Route path="/warranties/review" element={<Navigate to="/warranties/revision" replace />} />
+      <Route path="/warranties/gestor" element={<ProtectedLayout allowed={() => canSeeGestorPanel(getCurrentUserFromStorage())}><WarrantyGestorPage /></ProtectedLayout>} />
+      <Route path="/warranties/sucursal" element={<ProtectedLayout allowed={() => canSeeSucursalLogistics(getCurrentUserFromStorage())}><WarrantySucursalPage /></ProtectedLayout>} />
       <Route path="/warranties/gestion" element={<ProtectedLayout allowed={() => canSeeWarrantyProviderManagement(getCurrentUserFromStorage())}><WarrantyManagementPage /></ProtectedLayout>} />
       <Route path="/warranties/management" element={<Navigate to="/warranties/gestion" replace />} />
       <Route path="/warranties/export" element={<ProtectedLayout allowed={() => canSeeWarrantyExport(getCurrentUserFromStorage())}><WarrantyExportPage /></ProtectedLayout>} />

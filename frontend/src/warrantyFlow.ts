@@ -127,6 +127,55 @@ export function computeLogisticsAlerts(item: WarrantySummary): LogisticsAlert[] 
   return alerts;
 }
 
+// ─── Unified history event labels ────────────────────────────────────────────
+
+export const HISTORY_EVENT_LABELS: Record<string, string> = {
+  // Garantía
+  warranty_created:                 'Garantía creada',
+  warranty_updated:                 'Garantía actualizada',
+  warranty_finalized:               'Garantía finalizada',
+  warranty_cancelled:               'Garantía anulada',
+  warranty_deleted:                 'Garantía eliminada',
+  created:                          'Garantía creada',
+  cancelled:                        'Garantía anulada',
+  entry_updated:                    'Datos de ingreso actualizados',
+  // Revisión
+  review_taken:                     'Tomada en revisión interna',
+  review_approved:                  'Revisión aprobada',
+  review_incomplete:                'Corrección solicitada',
+  review_started:                   'Revisión iniciada',
+  // Estado
+  status_changed:                   'Estado actualizado',
+  status_change:                    'Estado actualizado',
+  // Proveedor
+  sent_to_provider:                 'Enviado al proveedor',
+  provider_notified:                'Mail enviado al proveedor',
+  provider_mail_resent:             'Mail reenviado al proveedor',
+  provider_response_registered:     'Respuesta del proveedor registrada',
+  provider_pickup_requested:        'Retiro solicitado por proveedor',
+  claim_registered:                 'Reclamo registrado',
+  resolution_set:                   'Resolución definida',
+  // Remitos
+  provider_delivery_generated:      'Remito a proveedor generado',
+  provider_delivery_confirmed:      'Entrega al proveedor confirmada',
+  internal_remito_generated:        'Remito interno generado',
+  remito_dispatched:                'Remito despachado',
+  remito_arrived:                   'Remito recibido en depósito',
+  shipment_confirmed:               'Envío al proveedor confirmado',
+  // Ubicación / tránsito
+  transit_updated:                  'Estado de tránsito actualizado',
+  location_updated:                 'Ubicación actualizada',
+  // Observaciones
+  observation_added:                'Movimiento / nota agregada',
+  // Alertas
+  logistics_alert_generated:        'Alerta logística generada',
+  logistics_alert_resolved:         'Alerta logística resuelta',
+};
+
+export function historyEventLabel(eventType: string): string {
+  return HISTORY_EVENT_LABELS[eventType] || eventType.replace(/_/g, ' ');
+}
+
 export function alertPriorityClass(priority: AlertPriority): string {
   if (priority === 'high') return 'border-red-500/50 bg-red-500/10 text-red-100';
   if (priority === 'medium') return 'border-amber-500/40 bg-amber-500/10 text-amber-100';

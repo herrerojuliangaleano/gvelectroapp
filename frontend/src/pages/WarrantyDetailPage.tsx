@@ -13,38 +13,12 @@ import {
 import type { WarrantyDetailResponse, WarrantyItemUpdatePayload, WarrantyOptions } from '../types';
 import {
   flowToneClass, getDetailStateConfig, getReviewStatusMeta,
-  getWarrantyNextStep, getWarrantyStatusMeta,
+  getWarrantyNextStep, getWarrantyStatusMeta, historyEventLabel,
 } from '../warrantyFlow';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 function copyText(v: string) { navigator.clipboard?.writeText(v).catch(() => undefined); }
-
-const HISTORY_EVENT_LABELS: Record<string, string> = {
-  warranty_created:             'Garantía creada',
-  warranty_updated:             'Garantía actualizada',
-  warranty_finalized:           'Garantía finalizada',
-  warranty_cancelled:           'Garantía anulada',
-  warranty_deleted:             'Garantía eliminada',
-  status_changed:               'Estado actualizado',
-  review_taken:                 'Tomada en revisión',
-  review_approved:              'Revisión aprobada',
-  review_incomplete:            'Marcada para corrección',
-  entry_base_updated:           'Base de ingreso editada',
-  provider_delivery_generated:  'Remito a proveedor generado',
-  internal_remito_generated:    'Remito interno generado',
-  provider_notified:            'Mail enviado al proveedor',
-  pickup_requested:             'Retiro solicitado al proveedor',
-  provider_response_registered: 'Respuesta del proveedor registrada',
-  resolution_set:               'Resolución definida',
-  observation_added:            'Movimiento / nota agregada',
-  transit_updated:              'Estado de tránsito actualizado',
-  location_updated:             'Ubicación actualizada',
-};
-
-function historyLabel(eventType: string) {
-  return HISTORY_EVENT_LABELS[eventType] || eventType.replace(/_/g, ' ');
-}
 
 function historyIcon(eventType: string) {
   if (eventType.includes('status')) return <Clock size={14} />;
@@ -679,7 +653,7 @@ export function WarrantyDetailPage() {
                       </div>
                       <div className="min-w-0 flex-1 rounded-2xl border border-slate-800 bg-slate-900/50 p-3">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-bold text-white">{historyLabel(event.event_type)}</span>
+                          <span className="font-bold text-white">{historyEventLabel(event.event_type)}</span>
                           {event.status && (
                             <span className="rounded-full border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs text-slate-300">
                               {event.status}
