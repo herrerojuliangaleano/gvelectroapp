@@ -45,7 +45,7 @@ import type {
 
 // ── Permisos ──────────────────────────────────────────────────────────────────
 const canView             = () => can('warranties.remitos.view')     || can('warranties.remitos.generate') || can('warranties.remitos.dispatch') || can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer');
-const canFollow           = () => can('warranties.remitos.view');
+const canFollow           = () => can('warranties.remitos.view') || can('warranties.remitos.generate');
 const canGenerate         = () => can('warranties.remitos.generate');
 const canDispatch         = () => can('warranties.remitos.dispatch');
 const canReceive          = () => can('warranties.remitos.receive');
@@ -59,6 +59,67 @@ function statusBadge(status: WarrantyRemitoInfo['status']) {
   if (status === 'llegado')     return <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-xs font-semibold text-emerald-300">LLEGADO</span>;
   if (status === 'en_transito') return <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-xs font-semibold text-amber-300">EN TRÁNSITO</span>;
   return <span className="rounded-full bg-slate-600/40 px-2 py-0.5 text-xs font-semibold text-slate-300">PENDIENTE</span>;
+}
+
+/**
+ * Calcula el tiempo transcurrido entre dos ISO timestamps (o desde now si no hay fin).
+ * Devuelve un objeto con horas totales y un string legible: "Xh", "X días Yh", etc.
+ */
+function calcDuration(startIso?: string | null, endIso?: string | null): { label: string; hours: number } | null {
+  if (!startIso) return null;
+  const start = new Date(startIso).getTime();
+  const end   = endIso ? new Date(endIso).getTime() : Date.now();
+  const ms    = end - start;
+  if (ms < 0) return null;
+  const totalMinutes = Math.floor(ms / 60000);
+  const totalHours   = Math.floor(ms / 3600000);
+  if (totalMinutes < 60) return { label: `${totalMinutes} min`, hours: 0 };
+  if (totalHours < 24)   return { label: `${totalHours}h`, hours: totalHours };
+  const days  = Math.floor(totalHours / 24);
+  const remH  = totalHours % 24;
+  const label = remH > 0 ? `${days}d ${remH}h` : `${days}d`;
+  return { label, hours: totalHours };
+}
+
+/** Chip de duración: naranja si > 2 días en tránsito, rojo si > 5 días */
+function TransitTimer({ remito }: { remito: WarrantyRemitoInfo }) {
+  if (remito.status === 'pendiente') {
+    const d = calcDuration(remito.created_at);
+    if (!d) return null;
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-slate-600 bg-slate-800/80 px-2 py-0.5 text-xs text-slate-400">
+        <Clock className="h-3 w-3" /> Creado hace {d.label}
+      </span>
+    );
+  }
+
+  if (remito.status === 'en_transito') {
+    const d = calcDuration(remito.fecha_despacho, null);
+    if (!d) return null;
+    const color = d.hours >= 120
+      ? 'border-red-500/40 bg-red-500/10 text-red-300'
+      : d.hours >= 48
+      ? 'border-amber-500/40 bg-amber-500/15 text-amber-300'
+      : 'border-amber-500/30 bg-amber-500/10 text-amber-200';
+    const urgent = d.hours >= 120 ? ' ⚠' : '';
+    return (
+      <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${color}`}>
+        <Truck className="h-3 w-3" /> {d.label} en tránsito{urgent}
+      </span>
+    );
+  }
+
+  if (remito.status === 'llegado') {
+    const d = calcDuration(remito.fecha_despacho, remito.fecha_llegada);
+    if (!d) return null;
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-300">
+        <CheckCircle2 className="h-3 w-3" /> Tránsito: {d.label}
+      </span>
+    );
+  }
+
+  return null;
 }
 
 function brandBadge(brand: string) {
@@ -331,7 +392,7 @@ export function WarrantyRemitosPage() {
       setPdNota('');
       setPdSelected(new Set());
       await loadProviderDelivery();
-      if (canFollow()) load();
+      if (canFollow()) await load();
     } catch (e: unknown) {
       setPdError((e as Error).message || 'Error al generar el remito de entrega');
     } finally {
@@ -419,7 +480,7 @@ export function WarrantyRemitosPage() {
       setGenNota('');
       setSelectedCodes(new Set());
       setAvailableWarranties([]);
-      load();
+      await load();
     } catch (e: unknown) {
       setGenError((e as Error).message || 'Error al generar remitos');
     } finally {
@@ -433,7 +494,7 @@ export function WarrantyRemitosPage() {
     setActionError((p) => ({ ...p, [remito.remito_code]: '' }));
     try {
       await dispatchRemito(remito.remito_code, { lugar_salida: lugar || remito.origen_sucursal });
-      load();
+      await load();
     } catch (e: unknown) {
       setActionError((p) => ({ ...p, [remito.remito_code]: (e as Error).message || 'Error' }));
     } finally {
@@ -459,7 +520,7 @@ export function WarrantyRemitosPage() {
       setQuickResult(`Remito ${result.remito_code} confirmado como llegado.`);
       setQuickCode('');
       setQuickLugar('');
-      load();
+      await load();
     } catch (err: unknown) {
       setQuickError((err as Error).message || 'No se pudo confirmar el remito');
     } finally {
@@ -485,7 +546,7 @@ export function WarrantyRemitosPage() {
         lugar_llegada: (arrivalLugar[remito.remito_code] || '').trim() || undefined,
         nota: (arrivalNota[remito.remito_code] || '').trim() || undefined,
       });
-      load();
+      await load();
     } catch (e: unknown) {
       setActionError((p) => ({ ...p, [remito.remito_code]: (e as Error).message || 'Error' }));
     } finally {
@@ -524,7 +585,7 @@ export function WarrantyRemitosPage() {
     try {
       await deleteRemito(remitoCode);
       setConfirmDelete((p) => ({ ...p, [remitoCode]: false }));
-      load();
+      await load();
     } catch (e: unknown) {
       setActionError((p) => ({ ...p, [remitoCode]: (e as Error).message || 'Error al eliminar' }));
     } finally {
@@ -1174,6 +1235,7 @@ export function WarrantyRemitosPage() {
                         <span className="font-mono text-base font-black text-white">{remito.remito_code}</span>
                         {statusBadge(remito.status)}
                         {brandBadge(remito.company_brand)}
+                        <TransitTimer remito={remito} />
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-slate-400">
                         <span className="flex items-center gap-1"><Building2 className="h-3.5 w-3.5" />{remito.origen_sucursal}</span>
