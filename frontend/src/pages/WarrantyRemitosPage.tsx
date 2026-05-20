@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+﻿import { FormEvent, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
@@ -939,7 +939,7 @@ export function WarrantyRemitosPage() {
         </section>
       )}
 
-      <section className=”rounded-2xl border border-slate-800 bg-slate-950/80 p-4”>
+      <section className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4">
         <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Flujo operativo</h3>
         <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400">
           <span className="flex items-center gap-1.5"><span className="rounded-full bg-slate-600/40 px-2 py-0.5 font-semibold text-slate-300">PENDIENTE</span>PDF generado</span>
