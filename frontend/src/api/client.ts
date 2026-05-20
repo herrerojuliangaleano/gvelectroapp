@@ -501,7 +501,7 @@ export async function generateDepositTransferRemito(payload: DepositTransferPayl
   return { ok: res.ok, remitos: res.created, count: res.created.length };
 }
 
-export async function fetchRemitos(params: { shipment_code?: string; remito_code?: string; status?: string; brand?: string; origen_sucursal?: string } = {}): Promise<WarrantyRemitosResponse> {
+export async function fetchRemitos(params: { shipment_code?: string; remito_code?: string; status?: string; brand?: string; origen_sucursal?: string; limit?: number } = {}): Promise<WarrantyRemitosResponse> {
   // Mantener la barra final: sin ella FastAPI puede resolver /api/warranties/remitos como warranty_id=remitos
   // por el catch-all de garantías y devolver "Garantía no encontrada".
   return request(`/api/warranties/remitos/${buildQs(params)}`);
