@@ -1053,7 +1053,7 @@ def list_remitos(
             sql += " AND company_brand = ?"
             params.append(brand)
         if origen_sucursal:
-            sql += " AND origen_sucursal = ?"
+            sql += " AND LOWER(origen_sucursal) = LOWER(?)"
             params.append(origen_sucursal)
         sql += " ORDER BY id DESC LIMIT ?"
         params.append(limit)

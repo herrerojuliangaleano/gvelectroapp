@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle, ArrowRight, CheckCircle2, Clock,
-  FileText, MapPin, Package, Plus, RefreshCw, Send, Truck, X,
+  FileText, MapPin, Package, Plus, Printer, RefreshCw, Send, Truck, X,
 } from 'lucide-react';
 import {
   can,
@@ -53,6 +53,23 @@ async function downloadPdf(code: string) {
   }
 }
 
+async function printPdf(code: string) {
+  try {
+    const blob = await downloadRemitoPdf(code);
+    const url = URL.createObjectURL(blob);
+    const iframe = document.createElement('iframe');
+    iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px';
+    iframe.src = url;
+    document.body.appendChild(iframe);
+    iframe.onload = () => {
+      iframe.contentWindow?.print();
+      setTimeout(() => { document.body.removeChild(iframe); URL.revokeObjectURL(url); }, 2000);
+    };
+  } catch (e: unknown) {
+    alert((e as Error).message || 'Error al imprimir PDF');
+  }
+}
+
 // ─── sub-components ────────────────────────────────────────────────────────────
 
 function RemitoStatusBadge({ status }: { status: WarrantyRemitoInfo['status'] }) {
@@ -64,7 +81,7 @@ function RemitoStatusBadge({ status }: { status: WarrantyRemitoInfo['status'] })
 }
 
 function RemitoCard({
-  remito, canDoDispatch, dispatching, dispatchErr, onDispatch, onDownload,
+  remito, canDoDispatch, dispatching, dispatchErr, onDispatch, onDownload, onPrint,
 }: {
   remito: WarrantyRemitoInfo;
   canDoDispatch: boolean;
@@ -72,6 +89,7 @@ function RemitoCard({
   dispatchErr: string;
   onDispatch: () => void;
   onDownload: () => void;
+  onPrint: () => void;
 }) {
   const isTransit = remito.status === 'en_transito';
   const isArrived = remito.status === 'llegado';
@@ -114,6 +132,12 @@ function RemitoCard({
             className="flex items-center gap-1.5 rounded-xl border border-slate-600 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700"
           >
             <FileText size={13} /> PDF
+          </button>
+          <button
+            onClick={onPrint}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-600 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+          >
+            <Printer size={13} /> Imprimir
           </button>
           {canDoDispatch && (
             <button
@@ -310,7 +334,12 @@ export function WarrantySucursalPage() {
     if (!selectedBranch) return;
     setLoadingR(true); setErrorR('');
     try {
-      const res = await fetchRemitos({ origen_sucursal: selectedBranch, limit: 200 });
+      // Non-privileged users: backend auto-scopes to their branch — don't pass the filter
+      // to avoid double-filter case-sensitivity issues. Privileged users need it explicit
+      // because the backend doesn't auto-scope them.
+      const params: Record<string, string | number | undefined> = { limit: 200 };
+      if (isPrivileged) params.origen_sucursal = selectedBranch;
+      const res = await fetchRemitos(params);
       setRemitos(res?.items ?? []);
     } catch (e: unknown) {
       setErrorR((e as Error).message || 'No se pudieron cargar los remitos');
@@ -711,12 +740,20 @@ export function WarrantySucursalPage() {
                         <span>{r.origen_sucursal} → {r.destino_deposito}</span>
                       </div>
                     </div>
-                    <button
-                      onClick={() => downloadPdf(r.remito_code)}
-                      className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500"
-                    >
-                      <FileText size={13} /> PDF
-                    </button>
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={() => printPdf(r.remito_code)}
+                        className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500"
+                      >
+                        <Printer size={13} /> Imprimir
+                      </button>
+                      <button
+                        onClick={() => downloadPdf(r.remito_code)}
+                        className="flex items-center gap-1.5 rounded-xl border border-emerald-500/50 px-3 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/10"
+                      >
+                        <FileText size={13} /> PDF
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -786,6 +823,7 @@ export function WarrantySucursalPage() {
                   dispatchErr={dispError[r.remito_code] ?? ''}
                   onDispatch={() => handleDispatch(r)}
                   onDownload={() => downloadPdf(r.remito_code)}
+                  onPrint={() => printPdf(r.remito_code)}
                 />
               ))}
             </div>
