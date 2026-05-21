@@ -62,6 +62,10 @@ export function canUseRemitosHub(user: CurrentUser | null | undefined): boolean 
   return can('warranties.remitos.view') || can('warranties.remitos.generate') || can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer');
 }
 
+export function canSeeDepositReceivePage(user: CurrentUser | null | undefined): boolean {
+  return isPlainDepositOperator(user) && canUseRemitosHub(user);
+}
+
 export function canGenerateProviderDelivery(user: CurrentUser | null | undefined): boolean {
   return !isPlainDepositOperator(user) && can('warranties.remitos.provider_delivery');
 }

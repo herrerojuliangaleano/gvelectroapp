@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { can, getCurrentUserFromStorage, getToken } from './api/client';
 import { AppLayout } from './layouts/AppLayout';
-import { canSeeGestorPanel, canSeeRemitoTracking, canSeeSucursalLogistics, canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantyReview, canSeeWarrantySync, canUseRemitosHub } from './warrantyAccess';
+import { canSeeDepositReceivePage, canSeeGestorPanel, canSeeRemitoTracking, canSeeSucursalLogistics, canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantyReview, canSeeWarrantySync, canUseRemitosHub, isPlainDepositOperator } from './warrantyAccess';
 import { AboutSystemPage } from './pages/AboutSystemPage';
 import { AdminRolesPage } from './pages/AdminRolesPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
@@ -40,6 +40,7 @@ import { WarrantySyncPage } from './pages/WarrantySyncPage';
 import { WarrantyConfigPage } from './pages/WarrantyConfigPage';
 import { WarrantyGestorPage } from './pages/WarrantyGestorPage';
 import { WarrantySucursalPage } from './pages/WarrantySucursalPage';
+import { WarrantyDepositReceivePage } from './pages/WarrantyDepositReceivePage';
 import { WarrantyRemitosPage } from './pages/WarrantyRemitosPage';
 import { WarrantyRemitoTrackingPage } from './pages/WarrantyRemitoTrackingPage';
 import { SalesBIImportPage } from './pages/SalesBIImportPage';
@@ -82,7 +83,10 @@ function defaultRedirect() {
   if (can('warranties.sucursal.logistics')) return <Navigate to="/warranties/sucursal" replace />;
   if (can('warranties.view')) return <Navigate to="/warranties" replace />;
   if (can('warranties.create')) return <Navigate to="/warranties/new" replace />;
-  if (can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer')) return <Navigate to="/warranties/remitos" replace />;
+  if (can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer')) {
+    if (isPlainDepositOperator(getCurrentUserFromStorage())) return <Navigate to="/warranties/deposito" replace />;
+    return <Navigate to="/warranties/remitos" replace />;
+  }
   if (can('budgets.view')) return <Navigate to="/budgets/new" replace />;
   return <NoAccessPage />;
 }
@@ -129,6 +133,7 @@ export default function App() {
       <Route path="/warranties/sincronizacion" element={<Navigate to="/warranties/sync" replace />} />
       <Route path="/warranties/config" element={<ProtectedLayout allowed={() => canSeeWarrantyConfig(getCurrentUserFromStorage())}><WarrantyConfigPage /></ProtectedLayout>} />
       <Route path="/warranties/configuracion" element={<Navigate to="/warranties/config" replace />} />
+      <Route path="/warranties/deposito" element={<ProtectedLayout allowed={() => canSeeDepositReceivePage(getCurrentUserFromStorage())}><WarrantyDepositReceivePage /></ProtectedLayout>} />
       <Route path="/warranties/remitos" element={<ProtectedLayout allowed={() => canUseRemitosHub(getCurrentUserFromStorage())}><WarrantyRemitosPage /></ProtectedLayout>} />
       <Route path="/warranties/remito-historial" element={<ProtectedLayout allowed={() => canSeeRemitoTracking(getCurrentUserFromStorage())}><WarrantyRemitoTrackingPage /></ProtectedLayout>} />
       <Route path="/warranties/despacho" element={<Navigate to="/warranties/sucursal" replace />} />

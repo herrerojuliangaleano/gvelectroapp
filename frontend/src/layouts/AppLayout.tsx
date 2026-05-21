@@ -1,5 +1,5 @@
 import {
-  Activity, Archive, BarChart2, Bell, Building2, Calculator, ChevronDown, ChevronRight, CircleDollarSign, ClipboardList, Cloud, FileSpreadsheet, FileText, Globe2, History, Home, Info, KeyRound, LayoutDashboard, LogOut, MapPin, Menu, Settings, ShieldCheck, SlidersHorizontal, Truck, User, UserCog, Wrench, X,
+  Activity, Archive, BarChart2, Bell, Building2, Calculator, ChevronDown, ChevronRight, CircleDollarSign, ClipboardList, Cloud, FileSpreadsheet, FileText, Globe2, History, Home, Info, KeyRound, LayoutDashboard, LogOut, MapPin, Menu, PackageCheck, Settings, ShieldCheck, SlidersHorizontal, Truck, User, UserCog, Wrench, X,
 } from 'lucide-react';
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import { useEffect, useMemo, useState } from 'react';
@@ -11,7 +11,7 @@ import { UpdatePrompt } from '../components/UpdatePrompt';
 import { can, fetchNotifications, fetchSystemStatus, fetchUnreadNotificationsCount, getCurrentUserFromStorage, logout } from '../api/client';
 import { cleanupPushNotifications, initPushNotifications } from '../services/pushNotifications';
 import type { SystemPublicStatus } from '../types';
-import { canSeeGestorPanel, canSeeRemitoTracking, canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantyReview, canSeeWarrantySync, canSeeSucursalLogistics, canUseRemitosHub, isPlainDepositOperator } from '../warrantyAccess';
+import { canSeeDepositReceivePage, canSeeGestorPanel, canSeeRemitoTracking, canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantyReview, canSeeWarrantySync, canSeeSucursalLogistics, canUseRemitosHub, isPlainDepositOperator } from '../warrantyAccess';
 
 type NavItemDef = {
   to: string;
@@ -137,7 +137,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
           { to: '/warranties/new',        icon: <ShieldCheck size={16} />,       label: 'Nueva garantía',          permission: 'warranties.create' },
           { to: '/warranties/revision',   icon: <ClipboardList size={16} />,     label: 'Revisión',                visible: canSeeWarrantyReview(user) },
           { to: '/warranties/gestion',    icon: <Building2 size={16} />,         label: 'Gestión',                 visible: canSeeWarrantyProviderManagement(user) },
-          { to: '/warranties/remitos',          icon: <Truck size={16} />,             label: isPlainDepositOperator(user) ? 'Recepción / movimientos' : 'Remitos', visible: canUseRemitosHub(user) },
+          { to: '/warranties/deposito',          icon: <PackageCheck size={16} />,       label: 'Recepción depósito',      visible: canSeeDepositReceivePage(user) },
+          { to: '/warranties/remitos',          icon: <Truck size={16} />,             label: 'Remitos',                 visible: !isPlainDepositOperator(user) && canUseRemitosHub(user) },
           { to: '/warranties/remito-historial', icon: <History size={16} />,           label: 'Historial de remitos',    visible: canSeeRemitoTracking(user) },
           { to: '/warranties/export',     icon: <FileSpreadsheet size={16} />,   label: 'Exportación',             visible: canSeeWarrantyExport(user) },
           { to: '/warranties/sync',       icon: <Cloud size={16} />,             label: 'Sincronización',          visible: canSeeWarrantySync(user) },
@@ -187,7 +188,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
       { to: '/warranties/new', icon: <ShieldCheck size={19} />, label: 'Garantía', permission: 'warranties.create' },
       { to: '/warranties/sucursal', icon: <MapPin size={19} />, label: 'Sucursal', visible: canSeeSucursalLogistics(user) },
       { to: '/warranties/gestor', icon: <LayoutDashboard size={19} />, label: 'Gestor', visible: canSeeGestorPanel(user) },
-      { to: '/warranties/remitos', icon: <Truck size={19} />, label: isPlainDepositOperator(user) ? 'Recepción' : 'Remitos', visible: canUseRemitosHub(user) },
+      { to: '/warranties/deposito', icon: <PackageCheck size={19} />, label: 'Recepción', visible: canSeeDepositReceivePage(user) },
+      { to: '/warranties/remitos',  icon: <Truck size={19} />,        label: 'Remitos',   visible: !isPlainDepositOperator(user) && canUseRemitosHub(user) },
       { to: '/warranties/gestion', icon: <Building2 size={19} />, label: 'Gestión', visible: canSeeWarrantyProviderManagement(user) },
       { to: '/precios-costos', icon: <CircleDollarSign size={19} />, label: 'Precios', anyPermission: ['price_updates.view', 'cost_updates.view'] },
       { to: '/notificaciones', icon: <Bell size={19} />, label: 'Avisos', permission: 'notifications.view' },
