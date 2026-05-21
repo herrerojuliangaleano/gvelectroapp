@@ -567,7 +567,17 @@ function ManagementCard({
   run: (type: 'send' | 'response' | 'claim' | 'resend' | 'status' | 'confirm' | 'pickup', override?: Partial<ActionState>) => void;
 }) {
   // ── Phase 2: dynamic action forms ──────────────────────────────────
-  const [activeAction, setActiveAction] = useState<string | null>(null);
+  // Auto-abre la acción más relevante según el estado actual de la garantía
+  const [activeAction, setActiveAction] = useState<string | null>(() => {
+    const estado = item.estado || '';
+    if (
+      ['4 - ENVIADO AL PROVEEDOR', '5 - EN EL PROVEEDOR'].includes(estado) &&
+      can('warranties.register_provider_response')
+    ) {
+      return 'response';
+    }
+    return null;
+  });
 
   // ── Phase 3: collapsible history ───────────────────────────────────
   const [showHistory, setShowHistory] = useState(false);

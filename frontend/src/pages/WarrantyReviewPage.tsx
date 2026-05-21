@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck, Clock, Eye, Filter, RefreshCw, Search, ExternalLink } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck, Clock, Eye, Filter, RefreshCw, Search, ExternalLink, X } from 'lucide-react';
 import { approveWarrantyReview, can, fetchWarrantyOptions, fetchWarrantyReviewQueue, markWarrantyIncomplete, takeWarrantyIntoReview } from '../api/client';
 import type { WarrantyListResponse, WarrantyOptions, WarrantySummary } from '../types';
 
@@ -47,7 +47,7 @@ export function WarrantyReviewPage() {
     load(filters);
   }
 
-  async function action(id: string, type: 'take' | 'incomplete' | 'approve') {
+  async function action(id: string, type: 'take' | 'incomplete' | 'approve' | 'direct_approve' | 'direct_incomplete') {
     setSavingId(id);
     setMessage('');
     setError('');
@@ -61,9 +61,19 @@ export function WarrantyReviewPage() {
       } else if (type === 'incomplete') {
         await markWarrantyIncomplete(id, payload);
         setMessage('Garantía devuelta a sucursal para corrección.');
-      } else {
+      } else if (type === 'approve') {
         await approveWarrantyReview(id, payload);
         setMessage('Garantía aprobada y pasada a gestión.');
+      } else if (type === 'direct_approve') {
+        // Tomar + aprobar en un solo paso (sin navegar al detalle)
+        await takeWarrantyIntoReview(id, {});
+        await approveWarrantyReview(id, payload);
+        setMessage('Garantía tomada y aprobada directamente.');
+      } else {
+        // direct_incomplete: tomar + devolver para corrección
+        await takeWarrantyIntoReview(id, {});
+        await markWarrantyIncomplete(id, payload);
+        setMessage('Garantía devuelta a sucursal para corrección.');
       }
       setNotes((prev) => ({ ...prev, [id]: '' }));
       await load(filters);
@@ -165,6 +175,8 @@ export function WarrantyReviewPage() {
                 setNote={(value) => setNotes((prev) => ({ ...prev, [item.id_garantia]: value }))}
                 saving={savingId === item.id_garantia}
                 onTake={() => action(item.id_garantia, 'take')}
+                onDirectApprove={() => action(item.id_garantia, 'direct_approve')}
+                onDirectIncomplete={() => action(item.id_garantia, 'direct_incomplete')}
               />
             ))}
           </div>
@@ -213,6 +225,7 @@ function Select({ label, value, options, onChange }: { label: string; value: str
 function ReviewCard({
   item, note, setNote, saving,
   onTake, onIncomplete, onApprove,
+  onDirectApprove, onDirectIncomplete,
 }: {
   item: WarrantySummary;
   note: string;
@@ -221,7 +234,10 @@ function ReviewCard({
   onTake?: () => void;
   onIncomplete?: () => void;
   onApprove?: () => void;
+  onDirectApprove?: () => void;
+  onDirectIncomplete?: () => void;
 }) {
+  const [showReturnForm, setShowReturnForm] = useState(false);
   const isPending    = !item.review_status || item.review_status === 'pendiente_revision';
   const isInProgress = item.review_status === 'en_revision';
   const isCorrection = item.review_status === 'requiere_correccion';
@@ -279,18 +295,84 @@ function ReviewCard({
       {/* ── CTA según estado ─────────────────────────────────────────── */}
       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
 
-        {/* ESTADO: pendiente — único CTA es "Tomar en revisión" */}
-        {isPending && can('warranties.review') && onTake && (
-          <div className="flex flex-col gap-1">
-            <button
-              disabled={saving}
-              onClick={onTake}
-              className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-3 font-black text-white hover:bg-violet-500 disabled:opacity-50"
-            >
-              <Eye size={18} /> Tomar en revisión
-              <ArrowRight size={16} className="ml-1" />
-            </button>
-            <span className="text-xs text-slate-500 pl-1">Abre el detalle completo para revisar y decidir</span>
+        {/* ESTADO: pendiente — acciones rápidas + opción de revisar en detalle */}
+        {isPending && can('warranties.review') && (
+          <div className="flex flex-col gap-2 w-full">
+            <div className="flex flex-wrap gap-2">
+              {/* Aprobar directamente: take + approve en un solo paso */}
+              {can('warranties.approve_review') && onDirectApprove && (
+                <button
+                  disabled={saving}
+                  onClick={onDirectApprove}
+                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-black text-white hover:bg-emerald-400 disabled:opacity-50"
+                >
+                  <CheckCircle2 size={16} /> Aprobar directamente
+                </button>
+              )}
+              {/* Tomar en revisión — navega al detalle completo */}
+              {onTake && (
+                <button
+                  disabled={saving}
+                  onClick={onTake}
+                  className="inline-flex items-center gap-2 rounded-xl border border-violet-500/50 bg-violet-500/10 px-4 py-2.5 text-sm font-black text-violet-100 hover:bg-violet-500/20 disabled:opacity-50"
+                >
+                  <Eye size={16} /> Revisar en detalle
+                  <ArrowRight size={14} />
+                </button>
+              )}
+              {/* Devolver para corrección — expande formulario con nota */}
+              {can('warranties.mark_incomplete') && onDirectIncomplete && (
+                <button
+                  disabled={saving}
+                  onClick={() => setShowReturnForm((v) => !v)}
+                  className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-black transition-all disabled:opacity-50 ${
+                    showReturnForm
+                      ? 'border-amber-500/60 bg-amber-500/15 text-amber-100'
+                      : 'border-amber-500/40 text-amber-300 hover:bg-amber-500/10'
+                  }`}
+                >
+                  <AlertTriangle size={16} /> Devolver para corrección
+                  {showReturnForm && <X size={13} />}
+                </button>
+              )}
+            </div>
+
+            {/* Formulario de corrección expandible */}
+            {showReturnForm && can('warranties.mark_incomplete') && onDirectIncomplete && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+                <p className="mb-2 text-xs text-amber-300/80">
+                  Indicá el motivo. La sucursal verá esta nota y la garantía vuelve automáticamente a revisión cuando la corrijan.
+                </p>
+                <textarea
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  rows={2}
+                  placeholder="Motivo de corrección (obligatorio)..."
+                  className="w-full rounded-xl border border-amber-500/30 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-amber-400"
+                  autoFocus
+                />
+                <div className="mt-2 flex gap-2">
+                  <button
+                    disabled={saving || !note.trim()}
+                    onClick={onDirectIncomplete}
+                    className="inline-flex items-center gap-2 rounded-xl bg-amber-500 px-4 py-2 text-sm font-black text-white hover:bg-amber-400 disabled:opacity-40"
+                  >
+                    <AlertTriangle size={14} /> Devolver con nota
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowReturnForm(false)}
+                    className="rounded-xl border border-slate-700 px-3 py-2 text-xs font-bold text-slate-400 hover:bg-slate-900"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <span className="text-xs text-slate-500 pl-1">
+              "Aprobar directamente" toma y aprueba en un paso. "Revisar en detalle" abre la vista completa.
+            </span>
           </div>
         )}
 
