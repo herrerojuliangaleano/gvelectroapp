@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Building2, ClipboardCheck, Copy, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Building2, ClipboardCheck, Copy, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
 import { can, fetchWarranties, fetchWarrantyCounters, fetchWarrantyOptions, getCurrentUserFromStorage, resyncWarrantyCounters } from '../api/client';
 import { EmptyState, Notice, PageHeader, Panel, SearchField, SectionHeader, primaryButtonClass, proInputClass, secondaryButtonClass, subtleButtonClass } from '../components/ProUI';
 import type { WarrantyCounterInfo, WarrantyListResponse, WarrantyOptions, WarrantySummary } from '../types';
@@ -98,6 +98,11 @@ export function WarrantiesListPage() {
     return { bySucursal: top(bySucursal), byDeposito: top(byDeposito), byEstado: top(byEstado) };
   }, [data]);
 
+  const correctionItems = useMemo(
+    () => (data?.items || []).filter((i) => i.review_status === 'requiere_correccion'),
+    [data],
+  );
+
   async function load(extra = filters) {
     setLoading(true);
     setError('');
@@ -159,6 +164,42 @@ export function WarrantiesListPage() {
         <Notice tone="info">
           Estás viendo solo garantías ubicadas en <strong>{assignedBranch || 'tu sucursal'}</strong>. Cuando se genera/despacha un remito hacia Depósito Chiclana, la garantía deja de aparecer acá y se sigue desde Remitos/Gestión.
         </Notice>
+      )}
+
+      {correctionItems.length > 0 && (
+        <div className="rounded-3xl border border-amber-500/40 bg-amber-500/10 p-4 shadow-lg shadow-amber-950/10">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+            <div className="min-w-0 flex-1">
+              <div className="font-black text-amber-100">
+                {isBranchOperator
+                  ? `${correctionItems.length} garantía${correctionItems.length !== 1 ? 's' : ''} requiere${correctionItems.length !== 1 ? 'n' : ''} corrección`
+                  : `${correctionItems.length} garantía${correctionItems.length !== 1 ? 's' : ''} marcada${correctionItems.length !== 1 ? 's' : ''} para corrección`}
+              </div>
+              <p className="mt-1 text-sm text-amber-100/80">
+                {isBranchOperator
+                  ? 'El revisor devolvió estas garantías con observaciones. Revisá cada una y corregí los datos antes de reenviarlas.'
+                  : 'Estas garantías fueron devueltas a sus sucursales de origen para corrección.'}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {correctionItems.slice(0, 6).map((item) => (
+                  <Link
+                    key={item.id_garantia}
+                    to={`/warranties/${encodeURIComponent(item.id_garantia)}`}
+                    className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-black text-amber-200 hover:bg-amber-500/20"
+                  >
+                    {item.id_garantia}
+                  </Link>
+                ))}
+                {correctionItems.length > 6 && (
+                  <span className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-400">
+                    +{correctionItems.length - 6} más
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {data && (
@@ -277,8 +318,25 @@ function Select({
 }
 
 function WarrantyCard({ item }: { item: WarrantySummary }) {
+  const isCorrection = item.review_status === 'requiere_correccion';
   return (
-    <div className="rounded-3xl border border-slate-800 bg-slate-950/65 p-4 shadow-xl transition hover:border-blue-500/40 sm:p-5">
+    <div className={`rounded-3xl border p-4 shadow-xl transition sm:p-5 ${
+      isCorrection
+        ? 'border-amber-500/40 bg-amber-500/5 hover:border-amber-400/60'
+        : 'border-slate-800 bg-slate-950/65 hover:border-blue-500/40'
+    }`}>
+      {/* Correction notice */}
+      {isCorrection && (
+        <div className="mb-3 flex items-start gap-2 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+          <div>
+            <div className="font-bold text-amber-200">Requiere corrección</div>
+            {item.review_note
+              ? <div className="mt-0.5 text-amber-100/90">{item.review_note}</div>
+              : <div className="mt-0.5 text-amber-100/60 text-xs">Sin nota del revisor.</div>}
+          </div>
+        </div>
+      )}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
