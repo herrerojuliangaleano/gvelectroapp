@@ -23,6 +23,7 @@ import type {
   WarrantySummary,
 } from '../types';
 import { computeLogisticsAlerts } from '../warrantyFlow';
+import { isWarrantyPrivilegedUser } from '../warrantyAccess';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -262,7 +263,8 @@ type RemitoTabId = 'pendiente' | 'en_transito' | 'llegado';
 export function WarrantySucursalPage() {
   const currentUser  = getCurrentUserFromStorage();
   const branchName   = (currentUser?.branch_name || currentUser?.sucursal || '').trim();
-  const autoSucursal = branchName;
+  const isPrivileged = isWarrantyPrivilegedUser(currentUser);
+  const [selectedBranch, setSelectedBranch] = useState(branchName);
 
   // ── warranty list state ──
   const [data, setData]         = useState<WarrantyListResponse | null>(null);
@@ -295,20 +297,20 @@ export function WarrantySucursalPage() {
     setLoadingW(true);
     setErrorW('');
     try {
-      const result = await fetchWarranties({ limit: 300 });
+      const result = await fetchWarranties({ limit: 300, sucursal: selectedBranch || undefined });
       setData(result);
     } catch (err) {
-      setErrorW(err instanceof Error ? err.message : 'No se pudo cargar las garantias de tu sucursal');
+      setErrorW(err instanceof Error ? err.message : 'No se pudo cargar las garantias de la sucursal');
     } finally {
       setLoadingW(false);
     }
   }
 
   async function loadRemitosList() {
-    if (!autoSucursal) return;
+    if (!selectedBranch) return;
     setLoadingR(true); setErrorR('');
     try {
-      const res = await fetchRemitos({ origen_sucursal: autoSucursal, limit: 200 });
+      const res = await fetchRemitos({ origen_sucursal: selectedBranch, limit: 200 });
       setRemitos(res?.items ?? []);
     } catch (e: unknown) {
       setErrorR((e as Error).message || 'No se pudieron cargar los remitos');
@@ -317,22 +319,23 @@ export function WarrantySucursalPage() {
   }
 
   async function loadAvailable() {
-    if (!autoSucursal) return;
+    if (!selectedBranch) return;
     setAvailLoading(true); setSelected(new Set());
     try {
-      const res = await fetchAvailableWarrantiesForRemito(autoSucursal);
+      const res = await fetchAvailableWarrantiesForRemito(selectedBranch);
       setAvailable(res?.items ?? []);
     } catch { setAvailable([]); }
     finally { setAvailLoading(false); }
   }
 
   useEffect(() => {
-    loadWarranties();
-    if (autoSucursal) {
-      fetchWarrantyOptions().then(setOptions).catch(() => {});
-      if (canUseRemitos) loadRemitosList();
-    }
+    fetchWarrantyOptions().then(setOptions).catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    loadWarranties();
+    if (selectedBranch && canUseRemitos) loadRemitosList();
+  }, [selectedBranch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function openGenerate() {
     setShowGen(true);
@@ -434,14 +437,28 @@ export function WarrantySucursalPage() {
             <Send size={13} /> Logistica de Sucursal
           </div>
           <h1 className="mt-3 text-3xl font-black sm:text-4xl">
-            {branchName ? `Garantias — ${branchName}` : 'Mis garantias'}
+            {selectedBranch ? `Garantias — ${selectedBranch}` : 'Mis garantias'}
           </h1>
           <p className="mt-1 text-slate-400">
             Equipos pendientes, remitos en transito y recepciones confirmadas.
           </p>
+          {isPrivileged && options?.branches_operativas && options.branches_operativas.length > 1 && (
+            <div className="mt-3 flex items-center gap-2">
+              <span className="text-xs font-semibold text-slate-500">Sucursal / Deposito:</span>
+              <select
+                value={selectedBranch}
+                onChange={(e) => { setShowGen(false); setSelectedBranch(e.target.value); }}
+                className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm font-bold text-white focus:border-blue-500 focus:outline-none"
+              >
+                {options.branches_operativas.map((b) => (
+                  <option key={b.id} value={b.name}>{b.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
-          {can('warranties.remitos.generate') && autoSucursal && (
+          {can('warranties.remitos.generate') && selectedBranch && (
             <button
               onClick={openGenerate}
               className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2.5 font-bold text-emerald-200 hover:bg-emerald-500/20"
@@ -450,7 +467,7 @@ export function WarrantySucursalPage() {
             </button>
           )}
           <button
-            onClick={() => { loadWarranties(); if (autoSucursal && canUseRemitos) loadRemitosList(); }}
+            onClick={() => { loadWarranties(); if (selectedBranch && canUseRemitos) loadRemitosList(); }}
             className="inline-flex items-center gap-2 rounded-xl border border-slate-600 px-4 py-2.5 font-bold text-slate-100 hover:bg-slate-900"
           >
             <RefreshCw size={16} className={(loadingW || loadingR) ? 'animate-spin' : ''} /> Actualizar
@@ -471,7 +488,9 @@ export function WarrantySucursalPage() {
 
       {/* ── Section 1: Garantias ──────────────────────────────────────────────── */}
       <section className="space-y-4">
-        <h2 className="text-sm font-black uppercase tracking-widest text-slate-500">Garantias de mi sucursal</h2>
+        <h2 className="text-sm font-black uppercase tracking-widest text-slate-500">
+          {isPrivileged && selectedBranch ? `Garantias de ${selectedBranch}` : 'Garantias de mi sucursal'}
+        </h2>
 
         <div className="flex flex-wrap gap-2">
           {WARRANTY_TABS.map((tab) => (
@@ -535,10 +554,12 @@ export function WarrantySucursalPage() {
       </section>
 
       {/* ── Section 2: Remitos ───────────────────────────────────────────────── */}
-      {autoSucursal && canUseRemitos && (
+      {selectedBranch && canUseRemitos && (
         <section ref={remitosRef} className="space-y-4 pt-2">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-sm font-black uppercase tracking-widest text-slate-500">Remitos de mi sucursal</h2>
+            <h2 className="text-sm font-black uppercase tracking-widest text-slate-500">
+              {isPrivileged ? `Remitos de ${selectedBranch}` : 'Remitos de mi sucursal'}
+            </h2>
             {can('warranties.remitos.generate') && (
               <button
                 onClick={() => { setShowGen((v) => !v); if (!showGen) loadAvailable(); }}
@@ -562,7 +583,7 @@ export function WarrantySucursalPage() {
                 <h3 className="text-base font-black text-emerald-200">Nuevo remito interno</h3>
               </div>
               <div className="mb-4 flex flex-wrap gap-4 rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3 text-sm">
-                <span><span className="text-slate-500">Origen:</span> <span className="font-bold text-slate-200">{autoSucursal}</span></span>
+                <span><span className="text-slate-500">Origen:</span> <span className="font-bold text-slate-200">{selectedBranch}</span></span>
                 <span className="text-slate-600">→</span>
                 <span><span className="text-slate-500">Destino:</span> <span className="font-bold text-emerald-200">{destino}</span></span>
               </div>
@@ -575,7 +596,7 @@ export function WarrantySucursalPage() {
               {!availLoading && available.length === 0 && (
                 <div className="rounded-xl border border-slate-700 bg-slate-900/60 py-8 text-center">
                   <Package size={28} className="mx-auto mb-2 text-slate-600" />
-                  <p className="text-sm text-slate-400">No hay garantias disponibles para remito en <strong className="text-slate-300">{autoSucursal}</strong>.</p>
+                  <p className="text-sm text-slate-400">No hay garantias disponibles para remito en <strong className="text-slate-300">{selectedBranch}</strong>.</p>
                   <p className="mt-1 text-xs text-slate-500">Las garantias aparecen cuando estan en la sucursal y no tienen remito activo.</p>
                 </div>
               )}
