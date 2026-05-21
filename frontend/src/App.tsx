@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { can, getCurrentUserFromStorage, getToken } from './api/client';
 import { AppLayout } from './layouts/AppLayout';
-import { canSeeGestorPanel, canSeeRemitoTracking, canSeeSucursalLogistics, canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantyReview, canSeeWarrantySync, canUseBranchDispatch, canUseRemitosHub } from './warrantyAccess';
+import { canSeeGestorPanel, canSeeRemitoTracking, canSeeSucursalLogistics, canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantyReview, canSeeWarrantySync, canUseRemitosHub } from './warrantyAccess';
 import { AboutSystemPage } from './pages/AboutSystemPage';
 import { AdminRolesPage } from './pages/AdminRolesPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
@@ -42,7 +42,6 @@ import { WarrantyGestorPage } from './pages/WarrantyGestorPage';
 import { WarrantySucursalPage } from './pages/WarrantySucursalPage';
 import { WarrantyRemitosPage } from './pages/WarrantyRemitosPage';
 import { WarrantyRemitoTrackingPage } from './pages/WarrantyRemitoTrackingPage';
-import { BranchDispatchPage } from './pages/BranchDispatchPage';
 import { SalesBIImportPage } from './pages/SalesBIImportPage';
 import { SalesBIHistoryPage } from './pages/SalesBIHistoryPage';
 import { SalesBIDetailPage } from './pages/SalesBIDetailPage';
@@ -132,7 +131,7 @@ export default function App() {
       <Route path="/warranties/configuracion" element={<Navigate to="/warranties/config" replace />} />
       <Route path="/warranties/remitos" element={<ProtectedLayout allowed={() => canUseRemitosHub(getCurrentUserFromStorage())}><WarrantyRemitosPage /></ProtectedLayout>} />
       <Route path="/warranties/remito-historial" element={<ProtectedLayout allowed={() => canSeeRemitoTracking(getCurrentUserFromStorage())}><WarrantyRemitoTrackingPage /></ProtectedLayout>} />
-      <Route path="/warranties/despacho" element={<ProtectedLayout allowed={() => canUseBranchDispatch(getCurrentUserFromStorage())}><BranchDispatchPage /></ProtectedLayout>} />
+      <Route path="/warranties/despacho" element={<Navigate to="/warranties/sucursal" replace />} />
       <Route path="/warranties/:warrantyId" element={<ProtectedLayout permission="warranties.view"><WarrantyDetailPage /></ProtectedLayout>} />
       <Route path="/budgets/new" element={<ProtectedLayout permission="budgets.view"><BudgetCreatePage /></ProtectedLayout>} />
       <Route path="/venta" element={<ProtectedLayout permission="sales_web.view"><SalesWebListPage /></ProtectedLayout>} />
