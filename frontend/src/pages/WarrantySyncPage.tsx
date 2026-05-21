@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { RefreshCw, AlertTriangle, CheckCircle2, ArrowUpToLine, ArrowDownToLine, Clock3, Database, FileSpreadsheet, Wand2, Trash2, Download, ShieldAlert } from 'lucide-react';
+import { RefreshCw, AlertTriangle, CheckCircle2, ArrowUpToLine, ArrowDownToLine, Clock3, Database, FileSpreadsheet, Wand2, Trash2, Download, ShieldAlert, ChevronDown } from 'lucide-react';
 import { can, downloadWarrantyProductionResetBackup, executeWarrantyProductionReset, fetchWarrantyProductionResetPreview, fetchWarrantySyncLogs, fetchWarrantySyncStatus, pullWarrantiesFromSheet, pushWarrantiesToSheet, setupWarrantySheet } from '../api/client';
 import type { SetupSheetResult, WarrantyResetPreviewResponse, WarrantyResetResponse, WarrantySyncLogInfo, WarrantySyncResult, WarrantySyncStatus } from '../types';
 
@@ -28,6 +28,7 @@ export function WarrantySyncPage() {
   const [resetResult, setResetResult] = useState<WarrantyResetResponse | null>(null);
   const [resetConfirmation, setResetConfirmation] = useState('');
   const [resetGeneratedFiles, setResetGeneratedFiles] = useState(true);
+  const [resetExpanded, setResetExpanded] = useState(false);
 
   const canPush = can('warranties.sync_to_sheet');
   const canPull = can('warranties.sync_from_sheet');
@@ -248,67 +249,111 @@ export function WarrantySyncPage() {
       </div>
 
       {canReset && resetPreview && (
-        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div className="flex gap-3">
-              <div className="rounded-xl bg-red-500/15 p-3 text-red-200"><ShieldAlert size={24} /></div>
-              <div>
-                <h2 className="text-xl font-black text-white">Reset producción de garantías</h2>
-                <p className="mt-1 max-w-3xl text-sm text-red-100/80">
-                  Limpia datos operativos de prueba y reinicia correlativos GAR/REM/ENV. Conserva usuarios, empresas, sucursales, depósitos, roles, permisos y configuración.
+        <>
+          {/* Separador zona de peligro */}
+          <div className="flex items-center gap-4 py-2">
+            <div className="h-px flex-1 bg-red-500/25" />
+            <span className="flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-red-500/70">
+              <ShieldAlert size={12} /> Zona de peligro
+            </span>
+            <div className="h-px flex-1 bg-red-500/25" />
+          </div>
+
+          {/* Acordeón colapsable */}
+          <div className="rounded-2xl border border-red-500/40 bg-red-950/20 overflow-hidden">
+            {/* Header — siempre visible, actúa como toggle */}
+            <button
+              type="button"
+              onClick={() => setResetExpanded((v) => !v)}
+              className="flex w-full items-center gap-4 p-5 text-left hover:bg-red-500/5 transition-colors"
+            >
+              <div className="rounded-xl bg-red-500/20 p-3 text-red-400 shrink-0">
+                <ShieldAlert size={22} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-lg font-black text-red-100">Reset de producción de garantías</h2>
+                  <span className="rounded-full border border-red-500/50 bg-red-500/15 px-2 py-0.5 text-xs font-black text-red-400 uppercase tracking-wide">Destructivo</span>
+                </div>
+                <p className="mt-1 text-sm text-red-200/50">
+                  Elimina garantías, remitos, ENV y eventos de prueba. Reinicia correlativos. Esta acción no se puede deshacer.
                 </p>
               </div>
-            </div>
-            <button onClick={runBackup} disabled={!!running} className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-400/40 px-4 py-2 text-sm font-black text-red-100 hover:bg-red-500/10 disabled:opacity-50">
-              <Download size={16} /> {running === 'backup' ? 'Generando backup...' : 'Descargar backup JSON'}
-            </button>
-          </div>
-
-          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-xl border border-red-500/20 bg-slate-950/50 p-4"><div className="text-xs font-bold text-slate-400">Garantías</div><div className="text-2xl font-black text-white">{resetPreview.summary.guarantees}</div></div>
-            <div className="rounded-xl border border-red-500/20 bg-slate-950/50 p-4"><div className="text-xs font-bold text-slate-400">Remitos</div><div className="text-2xl font-black text-white">{resetPreview.summary.remitos}</div></div>
-            <div className="rounded-xl border border-red-500/20 bg-slate-950/50 p-4"><div className="text-xs font-bold text-slate-400">Lotes ENV</div><div className="text-2xl font-black text-white">{resetPreview.summary.exports}</div></div>
-            <div className="rounded-xl border border-red-500/20 bg-slate-950/50 p-4"><div className="text-xs font-bold text-slate-400">Eventos</div><div className="text-2xl font-black text-white">{resetPreview.summary.guarantee_history}</div></div>
-          </div>
-
-          <div className="mt-4 rounded-xl border border-slate-700 bg-slate-950/60 p-4 text-sm text-slate-300">
-            <div className="font-black text-white">Se conserva:</div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {resetPreview.preserved.map((item) => <span key={item} className="rounded-full bg-slate-800 px-3 py-1 text-xs font-bold text-slate-200">{item}</span>)}
-            </div>
-          </div>
-
-          {resetResult && (
-            <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-100">
-              <CheckCircle2 size={16} className="mb-0.5 mr-2 inline" />
-              {resetResult.message} Backup generado: <b>{resetResult.backup_file}</b>. Archivos Excel borrados: <b>{resetResult.deleted_generated_files}</b>.
-            </div>
-          )}
-
-          <div className="mt-5 grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
-            <label className="block">
-              <span className="text-xs font-black uppercase tracking-wide text-red-100">Confirmación obligatoria</span>
-              <input
-                value={resetConfirmation}
-                onChange={(e) => setResetConfirmation(e.target.value)}
-                placeholder={resetPreview.confirmation_phrase}
-                className="mt-2 w-full rounded-xl border border-red-500/30 bg-slate-950 px-4 py-3 text-sm font-bold text-white outline-none focus:border-red-300"
+              <ChevronDown
+                size={20}
+                className={`shrink-0 text-red-400 transition-transform duration-200 ${resetExpanded ? 'rotate-180' : ''}`}
               />
-              <span className="mt-1 block text-xs text-red-100/70">Escribí exactamente: {resetPreview.confirmation_phrase}</span>
-            </label>
-            <button
-              onClick={runProductionReset}
-              disabled={!!running || resetConfirmation.trim().toUpperCase() !== resetPreview.confirmation_phrase}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 px-5 py-3 text-sm font-black text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Trash2 size={16} /> {running === 'reset' ? 'Reseteando...' : 'Resetear garantías'}
             </button>
+
+            {/* Panel expandido */}
+            {resetExpanded && (
+              <div className="border-t border-red-500/25 p-5 space-y-5">
+                {/* Aviso destructivo */}
+                <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100/90">
+                  <AlertTriangle size={14} className="mr-2 inline text-red-400" />
+                  Limpia datos operativos de prueba y reinicia correlativos GAR/REM/ENV. Conserva usuarios, empresas, sucursales, depósitos, roles, permisos y configuración.
+                  <span className="ml-2 font-black text-red-300">Descargá un backup antes de continuar.</span>
+                </div>
+
+                {/* Contadores */}
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-xl border border-red-500/20 bg-slate-950/50 p-4"><div className="text-xs font-bold text-slate-400">Garantías</div><div className="text-2xl font-black text-white">{resetPreview.summary.guarantees}</div></div>
+                  <div className="rounded-xl border border-red-500/20 bg-slate-950/50 p-4"><div className="text-xs font-bold text-slate-400">Remitos</div><div className="text-2xl font-black text-white">{resetPreview.summary.remitos}</div></div>
+                  <div className="rounded-xl border border-red-500/20 bg-slate-950/50 p-4"><div className="text-xs font-bold text-slate-400">Lotes ENV</div><div className="text-2xl font-black text-white">{resetPreview.summary.exports}</div></div>
+                  <div className="rounded-xl border border-red-500/20 bg-slate-950/50 p-4"><div className="text-xs font-bold text-slate-400">Eventos</div><div className="text-2xl font-black text-white">{resetPreview.summary.guarantee_history}</div></div>
+                </div>
+
+                {/* Lo que se conserva */}
+                <div className="rounded-xl border border-slate-700 bg-slate-950/60 p-4 text-sm text-slate-300">
+                  <div className="font-black text-white">Se conserva:</div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {resetPreview.preserved.map((item) => <span key={item} className="rounded-full bg-slate-800 px-3 py-1 text-xs font-bold text-slate-200">{item}</span>)}
+                  </div>
+                </div>
+
+                {/* Backup */}
+                <button onClick={runBackup} disabled={!!running} className="inline-flex items-center gap-2 rounded-xl border border-red-400/40 px-4 py-2.5 text-sm font-black text-red-100 hover:bg-red-500/10 disabled:opacity-50">
+                  <Download size={15} /> {running === 'backup' ? 'Generando backup...' : 'Descargar backup JSON antes de resetear'}
+                </button>
+
+                {/* Resultado del reset */}
+                {resetResult && (
+                  <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-100">
+                    <CheckCircle2 size={16} className="mb-0.5 mr-2 inline" />
+                    {resetResult.message} Backup generado: <b>{resetResult.backup_file}</b>. Archivos Excel borrados: <b>{resetResult.deleted_generated_files}</b>.
+                  </div>
+                )}
+
+                {/* Confirmación y botón de reset */}
+                <div className="rounded-xl border border-red-500/30 bg-slate-950/60 p-4 space-y-4">
+                  <div className="text-xs font-black uppercase tracking-widest text-red-400">Confirmación obligatoria para ejecutar</div>
+                  <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
+                    <label className="block">
+                      <input
+                        value={resetConfirmation}
+                        onChange={(e) => setResetConfirmation(e.target.value)}
+                        placeholder={resetPreview.confirmation_phrase}
+                        className="w-full rounded-xl border border-red-500/30 bg-slate-950 px-4 py-3 text-sm font-bold text-white outline-none focus:border-red-300"
+                      />
+                      <span className="mt-1.5 block text-xs text-red-200/60">Escribí exactamente: <span className="font-black text-red-200">{resetPreview.confirmation_phrase}</span></span>
+                    </label>
+                    <button
+                      onClick={runProductionReset}
+                      disabled={!!running || resetConfirmation.trim().toUpperCase() !== resetPreview.confirmation_phrase}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-black text-white hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Trash2 size={16} /> {running === 'reset' ? 'Reseteando...' : 'Ejecutar reset'}
+                    </button>
+                  </div>
+                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-400">
+                    <input type="checkbox" checked={resetGeneratedFiles} onChange={(e) => setResetGeneratedFiles(e.target.checked)} className="h-4 w-4" />
+                    Borrar también archivos Excel de ENV generados en pruebas.
+                  </label>
+                </div>
+              </div>
+            )}
           </div>
-          <label className="mt-3 flex items-center gap-2 text-xs font-semibold text-slate-300">
-            <input type="checkbox" checked={resetGeneratedFiles} onChange={(e) => setResetGeneratedFiles(e.target.checked)} className="h-4 w-4" />
-            Borrar también archivos Excel de ENV generados en pruebas.
-          </label>
-        </div>
+        </>
       )}
 
       {result && (

@@ -84,7 +84,7 @@ export function canSeeGestorPanel(user: CurrentUser | null | undefined): boolean
 }
 
 export function canSeeSucursalLogistics(user: CurrentUser | null | undefined): boolean {
-  return can('warranties.sucursal.logistics') || can('warranties.remitos.dispatch');
+  return can('warranties.sucursal.logistics');
 }
 
 export function canSeeRemitoTracking(user: CurrentUser | null | undefined): boolean {

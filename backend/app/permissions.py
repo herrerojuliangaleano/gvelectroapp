@@ -224,6 +224,8 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
             "warranties.export", "warranties.cancel",
             # Remitos: ve y genera remito a proveedor
             "warranties.remitos.view", "warranties.remitos.provider_delivery",
+            # Panel operativo del gestor (bandeja de trabajo interna)
+            "warranties.gestor.panel",
             "notifications.view", "push.subscribe",
         ],
     },
@@ -245,7 +247,8 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
         "permissions": [
             "profile.view", "employees.photo.upload_own", "payroll_receipts.view_own", "payroll_receipts.sign_own", "payroll_receipts.observe_own", "about.view", "system.status.view",
             # Depósito operativo NO es gestor/admin: solo carga, recepción y movimientos depósito→depósito.
-            "warranties.create", "warranties.remitos.receive", "warranties.remitos.deposit_transfer",
+            # warranties.view permite ver las garantías que el propio DEPOSITO cargó/recibió.
+            "warranties.view", "warranties.create", "warranties.remitos.receive", "warranties.remitos.deposit_transfer",
             "notifications.view", "push.subscribe",
         ],
     },
