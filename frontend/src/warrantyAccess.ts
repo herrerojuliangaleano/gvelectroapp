@@ -54,33 +54,23 @@ export function canSeeWarrantyConfig(user: CurrentUser | null | undefined): bool
   return !isPlainDepositOperator(user) && can('warranties.config');
 }
 
-export function canUseBranchDispatch(user: CurrentUser | null | undefined): boolean {
-  return !isPlainDepositOperator(user) && can('warranties.remitos.dispatch');
-}
-
+/**
+ * Acceso a la página /warranties/remitos.
+ * Después de Fase 7, esa página solo contiene:
+ *   - Movimiento depósito → depósito  (deposit_transfer)
+ *   - Entrega al proveedor            (provider_delivery)
+ * Los permisos generate/receive ya no corresponden a contenido en esa página.
+ */
 export function canUseRemitosHub(user: CurrentUser | null | undefined): boolean {
-  return can('warranties.remitos.view') || can('warranties.remitos.generate') || can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer');
+  return can('warranties.remitos.deposit_transfer') || can('warranties.remitos.provider_delivery');
 }
 
+/**
+ * Acceso a la página /warranties/deposito (WarrantyDepositReceivePage).
+ * Solo para operadores DEPOSITO puros que puedan recibir o mover entre depósitos.
+ */
 export function canSeeDepositReceivePage(user: CurrentUser | null | undefined): boolean {
-  return isPlainDepositOperator(user) && canUseRemitosHub(user);
-}
-
-export function canGenerateProviderDelivery(user: CurrentUser | null | undefined): boolean {
-  return !isPlainDepositOperator(user) && can('warranties.remitos.provider_delivery');
-}
-
-export function isGestorGarantias(user: CurrentUser | null | undefined): boolean {
-  const roles = roleKeys(user);
-  return roles.includes('GESTOR_GARANTIAS') || roles.includes('GESTOR');
-}
-
-export function isJefePosventa(user: CurrentUser | null | undefined): boolean {
-  return roleKeys(user).includes('JEFE_POSVENTA');
-}
-
-export function isEncargadoSucursal(user: CurrentUser | null | undefined): boolean {
-  return roleKeys(user).includes('ENCARGADO_SUCURSAL');
+  return isPlainDepositOperator(user) && (can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer'));
 }
 
 export function canSeeGestorPanel(user: CurrentUser | null | undefined): boolean {

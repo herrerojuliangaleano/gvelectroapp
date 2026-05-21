@@ -85,8 +85,8 @@ function defaultRedirect() {
   if (can('warranties.create')) return <Navigate to="/warranties/new" replace />;
   if (can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer')) {
     if (isPlainDepositOperator(getCurrentUserFromStorage())) return <Navigate to="/warranties/deposito" replace />;
-    return <Navigate to="/warranties/remitos" replace />;
   }
+  if (can('warranties.remitos.deposit_transfer') || can('warranties.remitos.provider_delivery')) return <Navigate to="/warranties/remitos" replace />;
   if (can('budgets.view')) return <Navigate to="/budgets/new" replace />;
   return <NoAccessPage />;
 }
@@ -136,7 +136,6 @@ export default function App() {
       <Route path="/warranties/deposito" element={<ProtectedLayout allowed={() => canSeeDepositReceivePage(getCurrentUserFromStorage())}><WarrantyDepositReceivePage /></ProtectedLayout>} />
       <Route path="/warranties/remitos" element={<ProtectedLayout allowed={() => canUseRemitosHub(getCurrentUserFromStorage())}><WarrantyRemitosPage /></ProtectedLayout>} />
       <Route path="/warranties/remito-historial" element={<ProtectedLayout allowed={() => canSeeRemitoTracking(getCurrentUserFromStorage())}><WarrantyRemitoTrackingPage /></ProtectedLayout>} />
-      <Route path="/warranties/despacho" element={<Navigate to="/warranties/sucursal" replace />} />
       <Route path="/warranties/:warrantyId" element={<ProtectedLayout permission="warranties.view"><WarrantyDetailPage /></ProtectedLayout>} />
       <Route path="/budgets/new" element={<ProtectedLayout permission="budgets.view"><BudgetCreatePage /></ProtectedLayout>} />
       <Route path="/venta" element={<ProtectedLayout permission="sales_web.view"><SalesWebListPage /></ProtectedLayout>} />
