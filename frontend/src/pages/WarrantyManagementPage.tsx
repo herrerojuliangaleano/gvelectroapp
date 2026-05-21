@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, ArrowRight, Building2, CheckCircle2, Clock,
+  AlertTriangle, ArrowRight, Building2, CheckCircle2, ChevronDown, ChevronUp, Clock,
   FileCheck2, Filter, History, MessageSquareReply, PackageCheck,
   RefreshCw, Search, Send, ShieldCheck, Truck,
 } from 'lucide-react';
@@ -115,6 +115,8 @@ export function WarrantyManagementPage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [activeTab, setActiveTab] = useState<'para_enviar' | 'con_proveedor' | 'respondidas' | 'para_cerrar' | 'todos'>('con_proveedor');
+  const [showFilters, setShowFilters] = useState(false);
 
   const stats = useMemo(() => {
     const items = data?.items || [];
@@ -134,6 +136,35 @@ export function WarrantyManagementPage() {
     data?.items.forEach((item) => item.estado && set.add(item.estado));
     return Array.from(set);
   }, [data]);
+
+  // ── Priority tabs ────────────────────────────────────────────────────────
+  const tabGroups = useMemo(() => {
+    const all = data?.items || [];
+
+    function sortByDelay(list: WarrantySummary[]): WarrantySummary[] {
+      return [...list].sort((a, b) => {
+        const dA = Number(a.dias_sin_respuesta || 0);
+        const dB = Number(b.dias_sin_respuesta || 0);
+        if (dB !== dA) return dB - dA;
+        return Number(b.dias_pendiente || 0) - Number(a.dias_pendiente || 0);
+      });
+    }
+
+    const paraEnviar   = all.filter((i) => ['2 - PENDIENTE', '3 - LISTO PARA ENVIAR'].includes(i.estado || ''));
+    const conProveedor = all.filter((i) => ['4 - ENVIADO AL PROVEEDOR', '5 - EN EL PROVEEDOR'].includes(i.estado || ''));
+    const respondidas  = all.filter((i) => i.estado === '6 - RESPONDIDO POR PROVEEDOR');
+    const paraCerrar   = all.filter((i) => i.estado === '7 - RESUELTO');
+
+    return {
+      para_enviar:   { label: 'Para enviar',    items: sortByDelay(paraEnviar),   urgent: paraEnviar.filter((i)   => Number(i.dias_pendiente || 0) >= 7).length },
+      con_proveedor: { label: 'Con proveedor',  items: sortByDelay(conProveedor), urgent: conProveedor.filter((i) => Number(i.dias_sin_respuesta || 0) >= 7).length },
+      respondidas:   { label: 'Respondidas',    items: sortByDelay(respondidas),  urgent: respondidas.filter((i)  => Number(i.dias_sin_respuesta || 0) >= 7).length },
+      para_cerrar:   { label: 'Para cerrar',    items: sortByDelay(paraCerrar),   urgent: 0 },
+      todos:         { label: 'Todos',          items: all,                       urgent: all.filter((i)          => Number(i.dias_sin_respuesta || 0) >= 7).length },
+    } as const;
+  }, [data]);
+
+  const activeItems = tabGroups[activeTab].items;
 
   async function load(extra = filters) {
     setLoading(true);
@@ -256,6 +287,8 @@ export function WarrantyManagementPage() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
+
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <div className="inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1 text-xs font-black uppercase tracking-wide text-blue-100">
@@ -264,14 +297,28 @@ export function WarrantyManagementPage() {
           <h1 className="mt-3 text-3xl font-black sm:text-4xl">Garantías en gestión</h1>
           <p className="mt-2 text-slate-400">Seguimiento operativo por marca, proveedor y demora.</p>
         </div>
-        <button onClick={() => load()} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-600 px-4 py-3 font-bold text-slate-100 hover:bg-slate-900">
-          <RefreshCw size={18} /> Actualizar
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setShowFilters((v) => !v)}
+            className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 font-bold transition-all ${
+              showFilters
+                ? 'border-blue-500/60 bg-blue-500/15 text-blue-100'
+                : 'border-slate-700 text-slate-300 hover:bg-slate-900'
+            }`}
+          >
+            <Filter size={16} /> Filtros
+            {showFilters ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+          <button onClick={() => load()} className="inline-flex items-center gap-2 rounded-xl border border-slate-600 px-4 py-2.5 font-bold text-slate-100 hover:bg-slate-900">
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Actualizar
+          </button>
+        </div>
       </div>
 
       {error && <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-red-100">{error}</div>}
       {message && <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4 text-emerald-100">{message}</div>}
 
+      {/* ── KPIs ───────────────────────────────────────────────────────────── */}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
         <Kpi title="Total" value={stats.total} />
         <Kpi title="Listo p/ enviar" value={stats.listoParaEnviar} tone="warn" />
@@ -282,30 +329,86 @@ export function WarrantyManagementPage() {
         <Kpi title="Finalizadas" value={stats.finalizadas} tone="ok" />
       </div>
 
-      <form onSubmit={submit} className="rounded-3xl border border-slate-700 bg-slate-950/60 p-4 shadow-xl sm:p-5">
-        <div className="mb-4 flex items-center gap-2 text-sm font-black uppercase tracking-wide text-slate-300"><Filter size={16} /> Filtros</div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7">
-          <label className="xl:col-span-2">
-            <span className="mb-2 block text-sm font-semibold text-slate-300">Buscar</span>
-            <div className="relative">
-              <Search className="absolute left-3 top-3.5 text-slate-500" size={18} />
-              <input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} placeholder="ID, SKU, serie, producto..." className="w-full rounded-xl border border-slate-700 bg-slate-900 py-3 pl-10 pr-4 outline-none focus:border-blue-400" />
-            </div>
-          </label>
-          <FText label="Marca" value={filters.marca} onChange={(v) => setFilters({ ...filters, marca: v })} placeholder="Ej. Samsung" />
-          <FText label="Proveedor" value={filters.proveedor} onChange={(v) => setFilters({ ...filters, proveedor: v })} placeholder="Proveedor" />
-          <FSelect label="Sucursal" value={filters.sucursal} onChange={(v) => setFilters({ ...filters, sucursal: v })} options={options?.sucursales || []} />
-          <FSelect label="Estado" value={filters.estado} onChange={(v) => setFilters({ ...filters, estado: v })} options={estados} />
-          <FSelect label="Demora" value={filters.demora_min} onChange={(v) => setFilters({ ...filters, demora_min: v })} options={[['7', '+7 días'], ['15', '+15 días'], ['30', '+30 días']]} />
+      {/* ── Priority tabs ──────────────────────────────────────────────────── */}
+      <div className="flex flex-wrap gap-2">
+        {(Object.entries(tabGroups) as [typeof activeTab, typeof tabGroups[typeof activeTab]][]).map(([id, group]) => (
+          <button
+            key={id}
+            onClick={() => setActiveTab(id)}
+            className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-all ${
+              activeTab === id
+                ? 'border-blue-500/60 bg-blue-500/15 text-blue-100'
+                : 'border-slate-700 text-slate-400 hover:bg-slate-900 hover:text-slate-200'
+            }`}
+          >
+            {group.label}
+            <span className={`rounded-full border px-1.5 py-0.5 text-xs font-black ${
+              activeTab === id ? 'border-blue-400/40 bg-blue-500/20 text-blue-200' : 'border-slate-700 bg-slate-800 text-slate-400'
+            }`}>{group.items.length}</span>
+            {group.urgent > 0 && (
+              <span className="rounded-full border border-red-500/50 bg-red-500/15 px-1.5 py-0.5 text-[10px] font-black text-red-300">
+                {group.urgent} demor.
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Collapsible filter form ────────────────────────────────────────── */}
+      {showFilters && (
+        <form onSubmit={submit} className="rounded-3xl border border-blue-500/25 bg-slate-950/60 p-4 shadow-xl sm:p-5">
+          <div className="mb-4 flex items-center gap-2 text-sm font-black uppercase tracking-wide text-slate-300"><Filter size={16} /> Filtros avanzados</div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7">
+            <label className="xl:col-span-2">
+              <span className="mb-2 block text-sm font-semibold text-slate-300">Buscar</span>
+              <div className="relative">
+                <Search className="absolute left-3 top-3.5 text-slate-500" size={18} />
+                <input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} placeholder="ID, SKU, serie, producto..." className="w-full rounded-xl border border-slate-700 bg-slate-900 py-3 pl-10 pr-4 outline-none focus:border-blue-400" />
+              </div>
+            </label>
+            <FText label="Marca" value={filters.marca} onChange={(v) => setFilters({ ...filters, marca: v })} placeholder="Ej. Samsung" />
+            <FText label="Proveedor" value={filters.proveedor} onChange={(v) => setFilters({ ...filters, proveedor: v })} placeholder="Proveedor" />
+            <FSelect label="Sucursal" value={filters.sucursal} onChange={(v) => setFilters({ ...filters, sucursal: v })} options={options?.sucursales || []} />
+            <FSelect label="Estado" value={filters.estado} onChange={(v) => setFilters({ ...filters, estado: v })} options={estados} />
+            <FSelect label="Demora" value={filters.demora_min} onChange={(v) => setFilters({ ...filters, demora_min: v })} options={[['7', '+7 días'], ['15', '+15 días'], ['30', '+30 días']]} />
+          </div>
+          <div className="mt-4 flex gap-2">
+            <button type="submit" className="rounded-xl bg-blue-500 px-5 py-3 font-black text-white hover:bg-blue-400">Aplicar filtros</button>
+            <button
+              type="button"
+              onClick={() => { setFilters({ q: '', marca: '', proveedor: '', sucursal: '', deposito: '', estado: '', demora_min: '' }); load({ q: '', marca: '', proveedor: '', sucursal: '', deposito: '', estado: '', demora_min: '' }); }}
+              className="rounded-xl border border-slate-700 px-4 py-3 font-bold text-slate-300 hover:bg-slate-900"
+            >
+              Limpiar
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* ── Tab context label ──────────────────────────────────────────────── */}
+      {!loading && (
+        <div className="flex items-center gap-2 text-sm text-slate-500">
+          <span className="font-bold text-slate-400">{tabGroups[activeTab].label}:</span>
+          <span>{activeItems.length} garantía{activeItems.length !== 1 ? 's' : ''}</span>
+          {tabGroups[activeTab].urgent > 0 && (
+            <span className="rounded-full border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-xs font-bold text-red-300">
+              {tabGroups[activeTab].urgent} con demora
+            </span>
+          )}
         </div>
-        <button className="mt-4 rounded-xl bg-blue-500 px-5 py-3 font-black text-white hover:bg-blue-400">Aplicar filtros</button>
-      </form>
+      )}
 
       {loading && <div className="rounded-2xl border border-slate-700 bg-slate-950/60 p-5 text-slate-300">Cargando garantías...</div>}
-      {!loading && data?.items.length === 0 && <div className="rounded-2xl border border-slate-700 bg-slate-950/60 p-5 text-slate-300">No hay garantías con esos filtros.</div>}
+      {!loading && activeItems.length === 0 && (
+        <div className="rounded-2xl border border-slate-700 bg-slate-950/60 p-8 text-center text-slate-400">
+          {activeTab === 'todos'
+            ? 'No hay garantías con esos filtros.'
+            : `No hay garantías en la bandeja "${tabGroups[activeTab].label}".`}
+        </div>
+      )}
 
       <div className="space-y-4">
-        {data?.items.map((item) => (
+        {activeItems.map((item) => (
           <ManagementCard
             key={item.id_garantia}
             item={item}
