@@ -11,7 +11,7 @@ import { UpdatePrompt } from '../components/UpdatePrompt';
 import { can, fetchNotifications, fetchSystemStatus, fetchUnreadNotificationsCount, getCurrentUserFromStorage, logout } from '../api/client';
 import { cleanupPushNotifications, initPushNotifications } from '../services/pushNotifications';
 import type { SystemPublicStatus } from '../types';
-import { canSeeDepositReceivePage, canSeeGestorPanel, canSeeRemitoTracking, canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantyReview, canSeeWarrantySync, canSeeSucursalLogistics, canUseRemitosHub, isPlainDepositOperator } from '../warrantyAccess';
+import { canSeeDepositReceivePage, canSeeGestorPanel, canSeeRemitoTracking, canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantySync, canSeeSucursalLogistics, canUseRemitosHub, isPlainDepositOperator } from '../warrantyAccess';
 
 type NavItemDef = {
   to: string;
@@ -135,7 +135,6 @@ export function AppLayout({ children }: { children: ReactNode }) {
           { to: '/warranties/sucursal',   icon: <MapPin size={16} />,            label: 'Mi sucursal',             visible: canSeeSucursalLogistics(user) },
           { to: '/warranties',            icon: <ShieldCheck size={16} />,       label: 'Listado',                 visible: canSeeWarrantyList(user), exact: true },
           { to: '/warranties/new',        icon: <ShieldCheck size={16} />,       label: 'Nueva garantía',          permission: 'warranties.create' },
-          { to: '/warranties/revision',   icon: <ClipboardList size={16} />,     label: 'Revisión',                visible: canSeeWarrantyReview(user) },
           { to: '/warranties/gestion',    icon: <Building2 size={16} />,         label: 'Gestión',                 visible: canSeeWarrantyProviderManagement(user) },
           { to: '/warranties/deposito',          icon: <PackageCheck size={16} />,       label: 'Recepción depósito',      visible: canSeeDepositReceivePage(user) },
           { to: '/warranties/remitos',          icon: <Truck size={16} />,             label: 'Remitos',                 visible: !isPlainDepositOperator(user) && canUseRemitosHub(user) },

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck, Clock,
-  MapPin, Package, RefreshCw, ShieldCheck, Truck, Wrench, XCircle,
+  ExternalLink, Eye, MapPin, Package, RefreshCw, ShieldCheck, Truck, Wrench, X, XCircle,
 } from 'lucide-react';
-import { can, fetchWarranties } from '../api/client';
+import {
+  approveWarrantyReview, can, fetchWarranties, markWarrantyIncomplete, takeWarrantyIntoReview,
+} from '../api/client';
 import type { WarrantySummary, WarrantyListResponse } from '../types';
 import {
   computeLogisticsAlerts, flowToneClass, getWarrantyStatusMeta, getReviewStatusMeta,
@@ -118,14 +120,6 @@ function GestorCard({ item }: { item: WarrantySummary }) {
         >
           <ArrowRight size={13} /> Ver detalle
         </Link>
-        {(item.review_status === 'pendiente_revision' || item.review_status === 'en_revision') && can('warranties.review') && (
-          <Link
-            to={`/warranties/revision`}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-violet-500/40 px-3 py-1.5 text-xs font-bold text-violet-200 hover:bg-violet-500/10"
-          >
-            <ClipboardCheck size={13} /> Ir a revisión
-          </Link>
-        )}
         {(item.transit_status === 'en_transito' || item.origen_ingreso === 'sucursal') && can('warranties.remitos.view') && (
           <Link
             to="/warranties/remitos"
@@ -139,13 +133,209 @@ function GestorCard({ item }: { item: WarrantySummary }) {
   );
 }
 
+function ReviewActionCard({
+  item, note, setNote, saving,
+  onTake, onApprove, onIncomplete, onDirectApprove, onDirectIncomplete,
+}: {
+  item: WarrantySummary;
+  note: string;
+  setNote: (v: string) => void;
+  saving: boolean;
+  onTake?: () => void;
+  onApprove?: () => void;
+  onIncomplete?: () => void;
+  onDirectApprove?: () => void;
+  onDirectIncomplete?: () => void;
+}) {
+  const [showReturnForm, setShowReturnForm] = useState(false);
+  const isPending    = !item.review_status || item.review_status === 'pendiente_revision';
+  const isInProgress = item.review_status === 'en_revision';
+  const isCorrection = item.review_status === 'requiere_correccion';
+  const detailUrl    = `/warranties/${encodeURIComponent(item.id_garantia)}?from=revision`;
+
+  const statusPill = (s?: string) => {
+    if (s === 'requiere_correccion') return 'border-amber-500/40 bg-amber-500/10 text-amber-100';
+    if (s === 'revisada')            return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100';
+    if (s === 'en_revision')         return 'border-violet-500/40 bg-violet-500/10 text-violet-100';
+    return 'border-blue-500/40 bg-blue-500/10 text-blue-100';
+  };
+
+  return (
+    <div className={`rounded-2xl border p-4 sm:p-5 transition-colors ${
+      isInProgress ? 'border-violet-500/40 bg-violet-500/[0.03]' :
+      isCorrection ? 'border-amber-500/30 bg-amber-500/5' :
+      'border-slate-700 bg-slate-950/60'
+    }`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <Link to={detailUrl} className="font-mono text-lg font-black text-white hover:text-blue-200">
+          {item.id_garantia}
+        </Link>
+        <span className={`rounded-full border px-2.5 py-0.5 text-xs font-black ${statusPill(item.review_status)}`}>
+          {item.review_status_label || 'Pendiente de revisión'}
+        </span>
+        {item.dias_pendiente != null && Number(item.dias_pendiente) > 0 && (
+          <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-xs text-slate-400">
+            <Clock size={10} className="mr-1 inline" />{item.dias_pendiente}d
+          </span>
+        )}
+      </div>
+
+      <div className="mt-1.5 font-semibold text-slate-100">{item.producto_principal || 'Sin producto'}</div>
+
+      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-400">
+        {item.sucursal && <span><span className="text-slate-500">Sucursal:</span> {item.sucursal}</span>}
+        {item.sku      && <span><span className="text-slate-500">SKU:</span> {item.sku}</span>}
+        {item.serie    && <span><span className="text-slate-500">Serie:</span> {item.serie}</span>}
+        {item.tipo_ingreso_label && <span><span className="text-slate-500">Tipo:</span> {item.tipo_ingreso_label}</span>}
+      </div>
+
+      {item.falla && (
+        <div className="mt-2.5 rounded-xl bg-slate-900 px-3 py-2 text-xs text-slate-300">
+          <span className="font-bold text-slate-400">Falla: </span>{item.falla}
+        </div>
+      )}
+
+      {item.review_note && (
+        <div className="mt-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+          <span className="font-bold">Nota de revision: </span>{item.review_note}
+        </div>
+      )}
+
+      <div className="mt-3">
+        {isPending && can('warranties.review') && (
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap gap-2">
+              {can('warranties.approve_review') && onDirectApprove && (
+                <button disabled={saving} onClick={onDirectApprove}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-500 disabled:opacity-50">
+                  <CheckCircle2 size={13} /> Aprobar
+                </button>
+              )}
+              {onTake && (
+                <button disabled={saving} onClick={onTake}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-violet-500/50 bg-violet-500/10 px-3 py-2 text-xs font-black text-violet-100 hover:bg-violet-500/20 disabled:opacity-50">
+                  <Eye size={13} /> Revisar en detalle <ArrowRight size={12} />
+                </button>
+              )}
+              {can('warranties.mark_incomplete') && onDirectIncomplete && (
+                <button disabled={saving} onClick={() => setShowReturnForm((v) => !v)}
+                  className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-black transition-all disabled:opacity-50 ${
+                    showReturnForm ? 'border-amber-500/60 bg-amber-500/15 text-amber-100' : 'border-amber-500/40 text-amber-300 hover:bg-amber-500/10'
+                  }`}>
+                  <AlertTriangle size={13} /> Devolver {showReturnForm && <X size={11} />}
+                </button>
+              )}
+            </div>
+            {showReturnForm && can('warranties.mark_incomplete') && onDirectIncomplete && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+                <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} autoFocus
+                  placeholder="Motivo de correccion (obligatorio)..."
+                  className="w-full rounded-xl border border-amber-500/30 bg-slate-950 px-3 py-2 text-xs outline-none focus:border-amber-400" />
+                <div className="mt-2 flex gap-2">
+                  <button disabled={saving || !note.trim()} onClick={onDirectIncomplete}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-black text-white hover:bg-amber-400 disabled:opacity-40">
+                    <AlertTriangle size={12} /> Devolver con nota
+                  </button>
+                  <button type="button" onClick={() => setShowReturnForm(false)}
+                    className="rounded-xl border border-slate-700 px-3 py-1.5 text-xs font-bold text-slate-400 hover:bg-slate-900">
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {isInProgress && (
+          <div className="flex flex-wrap items-end gap-3">
+            <Link to={detailUrl}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-violet-500/50 bg-violet-500/10 px-3 py-2 text-xs font-black text-violet-100 hover:bg-violet-500/20">
+              <ExternalLink size={13} /> Continuar revision
+            </Link>
+            {(can('warranties.mark_incomplete') || can('warranties.approve_review')) && (
+              <div className="flex flex-wrap items-end gap-2">
+                <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2}
+                  placeholder="Nota (obligatoria para correccion)..."
+                  className="w-52 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs outline-none focus:border-blue-400" />
+                <div className="flex flex-col gap-1.5">
+                  {can('warranties.mark_incomplete') && onIncomplete && (
+                    <button disabled={saving || !note.trim()} onClick={onIncomplete}
+                      className="inline-flex items-center gap-1 rounded-xl border border-amber-500/50 px-3 py-1.5 text-xs font-black text-amber-100 hover:bg-amber-500/10 disabled:opacity-40">
+                      <AlertTriangle size={12} /> Correccion
+                    </button>
+                  )}
+                  {can('warranties.approve_review') && onApprove && (
+                    <button disabled={saving} onClick={onApprove}
+                      className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-black text-white hover:bg-emerald-500 disabled:opacity-50">
+                      <CheckCircle2 size={12} /> Aprobar
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {isCorrection && (
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-xs text-amber-200/70">Esperando que la sucursal corrija. Vuelve a revision automaticamente.</p>
+            <Link to={detailUrl}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-600 px-3 py-1.5 text-xs font-bold text-slate-300 hover:bg-slate-900">
+              <ExternalLink size={12} /> Ver detalle
+            </Link>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── main page ────────────────────────────────────────────────────────────────
 
 export function WarrantyGestorPage() {
+  const navigate = useNavigate();
   const [data, setData] = useState<WarrantyListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<string>('revision');
+
+  // ── review actions state ──
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [savingId, setSavingId] = useState('');
+  const [actionMsg, setActionMsg] = useState('');
+  const [actionErr, setActionErr] = useState('');
+
+  async function reviewAction(id: string, type: 'take' | 'approve' | 'incomplete' | 'direct_approve' | 'direct_incomplete') {
+    setSavingId(id); setActionMsg(''); setActionErr('');
+    try {
+      const note = (notes[id] || '').trim();
+      if (type === 'take') {
+        await takeWarrantyIntoReview(id, {});
+        navigate(`/warranties/${encodeURIComponent(id)}?from=revision`);
+        return;
+      } else if (type === 'approve') {
+        await approveWarrantyReview(id, { note: note || undefined });
+        setActionMsg('Garantía aprobada.');
+      } else if (type === 'incomplete') {
+        await markWarrantyIncomplete(id, { note: note || undefined });
+        setActionMsg('Devuelta a sucursal para corrección.');
+      } else if (type === 'direct_approve') {
+        await takeWarrantyIntoReview(id, {});
+        await approveWarrantyReview(id, { note: note || undefined });
+        setActionMsg('Garantía tomada y aprobada.');
+      } else {
+        await takeWarrantyIntoReview(id, {});
+        await markWarrantyIncomplete(id, { note: note || undefined });
+        setActionMsg('Devuelta a sucursal para corrección.');
+      }
+      setNotes((prev) => ({ ...prev, [id]: '' }));
+      await load();
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'No se pudo completar la acción');
+    } finally {
+      setSavingId('');
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -225,9 +415,9 @@ export function WarrantyGestorPage() {
         </button>
       </div>
 
-      {error && (
-        <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-red-100">{error}</div>
-      )}
+      {error    && <div className="rounded-2xl border border-red-500/40    bg-red-500/10    p-4 text-red-100">{error}</div>}
+      {actionErr && <div className="rounded-2xl border border-red-500/40    bg-red-500/10    p-4 text-sm text-red-100">{actionErr}</div>}
+      {actionMsg && <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4 text-sm text-emerald-100">{actionMsg}</div>}
 
       {/* KPI summary row */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
@@ -297,30 +487,39 @@ export function WarrantyGestorPage() {
           <div className="mt-3 space-y-3">
             {activeTabData.items
               .sort((a, b) => {
-                // High-priority alerts first, then by days descending
+                if (activeTab === 'revision') {
+                  // en_revision primero, luego pendiente_revision, luego por dias
+                  const aInProg = a.review_status === 'en_revision' ? 1 : 0;
+                  const bInProg = b.review_status === 'en_revision' ? 1 : 0;
+                  if (aInProg !== bInProg) return bInProg - aInProg;
+                }
                 const aHigh = computeLogisticsAlerts(a).some((al) => al.priority === 'high' && al.targetRole !== 'posventa');
                 const bHigh = computeLogisticsAlerts(b).some((al) => al.priority === 'high' && al.targetRole !== 'posventa');
                 if (aHigh && !bHigh) return -1;
                 if (!aHigh && bHigh) return 1;
                 return Number(b.dias_pendiente || 0) - Number(a.dias_pendiente || 0);
               })
-              .map((item) => (
-                <GestorCard key={item.id_garantia} item={item} />
-              ))}
+              .map((item) =>
+                (activeTab === 'revision' || activeTab === 'correccion') ? (
+                  <ReviewActionCard
+                    key={item.id_garantia}
+                    item={item}
+                    note={notes[item.id_garantia] || ''}
+                    setNote={(v) => setNotes((p) => ({ ...p, [item.id_garantia]: v }))}
+                    saving={savingId === item.id_garantia}
+                    onTake={() => reviewAction(item.id_garantia, 'take')}
+                    onApprove={() => reviewAction(item.id_garantia, 'approve')}
+                    onIncomplete={() => reviewAction(item.id_garantia, 'incomplete')}
+                    onDirectApprove={() => reviewAction(item.id_garantia, 'direct_approve')}
+                    onDirectIncomplete={() => reviewAction(item.id_garantia, 'direct_incomplete')}
+                  />
+                ) : (
+                  <GestorCard key={item.id_garantia} item={item} />
+                ),
+              )}
           </div>
         )}
       </div>
-
-      {/* Link to review page */}
-      {can('warranties.review') && (
-        <div className="rounded-2xl border border-slate-700 bg-slate-900/40 p-4 text-sm text-slate-400">
-          También podés usar la{' '}
-          <Link to="/warranties/revision" className="font-bold text-blue-300 hover:text-blue-200">
-            Bandeja de revisión
-          </Link>{' '}
-          para acciones rápidas en masa sobre el proceso de revisión interna.
-        </div>
-      )}
     </div>
   );
 }

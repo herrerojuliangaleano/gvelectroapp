@@ -74,7 +74,7 @@ export function canSeeDepositReceivePage(user: CurrentUser | null | undefined): 
 }
 
 export function canSeeGestorPanel(user: CurrentUser | null | undefined): boolean {
-  return !isPlainDepositOperator(user) && (can('warranties.gestor.panel') || can('warranties.manage'));
+  return !isPlainDepositOperator(user) && (can('warranties.gestor.panel') || can('warranties.manage') || can('warranties.review'));
 }
 
 export function canSeeSucursalLogistics(user: CurrentUser | null | undefined): boolean {
