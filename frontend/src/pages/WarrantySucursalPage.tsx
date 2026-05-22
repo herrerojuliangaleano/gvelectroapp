@@ -385,6 +385,7 @@ export function WarrantySucursalPage() {
         destino_deposito: destino,
         warranty_codes: Array.from(selected),
         nota: genNota.trim() || undefined,
+        sucursal: selectedBranch || undefined,
       });
       setLastGenerated(res.remitos);
       setSelected(new Set()); setAvailable([]); setGenNota(''); setShowGen(false);
