@@ -74,6 +74,7 @@ export function canSeeDepositReceivePage(user: CurrentUser | null | undefined): 
 }
 
 export function canSeeGestorPanel(user: CurrentUser | null | undefined): boolean {
+  // Gestor panel now absorbs revision panel — users with warranties.review access also land here
   return !isPlainDepositOperator(user) && (can('warranties.gestor.panel') || can('warranties.manage') || can('warranties.review'));
 }
 
