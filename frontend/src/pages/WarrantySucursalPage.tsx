@@ -321,7 +321,9 @@ export function WarrantySucursalPage() {
     setLoadingW(true);
     setErrorW('');
     try {
-      const result = await fetchWarranties({ limit: 300, sucursal: selectedBranch || undefined });
+      // sucursal_logistics=1 bypasses the branch-operator transit exclusion filter so
+      // the encargado can see en_transito/en_deposito warranties in this logistics view.
+      const result = await fetchWarranties({ limit: 300, sucursal: selectedBranch || undefined, sucursal_logistics: 1 });
       setData(result);
     } catch (err) {
       setErrorW(err instanceof Error ? err.message : 'No se pudo cargar las garantias de la sucursal');
