@@ -535,7 +535,7 @@ def _fetch_available_remito_rows(
         WHERE 1=1
     """ + _available_remito_where("g")
     if sucursal:
-        sql += " AND g.sucursal = ?"
+        sql += " AND LOWER(g.sucursal) = LOWER(?)"
         params.append(sucursal)
     if warranty_codes:
         placeholders = ",".join("?" * len(warranty_codes))
@@ -938,9 +938,12 @@ def generate_remitos(
         if not available_items:
             raise HTTPException(400, "No hay garantías disponibles para remito interno con esos filtros.")
 
+        # When the caller provides an explicit sucursal we use it as the canonical
+        # origen_sucursal so it matches the user's branch_name in the scope filter.
+        explicit_suc = (data.sucursal or "").strip()
         groups: dict[str, dict[str, Any]] = {}
         for item in available_items:
-            suc = str(item.get("sucursal") or "Sin sucursal")
+            suc = explicit_suc or str(item.get("sucursal") or "Sin sucursal")
             group = groups.setdefault(suc, {"codes": [], "company_id": str(item.get("company_id") or "")})
             group["codes"].append(str(item["warranty_code"]))
             if not group.get("company_id") and item.get("company_id"):
