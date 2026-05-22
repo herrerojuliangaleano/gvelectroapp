@@ -1028,7 +1028,12 @@ def list_remitos(
 
     # Scope: usuarios sin 'view' global solo ven su propia sucursal.
     user_is_global = getattr(user, "has", lambda _p: False)("warranties.remitos.view")
-    user_branch    = (getattr(user, "branch_name", None) or "").strip()
+    # Usar branch_name primero; si está vacío (usuario sin branch_id asignado)
+    # caer a user.sucursal (campo legacy que también guarda el nombre de la sucursal).
+    user_branch = (
+        (getattr(user, "branch_name", None) or "") or
+        (getattr(user, "sucursal",    None) or "")
+    ).strip()
 
     with db_connect() as conn:
         ensure_remito_tables(conn)

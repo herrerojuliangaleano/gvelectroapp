@@ -3794,11 +3794,14 @@ def list_warranties(
     fecha_desde: str = "",
     fecha_hasta: str = "",
     limit: int = Query(default=200, ge=1, le=1000),
+    sucursal_logistics: bool = Query(default=False),
 ):
     # ── Auto-filtro operativo para sucursal ────────────────────────────────────
     # Para usuarios sin permisos de gestión, el listado NO es un historial global:
     # es la bandeja de garantías que todavía están físicamente en su sucursal.
     # Cuando la garantía sale por remito hacia Chiclana, deja de aparecer acá.
+    # EXCEPCIÓN: sucursal_logistics=True (usado por WarrantySucursalPage) incluye
+    # garantías en tránsito y en depósito para que el encargado pueda ver su historial.
     user_perms = set(getattr(user, "permissions", []) or [])
     roles = _user_role_keys(user)
     # Fase 38: no depender solo de user.permissions para decidir alcance.
@@ -3856,7 +3859,9 @@ def list_warranties(
             # Si ya tienen remito activo, están en tránsito, llegaron a depósito,
             # fueron al proveedor o se finalizaron, deben verse en Gestión/Remitos,
             # no en este listado operativo de sucursal.
-            if is_branch_operator:
+            # EXCEPCIÓN: sucursal_logistics=True (WarrantySucursalPage) necesita ver
+            # todas las garantías de la sucursal sin importar su estado de tránsito.
+            if is_branch_operator and not sucursal_logistics:
                 ubicacion = str(item.ubicacion_actual or "").strip().lower()
                 transit = str(item.transit_status or "").strip().lower()
                 status_norm = normalize_status(item.estado)
