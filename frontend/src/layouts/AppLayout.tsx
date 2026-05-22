@@ -11,7 +11,7 @@ import { UpdatePrompt } from '../components/UpdatePrompt';
 import { can, fetchNotifications, fetchSystemStatus, fetchUnreadNotificationsCount, getCurrentUserFromStorage, logout } from '../api/client';
 import { cleanupPushNotifications, initPushNotifications } from '../services/pushNotifications';
 import type { SystemPublicStatus } from '../types';
-import { canSeeDepositReceivePage, canSeeGestorPanel, canSeeRemitoTracking, canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantySync, canSeeSucursalLogistics, canUseRemitosHub, isPlainDepositOperator } from '../warrantyAccess';
+import { canSeeDepositReceivePage, canSeeGestorPanel, canSeeRemitoTracking, canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantySync, canSeeSucursalLogistics, canUseRemitosHub, isCadeteDeposito, isPlainDepositOperator } from '../warrantyAccess';
 
 type NavItemDef = {
   to: string;

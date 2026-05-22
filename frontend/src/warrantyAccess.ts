@@ -9,10 +9,24 @@ export function roleKeys(user: CurrentUser | null | undefined): string[] {
   return Array.from(new Set(values.map((v) => String(v || '').trim().toUpperCase()).filter(Boolean)));
 }
 
+/**
+ * Encargado de Depósito (rol DEPOSITO).
+ * Solo ve /warranties/deposito: recibe remitos y mueve entre depósitos.
+ * Queda excluido de todas las pantallas de gestión/listados.
+ */
 export function isPlainDepositOperator(user: CurrentUser | null | undefined): boolean {
   const roles = roleKeys(user);
-  // CADETE_DEPOSITO también es tratado como operador de depósito puro (sin acceso a pantallas de gestión)
-  return (roles.includes('DEPOSITO') || roles.includes('CADETE_DEPOSITO')) && !roles.some((r) => PRIVILEGED_ROLES.has(r));
+  return roles.includes('DEPOSITO') && !roles.some((r) => PRIVILEGED_ROLES.has(r));
+}
+
+/**
+ * Cadete de Depósito (rol CADETE_DEPOSITO).
+ * Ve su lista de garantías (como vendedor) + puede confirmar llegada de remitos.
+ * NO es "plain deposit operator" — no se lo redirige ni se lo bloquea del listado.
+ */
+export function isCadeteDeposito(user: CurrentUser | null | undefined): boolean {
+  const roles = roleKeys(user);
+  return roles.includes('CADETE_DEPOSITO') && !roles.some((r) => PRIVILEGED_ROLES.has(r));
 }
 
 export function isWarrantyPrivilegedUser(user: CurrentUser | null | undefined): boolean {
@@ -57,26 +71,33 @@ export function canSeeWarrantyConfig(user: CurrentUser | null | undefined): bool
 
 /**
  * Acceso a la página /warranties/remitos.
- * Después de Fase 7, esa página solo contiene:
- *   - Movimiento depósito → depósito  (deposit_transfer)
- *   - Entrega al proveedor            (provider_delivery)
- * Los permisos generate/receive ya no corresponden a contenido en esa página.
+ * Contiene: Movimiento depósito→depósito (deposit_transfer) y Entrega al proveedor (provider_delivery).
+ * Solo usuarios que NO son depósito puro y tienen alguno de esos permisos.
  */
 export function canUseRemitosHub(user: CurrentUser | null | undefined): boolean {
-  return can('warranties.remitos.deposit_transfer') || can('warranties.remitos.provider_delivery');
+  return !isPlainDepositOperator(user) && !isCadeteDeposito(user)
+    && (can('warranties.remitos.deposit_transfer') || can('warranties.remitos.provider_delivery'));
 }
 
 /**
  * Acceso a la página /warranties/deposito (WarrantyDepositReceivePage).
- * Solo para operadores DEPOSITO puros que puedan recibir o mover entre depósitos.
+ * - Encargado de Depósito (DEPOSITO): recibe remitos + mueve entre depósitos.
+ * - Cadete de Depósito (CADETE_DEPOSITO): solo confirma llegada de remitos.
  */
 export function canSeeDepositReceivePage(user: CurrentUser | null | undefined): boolean {
-  return isPlainDepositOperator(user) && (can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer'));
+  if (isPlainDepositOperator(user)) {
+    return can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer');
+  }
+  if (isCadeteDeposito(user)) {
+    return can('warranties.remitos.receive');
+  }
+  return false;
 }
 
 export function canSeeGestorPanel(user: CurrentUser | null | undefined): boolean {
-  // Gestor panel now absorbs revision panel — users with warranties.review access also land here
-  return !isPlainDepositOperator(user) && (can('warranties.gestor.panel') || can('warranties.manage') || can('warranties.review'));
+  // Gestor panel absorbs revision panel — users with warranties.review access also land here
+  return !isPlainDepositOperator(user) && !isCadeteDeposito(user)
+    && (can('warranties.gestor.panel') || can('warranties.manage') || can('warranties.review'));
 }
 
 export function canSeeSucursalLogistics(user: CurrentUser | null | undefined): boolean {
@@ -84,5 +105,7 @@ export function canSeeSucursalLogistics(user: CurrentUser | null | undefined): b
 }
 
 export function canSeeRemitoTracking(user: CurrentUser | null | undefined): boolean {
+  // Cadete y depósito puro no ven el historial global de remitos
+  if (isPlainDepositOperator(user) || isCadeteDeposito(user)) return false;
   return can('warranties.remitos.view');
 }

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { can, getCurrentUserFromStorage, getToken } from './api/client';
 import { AppLayout } from './layouts/AppLayout';
-import { canSeeDepositReceivePage, canSeeGestorPanel, canSeeRemitoTracking, canSeeSucursalLogistics, canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantySync, canUseRemitosHub, isPlainDepositOperator } from './warrantyAccess';
+import { canSeeDepositReceivePage, canSeeGestorPanel, canSeeRemitoTracking, canSeeSucursalLogistics, canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantySync, canUseRemitosHub, isCadeteDeposito, isPlainDepositOperator } from './warrantyAccess';
 import { AboutSystemPage } from './pages/AboutSystemPage';
 import { AdminRolesPage } from './pages/AdminRolesPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
@@ -94,6 +94,8 @@ function EntryPoint() {
   if (!getToken()) return <Navigate to="/login" replace />;
   const user = getCurrentUserFromStorage();
   if (user?.must_change_password) return <Navigate to="/set-password" replace />;
+  // Encargado de Depósito → directo a su pantalla de recepción, sin pasar por el Dashboard
+  if (isPlainDepositOperator(user)) return <Navigate to="/warranties/deposito" replace />;
   if (can('profile.view')) return <ProtectedLayout permission="profile.view"><DashboardPage /></ProtectedLayout>;
   return defaultRedirect();
 }

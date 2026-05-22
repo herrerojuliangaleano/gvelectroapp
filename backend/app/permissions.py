@@ -257,8 +257,9 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
         "level": 15,
         "permissions": [
             "profile.view", "employees.photo.upload_own", "payroll_receipts.view_own", "payroll_receipts.sign_own", "payroll_receipts.observe_own", "about.view", "system.status.view",
-            # Cadete: SOLO confirma la llegada de remitos al depósito. No carga ni mueve garantías.
-            "warranties.view", "warranties.remitos.receive",
+            # Cadete: carga garantías cuando un cliente trae algo al depósito, y confirma llegada de remitos.
+            # Ve su lista de garantías (igual que un vendedor) para ver si le pidieron correcciones.
+            "warranties.view", "warranties.create", "warranties.remitos.receive",
             "notifications.view", "push.subscribe",
         ],
     },
