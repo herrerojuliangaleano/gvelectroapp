@@ -242,13 +242,23 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
         ],
     },
     "DEPOSITO": {
-        "label": "Depósito",
+        "label": "Encargado de Depósito",
         "level": 40,
         "permissions": [
             "profile.view", "employees.photo.upload_own", "payroll_receipts.view_own", "payroll_receipts.sign_own", "payroll_receipts.observe_own", "about.view", "system.status.view",
-            # Depósito operativo NO es gestor/admin: solo carga, recepción y movimientos depósito→depósito.
+            # Encargado de Depósito: carga garantías en depósito, recibe remitos y mueve entre depósitos.
             # warranties.view permite ver las garantías que el propio DEPOSITO cargó/recibió.
             "warranties.view", "warranties.create", "warranties.remitos.receive", "warranties.remitos.deposit_transfer",
+            "notifications.view", "push.subscribe",
+        ],
+    },
+    "CADETE_DEPOSITO": {
+        "label": "Cadete de Depósito",
+        "level": 15,
+        "permissions": [
+            "profile.view", "employees.photo.upload_own", "payroll_receipts.view_own", "payroll_receipts.sign_own", "payroll_receipts.observe_own", "about.view", "system.status.view",
+            # Cadete: SOLO confirma la llegada de remitos al depósito. No carga ni mueve garantías.
+            "warranties.view", "warranties.remitos.receive",
             "notifications.view", "push.subscribe",
         ],
     },

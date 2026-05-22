@@ -664,12 +664,16 @@ def ensure_auth_files() -> None:
                     continue
                 current = roles.get(role) if isinstance(roles.get(role), dict) else {}
                 current_permissions = current.setdefault("permissions", [])
-                if role == "DEPOSITO" and isinstance(current_permissions, list) and "*" not in current_permissions:
-                    # El rol Depósito no es gestor/admin. Mantenerlo sincronizado con
-                    # el alcance operativo definido: carga, recepción y movimientos entre depósitos.
+                if role in ("DEPOSITO", "CADETE_DEPOSITO") and isinstance(current_permissions, list) and "*" not in current_permissions:
+                    # Roles de depósito: mantener permisos Y label sincronizados exactamente con DEFAULT_ROLES.
                     target_permissions = list(info.get("permissions", []))
                     if current_permissions != target_permissions:
                         current["permissions"] = target_permissions
+                        changed = True
+                    # Forzar label actualizado (ej: "Depósito" → "Encargado de Depósito")
+                    target_label = info.get("label", role) if isinstance(info, dict) else role
+                    if current.get("label") != target_label:
+                        current["label"] = target_label
                         changed = True
                 elif isinstance(current_permissions, list) and "*" not in current_permissions:
                     for permission in info.get("permissions", []):

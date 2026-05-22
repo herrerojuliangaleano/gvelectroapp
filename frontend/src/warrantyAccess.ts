@@ -11,7 +11,8 @@ export function roleKeys(user: CurrentUser | null | undefined): string[] {
 
 export function isPlainDepositOperator(user: CurrentUser | null | undefined): boolean {
   const roles = roleKeys(user);
-  return roles.includes('DEPOSITO') && !roles.some((r) => PRIVILEGED_ROLES.has(r));
+  // CADETE_DEPOSITO también es tratado como operador de depósito puro (sin acceso a pantallas de gestión)
+  return (roles.includes('DEPOSITO') || roles.includes('CADETE_DEPOSITO')) && !roles.some((r) => PRIVILEGED_ROLES.has(r));
 }
 
 export function isWarrantyPrivilegedUser(user: CurrentUser | null | undefined): boolean {
