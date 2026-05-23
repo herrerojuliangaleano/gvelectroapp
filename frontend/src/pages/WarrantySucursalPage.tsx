@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle, ArrowRight, CheckCircle2, Clock,
@@ -6,10 +6,8 @@ import {
 } from 'lucide-react';
 import {
   can,
-  dispatchRemito,
   downloadRemitoPdf,
   fetchAvailableWarrantiesForRemito,
-  fetchRemitos,
   fetchWarranties,
   fetchWarrantyOptions,
   generateRemitos,
@@ -57,14 +55,17 @@ async function printPdf(code: string) {
   try {
     const blob = await downloadRemitoPdf(code);
     const url = URL.createObjectURL(blob);
-    const iframe = document.createElement('iframe');
-    iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px';
-    iframe.src = url;
-    document.body.appendChild(iframe);
-    iframe.onload = () => {
-      iframe.contentWindow?.print();
-      setTimeout(() => { document.body.removeChild(iframe); URL.revokeObjectURL(url); }, 2000);
-    };
+    const win = window.open(url, '_blank');
+    if (win) {
+      win.addEventListener('load', () => {
+        setTimeout(() => { win.print(); setTimeout(() => URL.revokeObjectURL(url), 3000); }, 400);
+      });
+    } else {
+      const a = document.createElement('a');
+      a.href = url; a.download = `${code}.pdf`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }
   } catch (e: unknown) {
     alert((e as Error).message || 'Error al imprimir PDF');
   }
@@ -72,107 +73,6 @@ async function printPdf(code: string) {
 
 // ─── sub-components ────────────────────────────────────────────────────────────
 
-function RemitoStatusBadge({ status }: { status: WarrantyRemitoInfo['status'] }) {
-  if (status === 'llegado')
-    return <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-xs font-bold text-emerald-300">LLEGO AL DEPOSITO</span>;
-  if (status === 'en_transito')
-    return <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-bold text-amber-300">EN TRANSITO</span>;
-  return <span className="rounded-full border border-blue-500/40 bg-blue-500/10 px-2 py-0.5 text-xs font-bold text-blue-300">PENDIENTE</span>;
-}
-
-function RemitoCard({
-  remito, canDoDispatch, dispatching, dispatchErr, onDispatch, onDownload, onPrint,
-}: {
-  remito: WarrantyRemitoInfo;
-  canDoDispatch: boolean;
-  dispatching: boolean;
-  dispatchErr: string;
-  onDispatch: () => void;
-  onDownload: () => void;
-  onPrint: () => void;
-}) {
-  const isTransit = remito.status === 'en_transito';
-  const isArrived = remito.status === 'llegado';
-
-  return (
-    <div className={`rounded-2xl border p-4 ${
-      isArrived ? 'border-emerald-500/25 bg-emerald-500/5' :
-      isTransit ? 'border-amber-500/25 bg-amber-500/5' :
-      'border-slate-700 bg-slate-950/60'
-    }`}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-base font-black text-white">{remito.remito_code}</span>
-            <RemitoStatusBadge status={remito.status} />
-            <span className="rounded-full border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs text-slate-400">
-              {remito.warranties_count} producto{remito.warranties_count !== 1 ? 's' : ''}
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-400">
-            <span><span className="text-slate-500">Destino:</span> {remito.destino_deposito}</span>
-            {remito.created_at_display && <span><span className="text-slate-500">Creado:</span> {remito.created_at_display}</span>}
-            {remito.fecha_despacho_display && (
-              <span>
-                <Clock size={11} className="mr-0.5 inline text-amber-400" />
-                <span className="text-slate-500">Salida:</span> {remito.fecha_despacho_display}
-              </span>
-            )}
-            {remito.fecha_llegada_display && (
-              <span>
-                <CheckCircle2 size={11} className="mr-0.5 inline text-emerald-400" />
-                <span className="text-slate-500">Llegada:</span> {remito.fecha_llegada_display}
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={onDownload}
-            className="flex items-center gap-1.5 rounded-xl border border-slate-600 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700"
-          >
-            <FileText size={13} /> PDF
-          </button>
-          <button
-            onClick={onPrint}
-            className="flex items-center gap-1.5 rounded-xl border border-slate-600 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700"
-          >
-            <Printer size={13} /> Imprimir
-          </button>
-          {canDoDispatch && (
-            <button
-              onClick={onDispatch}
-              disabled={dispatching}
-              className="flex items-center gap-1.5 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-            >
-              {dispatching ? <RefreshCw size={13} className="animate-spin" /> : <Send size={13} />}
-              {dispatching ? 'Despachando...' : 'Marcar salida'}
-            </button>
-          )}
-        </div>
-      </div>
-
-      {(remito.warranties ?? []).length > 0 && (
-        <div className="mt-3 space-y-1 border-t border-slate-800 pt-3">
-          {remito.warranties!.map((w) => (
-            <div key={w.warranty_code} className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
-              <span className="font-mono text-slate-300">{w.warranty_code}</span>
-              <span className="text-slate-600">·</span>
-              <span>{w.producto || '—'}</span>
-              {w.serie && <span className="text-slate-500">Serie: {w.serie}</span>}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {dispatchErr && (
-        <div className="mt-2 flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-300">
-          <AlertTriangle size={13} className="shrink-0" />{dispatchErr}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function SucursalCard({ item, onOpenGenerate }: { item: WarrantySummary; onOpenGenerate: () => void }) {
   const alerts = computeLogisticsAlerts(item).filter((a) => a.targetRole === 'encargado' || a.targetRole === 'all');
@@ -278,10 +178,6 @@ function SucursalCard({ item, onOpenGenerate }: { item: WarrantySummary; onOpenG
   );
 }
 
-// ─── types ────────────────────────────────────────────────────────────────────
-
-type RemitoTabId = 'pendiente' | 'en_transito' | 'llegado';
-
 // ─── main page ────────────────────────────────────────────────────────────────
 
 export function WarrantySucursalPage() {
@@ -296,12 +192,8 @@ export function WarrantySucursalPage() {
   const [errorW, setErrorW]     = useState('');
   const [wTab, setWTab]         = useState<'pending' | 'transito' | 'done'>('pending');
 
-  // ── remito state ──
+  // ── remito / generate state ──
   const [options, setOptions]             = useState<WarrantyOptions | null>(null);
-  const [remitos, setRemitos]             = useState<WarrantyRemitoInfo[]>([]);
-  const [loadingR, setLoadingR]           = useState(false);
-  const [errorR, setErrorR]               = useState('');
-  const [remitoTab, setRemitoTab]         = useState<RemitoTabId>('pendiente');
   const [showGen, setShowGen]             = useState(false);
   const [available, setAvailable]         = useState<AvailableWarrantyForRemito[]>([]);
   const [availLoading, setAvailLoading]   = useState(false);
@@ -310,12 +202,6 @@ export function WarrantySucursalPage() {
   const [genLoading, setGenLoading]       = useState(false);
   const [genError, setGenError]           = useState('');
   const [lastGenerated, setLastGenerated] = useState<WarrantyRemitoInfo[]>([]);
-  const [dispLoading, setDispLoading]     = useState<Record<string, boolean>>({});
-  const [dispError, setDispError]         = useState<Record<string, string>>({});
-
-  const remitosRef = useRef<HTMLDivElement>(null);
-
-  const canUseRemitos = can('warranties.remitos.generate') || can('warranties.remitos.dispatch') || can('warranties.remitos.view');
 
   async function loadWarranties() {
     setLoadingW(true);
@@ -330,23 +216,6 @@ export function WarrantySucursalPage() {
     } finally {
       setLoadingW(false);
     }
-  }
-
-  async function loadRemitosList() {
-    if (!selectedBranch) return;
-    setLoadingR(true); setErrorR('');
-    try {
-      // Non-privileged users: backend auto-scopes to their branch — don't pass the filter
-      // to avoid double-filter case-sensitivity issues. Privileged users need it explicit
-      // because the backend doesn't auto-scope them.
-      const params: Record<string, string | number | undefined> = { limit: 200 };
-      if (isPrivileged) params.origen_sucursal = selectedBranch;
-      const res = await fetchRemitos(params);
-      setRemitos(res?.items ?? []);
-    } catch (e: unknown) {
-      setErrorR((e as Error).message || 'No se pudieron cargar los remitos');
-      setRemitos([]);
-    } finally { setLoadingR(false); }
   }
 
   async function loadAvailable() {
@@ -365,15 +234,11 @@ export function WarrantySucursalPage() {
 
   useEffect(() => {
     loadWarranties();
-    if (selectedBranch && canUseRemitos) loadRemitosList();
   }, [selectedBranch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function openGenerate() {
     setShowGen(true);
     loadAvailable();
-    setTimeout(() => {
-      remitosRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 80);
   }
 
   async function handleGenerate(e: React.FormEvent) {
@@ -391,28 +256,10 @@ export function WarrantySucursalPage() {
       });
       setLastGenerated(res.remitos);
       setSelected(new Set()); setAvailable([]); setGenNota(''); setShowGen(false);
-      await loadRemitosList();
       await loadWarranties();
-      setRemitoTab('pendiente');
     } catch (e: unknown) {
       setGenError((e as Error).message || 'Error al generar remito');
     } finally { setGenLoading(false); }
-  }
-
-  async function handleDispatch(remito: WarrantyRemitoInfo) {
-    setDispLoading((p) => ({ ...p, [remito.remito_code]: true }));
-    setDispError((p) => ({ ...p, [remito.remito_code]: '' }));
-    try {
-      await dispatchRemito(remito.remito_code, { lugar_salida: remito.origen_sucursal });
-      setRemitos((prev) =>
-        prev.map((r) => r.remito_code === remito.remito_code ? { ...r, status: 'en_transito' } : r),
-      );
-      setRemitoTab('en_transito');
-    } catch (e: unknown) {
-      setDispError((p) => ({ ...p, [remito.remito_code]: (e as Error).message || 'Error al despachar' }));
-    } finally {
-      setDispLoading((p) => ({ ...p, [remito.remito_code]: false }));
-    }
   }
 
   // ── warranty derived state ──
@@ -437,11 +284,6 @@ export function WarrantySucursalPage() {
     [needsDispatch],
   );
 
-  // ── remito derived state ──
-  const rPendientes = useMemo(() => remitos.filter((r) => r.status === 'pendiente'), [remitos]);
-  const rEnTransito = useMemo(() => remitos.filter((r) => r.status === 'en_transito'), [remitos]);
-  const rLlegados   = useMemo(() => remitos.filter((r) => r.status === 'llegado'), [remitos]);
-
   const destino = centralDepositName(options);
 
   const WARRANTY_TABS = [
@@ -450,14 +292,7 @@ export function WarrantySucursalPage() {
     { id: 'done'     as const, label: 'Llegaron al deposito',     count: arrived.length,      items: arrived },
   ];
 
-  const REMITO_TABS: { id: RemitoTabId; label: string; count: number; items: WarrantyRemitoInfo[] }[] = [
-    { id: 'pendiente',   label: 'Pendientes de despacho', count: rPendientes.length, items: rPendientes },
-    { id: 'en_transito', label: 'En transito',            count: rEnTransito.length, items: rEnTransito },
-    { id: 'llegado',     label: 'Llegaron',               count: rLlegados.length,   items: rLlegados },
-  ];
-
   const activeWItems = WARRANTY_TABS.find((t) => t.id === wTab)?.items || [];
-  const activeRItems = REMITO_TABS.find((t) => t.id === remitoTab)?.items || [];
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -499,10 +334,10 @@ export function WarrantySucursalPage() {
             </button>
           )}
           <button
-            onClick={() => { loadWarranties(); if (selectedBranch && canUseRemitos) loadRemitosList(); }}
+            onClick={() => { loadWarranties(); }}
             className="inline-flex items-center gap-2 rounded-xl border border-slate-600 px-4 py-2.5 font-bold text-slate-100 hover:bg-slate-900"
           >
-            <RefreshCw size={16} className={(loadingW || loadingR) ? 'animate-spin' : ''} /> Actualizar
+            <RefreshCw size={16} className={loadingW ? 'animate-spin' : ''} /> Actualizar
           </button>
         </div>
       </div>
@@ -585,30 +420,8 @@ export function WarrantySucursalPage() {
         )}
       </section>
 
-      {/* ── Section 2: Remitos ───────────────────────────────────────────────── */}
-      {selectedBranch && canUseRemitos && (
-        <section ref={remitosRef} className="space-y-4 pt-2">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-sm font-black uppercase tracking-widest text-slate-500">
-              {isPrivileged ? `Remitos de ${selectedBranch}` : 'Remitos de mi sucursal'}
-            </h2>
-            {can('warranties.remitos.generate') && (
-              <button
-                onClick={() => { setShowGen((v) => !v); if (!showGen) loadAvailable(); }}
-                className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold transition-all ${
-                  showGen
-                    ? 'border-slate-600 bg-slate-800 text-slate-300'
-                    : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20'
-                }`}
-              >
-                {showGen ? <X size={15} /> : <Plus size={15} />}
-                {showGen ? 'Cancelar' : 'Nuevo remito'}
-              </button>
-            )}
-          </div>
-
-          {/* Generate panel */}
-          {showGen && can('warranties.remitos.generate') && (
+      {/* ── Panel de generación de remito ───────────────────────────────────── */}
+      {selectedBranch && can('warranties.remitos.generate') && showGen && (
             <section className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-5">
               <div className="mb-4 flex items-center gap-2">
                 <Send size={18} className="text-emerald-400" />
@@ -763,91 +576,6 @@ export function WarrantySucursalPage() {
             </section>
           )}
 
-          {errorR && (
-            <div className="flex items-center gap-2 rounded-2xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-200">
-              <AlertTriangle size={16} className="shrink-0" />{errorR}
-            </div>
-          )}
-
-          {/* Remito tabs */}
-          <div className="flex flex-wrap gap-2">
-            {REMITO_TABS.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setRemitoTab(tab.id)}
-                className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-all ${
-                  remitoTab === tab.id
-                    ? 'border-blue-500/60 bg-blue-500/15 text-blue-100'
-                    : 'border-slate-700 text-slate-400 hover:bg-slate-900 hover:text-slate-200'
-                }`}
-              >
-                {tab.label}
-                <span className={`rounded-full border px-1.5 py-0.5 text-xs font-black ${
-                  remitoTab === tab.id ? 'border-blue-400/40 bg-blue-500/20 text-blue-200' : 'border-slate-700 bg-slate-800 text-slate-400'
-                }`}>{tab.count}</span>
-              </button>
-            ))}
-          </div>
-
-          {loadingR && (
-            <div className="rounded-2xl border border-slate-700 bg-slate-950/60 p-8 text-center">
-              <div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-slate-700 border-t-amber-400" />
-              <span className="text-slate-400">Cargando remitos...</span>
-            </div>
-          )}
-
-          {!loadingR && activeRItems.length === 0 && (
-            <div className="rounded-2xl border border-slate-700 bg-slate-950/60 py-10 text-center">
-              <Truck size={32} className="mx-auto mb-3 text-slate-600" />
-              <div className="font-bold text-slate-400">
-                {remitoTab === 'pendiente'   ? 'No hay remitos pendientes de despacho.' :
-                 remitoTab === 'en_transito' ? 'No hay remitos en transito.' :
-                 'Todavia no llego ningun remito al deposito.'}
-              </div>
-              {remitoTab === 'pendiente' && can('warranties.remitos.generate') && (
-                <button
-                  onClick={() => { setShowGen(true); loadAvailable(); }}
-                  className="mt-4 inline-flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-500/20"
-                >
-                  <Plus size={15} /> Generar primer remito
-                </button>
-              )}
-            </div>
-          )}
-
-          {!loadingR && activeRItems.length > 0 && (
-            <div className="space-y-3">
-              {activeRItems.map((r) => (
-                <RemitoCard
-                  key={r.remito_code}
-                  remito={r}
-                  canDoDispatch={can('warranties.remitos.dispatch') && r.status === 'pendiente'}
-                  dispatching={dispLoading[r.remito_code] ?? false}
-                  dispatchErr={dispError[r.remito_code] ?? ''}
-                  onDispatch={() => handleDispatch(r)}
-                  onDownload={() => downloadPdf(r.remito_code)}
-                  onPrint={() => printPdf(r.remito_code)}
-                />
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* Quick link to remitos hub */}
-      {can('warranties.remitos.view') && (
-        <Link
-          to="/warranties/remito-historial"
-          className="flex items-center gap-3 rounded-2xl border border-slate-700 bg-slate-900/40 p-4 text-sm font-bold text-slate-100 hover:bg-slate-900"
-        >
-          <Truck size={20} className="shrink-0 text-slate-400" />
-          <div>
-            <div>Historial global de remitos</div>
-            <div className="text-xs font-normal text-slate-400">Seguimiento completo de todas las sucursales</div>
-          </div>
-          <ArrowRight size={16} className="ml-auto text-slate-500" />
-        </Link>
-      )}
     </div>
   );
 }
