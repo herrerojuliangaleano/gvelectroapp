@@ -1,7 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react';
 import {
   AlertTriangle,
-  ArrowRight,
   CheckCircle2,
   Clock,
   Download,
@@ -9,7 +8,6 @@ import {
   Printer,
   RefreshCw,
   Truck,
-  X,
 } from 'lucide-react';
 import {
   can,
@@ -39,18 +37,23 @@ function daysSince(dateStr: string | null | undefined): number | null {
 async function printRemitoPdf(remitoCode: string): Promise<void> {
   const blob = await downloadRemitoPdf(remitoCode);
   const url  = URL.createObjectURL(blob);
-  const iframe = document.createElement('iframe');
-  iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;';
-  document.body.appendChild(iframe);
-  await new Promise<void>((resolve) => {
-    iframe.onload = () => {
-      try { iframe.contentWindow?.focus(); iframe.contentWindow?.print(); }
-      catch { window.open(url, '_blank'); }
-      setTimeout(() => { document.body.removeChild(iframe); URL.revokeObjectURL(url); resolve(); }, 2000);
-    };
-    iframe.onerror = () => { document.body.removeChild(iframe); URL.revokeObjectURL(url); window.open(url, '_blank'); resolve(); };
-    iframe.src = url;
-  });
+  // Abrir en nueva pestaña y disparar print() cuando cargue el PDF.
+  // El iframe oculto es bloqueado por Chrome en PDFs; la ventana externa funciona siempre.
+  const win = window.open(url, '_blank');
+  if (win) {
+    win.addEventListener('load', () => {
+      setTimeout(() => {
+        win.print();
+        setTimeout(() => URL.revokeObjectURL(url), 3000);
+      }, 400);
+    });
+  } else {
+    // Fallback si el popup fue bloqueado: descargar
+    const a = document.createElement('a');
+    a.href = url; a.download = `${remitoCode}.pdf`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -66,12 +69,6 @@ export function WarrantyDepositReceivePage() {
   const [quickLugar,   setQuickLugar]   = useState('');
   const [quickLoading, setQuickLoading] = useState(false);
   const [quickError,   setQuickError]   = useState('');
-
-  // ── Confirmación inline por tarjeta ───────────────────────────────────────
-  const [confirmingCode,  setConfirmingCode]  = useState<string | null>(null);
-  const [confirmLugar,    setConfirmLugar]    = useState('');
-  const [confirmLoading,  setConfirmLoading]  = useState(false);
-  const [confirmError,    setConfirmError]    = useState('');
 
   // ── Resultados de la sesión ───────────────────────────────────────────────
   const [recentConfirmed, setRecentConfirmed] = useState<string[]>([]);
@@ -152,25 +149,6 @@ export function WarrantyDepositReceivePage() {
     }
   }
 
-  async function handleCardConfirm(remitoCode: string) {
-    setConfirmLoading(true);
-    setConfirmError('');
-    try {
-      const result = await confirmRemitoArrivalByCode({
-        remito_code: remitoCode,
-        lugar_llegada: confirmLugar.trim() || undefined,
-      });
-      setRecentConfirmed((prev) => [`Remito ${result.remito_code} confirmado como llegado.`, ...prev].slice(0, 5));
-      setConfirmingCode(null);
-      setConfirmLugar('');
-      await loadTransitRemitos();
-    } catch (err: unknown) {
-      setConfirmError((err as Error).message || 'No se pudo confirmar el remito.');
-    } finally {
-      setConfirmLoading(false);
-    }
-  }
-
   async function handleDepositTransfer(e: FormEvent) {
     e.preventDefault();
     if (!transferDestino.trim()) { setTransferError('Seleccioná depósito destino.'); return; }
@@ -199,8 +177,10 @@ export function WarrantyDepositReceivePage() {
       const blob = await downloadRemitoPdf(remitoCode);
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');
-      a.href = url; a.download = `${remitoCode}.pdf`; a.click();
-      URL.revokeObjectURL(url);
+      a.href = url; a.download = `${remitoCode}.pdf`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      // Revocar con delay para que el browser tenga tiempo de iniciar la descarga
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
     } catch (e: unknown) {
       alert((e as Error).message || 'Error al descargar PDF');
     }
@@ -227,6 +207,17 @@ export function WarrantyDepositReceivePage() {
     const d = daysSince(r.fecha_despacho || r.created_at);
     return d !== null && d >= 2;
   }).length;
+
+  // Resumen agrupado por sucursal de origen
+  const byBranch = transitRemitos.reduce<Record<string, { count: number; maxDays: number; hasLate: boolean }>>((acc, r) => {
+    const key = r.origen_sucursal || 'Sin sucursal';
+    if (!acc[key]) acc[key] = { count: 0, maxDays: 0, hasLate: false };
+    acc[key].count++;
+    const days = daysSince(r.fecha_despacho || r.created_at) ?? 0;
+    if (days > acc[key].maxDays) acc[key].maxDays = days;
+    if (days >= 2) acc[key].hasLate = true;
+    return acc;
+  }, {});
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
@@ -380,137 +371,45 @@ export function WarrantyDepositReceivePage() {
         )}
 
         {!transitLoading && transitRemitos.length > 0 && (
-          <div className="space-y-3">
-            {transitRemitos.map((r) => {
-              const days  = daysSince(r.fecha_despacho || r.created_at);
-              const isLate = days !== null && days >= 2;
-              const isConfirming = confirmingCode === r.remito_code;
-
-              return (
+          <div className="space-y-2">
+            {Object.entries(byBranch)
+              .sort((a, b) => b[1].maxDays - a[1].maxDays) // más demorados primero
+              .map(([branch, info]) => (
                 <div
-                  key={r.remito_code}
-                  className={`rounded-2xl border transition ${isLate ? 'border-red-500/30 bg-red-500/5' : 'border-slate-700 bg-slate-900/70'}`}
+                  key={branch}
+                  className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${
+                    info.hasLate
+                      ? 'border-red-500/30 bg-red-500/5'
+                      : 'border-slate-700 bg-slate-900/70'
+                  }`}
                 >
-                  {/* Card header */}
-                  <div className="flex flex-wrap items-start justify-between gap-3 p-4">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-mono text-sm font-black text-white">{r.remito_code}</span>
-                        {isLate ? (
-                          <span className="flex items-center gap-1 rounded-full bg-red-500/20 px-2 py-0.5 text-[10px] font-bold text-red-300">
-                            <AlertTriangle className="h-3 w-3" />
-                            {days}d en tránsito
-                          </span>
-                        ) : days !== null && (
-                          <span className="flex items-center gap-1 rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
-                            <Clock className="h-3 w-3" />
-                            {days === 0 ? 'Hoy' : `${days}d`}
-                          </span>
-                        )}
-                        <span className="rounded-full bg-slate-700/60 px-2 py-0.5 text-[10px] text-slate-300">
-                          {r.warranties_count} producto{r.warranties_count !== 1 ? 's' : ''}
-                        </span>
-                      </div>
-
-                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-sm">
-                        <span className="font-semibold text-slate-200">{r.origen_sucursal}</span>
-                        <ArrowRight className="h-3 w-3 text-slate-500" />
-                        <span className="text-slate-300">{r.destino_deposito}</span>
-                      </div>
-
-                      {r.fecha_despacho_display && (
-                        <div className="mt-1 text-[11px] text-slate-500">
-                          Despachado: {r.fecha_despacho_display}
-                          {r.despachado_por_name && ` · ${r.despachado_por_name}`}
-                        </div>
-                      )}
-                      {r.nota && (
-                        <div className="mt-1 text-[11px] italic text-slate-500">"{r.nota}"</div>
-                      )}
-                    </div>
-
-                    {canReceive() && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (isConfirming) {
-                            setConfirmingCode(null);
-                            setConfirmLugar('');
-                            setConfirmError('');
-                          } else {
-                            setConfirmingCode(r.remito_code);
-                            setConfirmLugar('');
-                            setConfirmError('');
-                          }
-                        }}
-                        className={`shrink-0 rounded-xl px-4 py-2 text-xs font-black transition ${
-                          isConfirming
-                            ? 'border border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700'
-                            : 'bg-emerald-600 text-white hover:bg-emerald-500'
-                        }`}
-                      >
-                        {isConfirming ? (
-                          <><X className="mr-1 inline h-3.5 w-3.5" />Cancelar</>
-                        ) : 'Confirmar llegada'}
-                      </button>
-                    )}
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Truck className={`h-4 w-4 shrink-0 ${info.hasLate ? 'text-red-400' : 'text-amber-400'}`} />
+                    <span className="font-semibold text-white truncate">{branch}</span>
                   </div>
-
-                  {/* Inline confirm form */}
-                  {isConfirming && (
-                    <div className="border-t border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                        <div className="flex flex-col gap-1 flex-1">
-                          <label className="text-xs font-semibold text-slate-400">
-                            Ubicación interna (opcional)
-                          </label>
-                          <input
-                            autoFocus
-                            className="rounded-xl border border-emerald-500/30 bg-slate-900 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-emerald-400 focus:outline-none"
-                            placeholder="Ej. Estante B2"
-                            value={confirmLugar}
-                            onChange={(e) => setConfirmLugar(e.target.value)}
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          disabled={confirmLoading}
-                          onClick={() => handleCardConfirm(r.remito_code)}
-                          className="rounded-xl bg-emerald-600 px-5 py-2 text-sm font-black text-white hover:bg-emerald-500 disabled:opacity-50"
-                        >
-                          {confirmLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="mr-1.5 inline h-4 w-4" />Confirmar</>}
-                        </button>
-                      </div>
-                      {confirmError && (
-                        <div className="mt-2 flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
-                          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />{confirmError}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Warranty contents preview */}
-                  {r.warranties && r.warranties.length > 0 && (
-                    <div className="border-t border-slate-800 px-4 py-3">
-                      <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                        Contenido
-                      </div>
-                      <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
-                        {r.warranties.slice(0, 6).map((w) => (
-                          <div key={w.warranty_code} className="text-xs text-slate-400">
-                            <span className="font-mono font-bold text-slate-200">{w.warranty_code}</span>
-                            {w.producto && <span className="ml-1 text-slate-400">· {w.producto}</span>}
-                          </div>
-                        ))}
-                        {r.warranties.length > 6 && (
-                          <div className="text-xs text-slate-500">+{r.warranties.length - 6} más...</div>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className={`rounded-full px-3 py-1 text-xs font-black ${
+                      info.hasLate
+                        ? 'bg-red-500/20 text-red-200'
+                        : 'bg-amber-500/20 text-amber-200'
+                    }`}>
+                      {info.count} remito{info.count !== 1 ? 's' : ''} en tránsito
+                    </span>
+                    {info.maxDays >= 2 ? (
+                      <span className="flex items-center gap-1 rounded-full bg-red-500/20 px-2 py-0.5 text-[10px] font-bold text-red-300">
+                        <AlertTriangle className="h-3 w-3" />{info.maxDays}d
+                      </span>
+                    ) : info.maxDays > 0 ? (
+                      <span className="flex items-center gap-1 rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] text-amber-300">
+                        <Clock className="h-3 w-3" />{info.maxDays}d
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
-              );
-            })}
+              ))}
+            <p className="pt-1 text-center text-xs text-slate-500">
+              Usá el código impreso en el remito para confirmar la llegada ↑
+            </p>
           </div>
         )}
       </section>
