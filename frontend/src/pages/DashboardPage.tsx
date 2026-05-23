@@ -7,8 +7,11 @@ import {
   ClipboardList,
   Clock,
   Cloud,
+  Download,
+  FileText,
   Globe2,
   History,
+  PackageCheck,
   Search,
   ShieldCheck,
   Send,
@@ -55,8 +58,12 @@ function roleTitle(role?: string) {
   const normalized = String(role || '').toUpperCase();
   if (normalized.includes('SUPERADMIN')) return 'Panel completo del sistema';
   if (normalized.includes('GERENTE')) return 'Resumen gerencial';
+  if (normalized.includes('JEFE_POSVENTA') || normalized.includes('JEFE POSVENTA')) return 'Jefe de Posventa';
+  if (normalized.includes('GESTOR_GARANTIAS') || normalized.includes('GESTOR GARANTIAS')) return 'Gestión de Garantías';
+  if (normalized.includes('ENCARGADO_SUCURSAL') || normalized.includes('ENCARGADO SUCURSAL')) return 'Logística de Sucursal';
+  if (normalized.includes('CADETE_DEPOSITO') || normalized.includes('CADETE DEPOSITO')) return 'Cadete de Depósito';
+  if (normalized.includes('DEPOSITO')) return 'Encargado de Depósito';
   if (normalized.includes('ADMIN')) return 'Administración operativa';
-  if (normalized.includes('DEPOSITO')) return 'Trabajo de depósito';
   if (normalized.includes('VENDEDOR_WEB')) return 'Ventas web';
   if (normalized.includes('VENDEDOR')) return 'Ventas';
   return 'Espacio de trabajo';
@@ -86,9 +93,14 @@ function isSellerUser(user: ReturnType<typeof getCurrentUserFromStorage>): boole
 }
 
 function dashboardLead(user: ReturnType<typeof getCurrentUserFromStorage>): string {
-  if (isDepositUser(user)) return 'Accesos rápidos para recibir mercadería, cargar garantías de clientes en depósito y mover productos entre depósitos.';
+  const role = normalizedRole(user);
+  if (role.includes('GESTOR_GARANTIAS')) return 'Revisión de garantías, seguimiento de tránsito, comunicación con sucursales y coordinación logística interna.';
+  if (role.includes('JEFE_POSVENTA')) return 'Gestión de garantías con proveedores, exportaciones, registro de respuestas y alertas de comunicación.';
+  if (role.includes('ENCARGADO_SUCURSAL')) return 'Garantías de tu sucursal, despacho de equipos al depósito y seguimiento del tránsito.';
+  if (role.includes('CADETE_DEPOSITO')) return 'Cargá garantías de clientes que traen equipos al depósito y confirmá la llegada de remitos entrantes.';
+  if (isDepositUser(user)) return 'Recibí remitos, cargá garantías de clientes en depósito y gestioná movimientos entre depósitos.';
   if (isSellerUser(user)) return 'Accesos rápidos para cargar ventas, registrar garantías y despachar productos hacia Chiclana.';
-  if (normalizedRole(user).includes('ADMIN') || normalizedRole(user).includes('GERENTE') || normalizedRole(user).includes('SUPERADMIN')) return 'Panel operativo con accesos de gestión, seguimiento y administración según tus permisos.';
+  if (role.includes('ADMIN') || role.includes('GERENTE') || role.includes('SUPERADMIN')) return 'Panel operativo con accesos de gestión, seguimiento y administración según tus permisos.';
   return 'Resumen operativo y accesos disponibles para tu perfil.';
 }
 
@@ -145,24 +157,56 @@ export function DashboardPage() {
   }, []);
 
   const quickAccess = useMemo(() => {
+    const depositUser = isDepositUser(user);
+
     const items: QuickAccess[] = [
+      // ── Trabajo diario ────────────────────────────────────────────────────
       { title: 'Nueva venta', description: 'Cargar datos para prefactura o remito.', to: '/venta/nueva', icon: <Globe2 />, permission: 'sales_web.create', tone: 'blue', group: 'Trabajo diario' },
       { title: 'Mis ventas', description: 'Seguimiento de ventas cargadas por vos.', to: '/venta/mis-solicitudes', icon: <ClipboardList />, permission: 'sales_web.view', tone: 'violet', group: 'Trabajo diario' },
       { title: 'Presupuesto rápido', description: 'Buscar productos y preparar importes.', to: '/budgets/new', icon: <Calculator />, permission: 'budgets.view', tone: 'green', group: 'Trabajo diario' },
-      { title: isDepositUser(user) ? 'Cargar cliente en depósito' : 'Cargar garantía', description: isDepositUser(user) ? 'Registrar mercadería que el cliente deja directamente en depósito.' : 'Registrar un ingreso de garantía.', to: '/warranties/new', icon: <ShieldCheck />, permission: 'warranties.create', tone: 'blue', group: 'Trabajo diario' },
-      { title: 'Recibir remitos', description: 'Confirmar llegada de bultos al depósito.', to: '/warranties/remitos', icon: <Truck />, permission: 'warranties.remitos.receive', tone: 'green', group: 'Trabajo diario' },
-      { title: 'Mover entre depósitos', description: 'Trasladar garantías desde tu depósito hacia otro depósito.', to: '/warranties/remitos', icon: <Truck />, permission: 'warranties.remitos.deposit_transfer', tone: 'amber', group: 'Trabajo diario' },
+      {
+        title: depositUser ? 'Cargar cliente en depósito' : 'Cargar garantía',
+        description: depositUser ? 'Registrar mercadería que el cliente deja en el depósito.' : 'Registrar un ingreso de garantía.',
+        to: '/warranties/new', icon: <ShieldCheck />, permission: 'warranties.create', tone: 'blue', group: 'Trabajo diario',
+      },
+      // Recepción en depósito: tile unificado para operadores de depósito (va a /warranties/deposito).
+      // Para usuarios no-depósito (gestores) se mantienen tiles separados con rutas correctas.
+      ...(depositUser
+        ? [{
+            title: 'Recepción en depósito',
+            description: 'Confirmá remitos entrantes y gestioná movimientos entre depósitos.',
+            to: '/warranties/deposito', icon: <PackageCheck />,
+            anyPermission: ['warranties.remitos.receive', 'warranties.remitos.deposit_transfer'],
+            tone: 'green' as const, group: 'Trabajo diario' as const,
+          }]
+        : [
+            { title: 'Recibir remitos', description: 'Confirmar llegada de bultos al depósito.', to: '/warranties/remitos', icon: <PackageCheck />, permission: 'warranties.remitos.receive', tone: 'green' as const, group: 'Trabajo diario' as const },
+            { title: 'Mover entre depósitos', description: 'Trasladar garantías desde tu depósito hacia otro depósito.', to: '/warranties/remitos', icon: <Truck />, permission: 'warranties.remitos.deposit_transfer', tone: 'amber' as const, group: 'Trabajo diario' as const },
+          ]
+      ),
       { title: 'Despachar a Chiclana', description: 'Generar remito interno desde tu sucursal.', to: '/warranties/sucursal', icon: <Send />, permission: 'warranties.remitos.dispatch', tone: 'amber', group: 'Trabajo diario' },
-      { title: 'Mis garantías en sucursal', description: 'Ver las garantías que todavía están físicamente en tu sucursal.', to: '/warranties', icon: <ShieldCheck />, permission: 'warranties.view', tone: 'blue', group: 'Seguimiento' },
+
+      // ── Seguimiento ───────────────────────────────────────────────────────
+      {
+        title: depositUser ? 'Garantías recibidas' : 'Mis garantías',
+        description: depositUser ? 'Ver garantías registradas y recibidas en tu depósito.' : 'Ver las garantías de tu sucursal.',
+        to: '/warranties', icon: <ShieldCheck />, permission: 'warranties.view', tone: 'blue', group: 'Seguimiento',
+      },
       { title: 'Bandeja de ventas', description: 'Pendientes, en proceso y completadas.', to: '/venta/admin', icon: <Globe2 />, permission: 'sales_web.manage', tone: 'amber', group: 'Seguimiento' },
-      { title: 'Garantías', description: 'Revisión, gestión y seguimiento.', to: '/warranties/dashboard', icon: <ShieldCheck />, anyPermission: ['warranties.dashboard', 'warranties.manage_provider', 'warranties.review'], tone: 'blue', group: 'Seguimiento' },
-      { title: 'Panel gestor', description: 'Revisión interna, logística y preparación para Posventa.', to: '/warranties/gestor', icon: <ClipboardList />, anyPermission: ['warranties.gestor.panel', 'warranties.manage'], tone: 'violet', group: 'Seguimiento' },
-      { title: 'Mi sucursal — logística', description: 'Despachar equipos al depósito y ver tránsito.', to: '/warranties/sucursal', icon: <Truck />, anyPermission: ['warranties.sucursal.logistics', 'warranties.remitos.dispatch'], tone: 'amber', group: 'Seguimiento' },
-      { title: 'Revisión de garantías', description: 'Aprobar ingresos o pedir correcciones.', to: '/warranties/revision', icon: <ClipboardList />, permission: 'warranties.review', tone: 'violet', group: 'Seguimiento' },
+      { title: 'Dashboard de garantías', description: 'Métricas, estados y alertas del flujo.', to: '/warranties/dashboard', icon: <ShieldCheck />, anyPermission: ['warranties.dashboard', 'warranties.manage_provider', 'warranties.review'], tone: 'blue', group: 'Seguimiento' },
+      { title: 'Panel gestor', description: 'Revisión interna, logística y comunicación con sucursales.', to: '/warranties/gestor', icon: <ClipboardList />, anyPermission: ['warranties.gestor.panel', 'warranties.manage'], tone: 'violet', group: 'Seguimiento' },
+      { title: 'Mi sucursal — logística', description: 'Despachar equipos al depósito y ver tránsito.', to: '/warranties/sucursal', icon: <Truck />, permission: 'warranties.sucursal.logistics', tone: 'amber', group: 'Seguimiento' },
+      { title: 'Revisión de garantías', description: 'Aprobar ingresos o pedir correcciones.', to: '/warranties/gestor', icon: <ClipboardList />, permission: 'warranties.review', tone: 'violet', group: 'Seguimiento' },
       { title: 'Gestión proveedor', description: 'ENV, mails, retiros y respuestas del proveedor.', to: '/warranties/gestion', icon: <Truck />, permission: 'warranties.manage_provider', tone: 'green', group: 'Seguimiento' },
+      { title: 'Exportar garantías', description: 'Generar planilla para comunicar al proveedor.', to: '/warranties/export', icon: <Download />, permission: 'warranties.export', tone: 'amber', group: 'Seguimiento' },
+      { title: 'Historial de remitos', description: 'Trazabilidad completa de todos los remitos internos.', to: '/warranties/remito-historial', icon: <FileText />, permission: 'warranties.remitos.view', tone: 'violet', group: 'Seguimiento' },
       { title: 'Precios y costos', description: 'Actualizaciones urgentes de productos.', to: '/precios-costos', icon: <CircleDollarSign />, anyPermission: ['price_updates.view', 'cost_updates.view'], tone: 'amber', group: 'Seguimiento' },
+
+      // ── Administración ────────────────────────────────────────────────────
       { title: 'Usuarios y roles', description: 'Accesos, permisos y alcance operativo.', to: '/admin/users', icon: <UserCog />, anyPermission: ['users.view', 'roles.view'], tone: 'slate', group: 'Administración' },
       { title: 'Mi usuario', description: 'Perfil, permisos y datos laborales.', to: '/me', icon: <User />, permission: 'profile.view', tone: 'slate', group: 'Administración' },
+
+      // ── Herramientas ──────────────────────────────────────────────────────
       { title: 'Herramientas internas', description: 'Automatizaciones y procesos controlados.', to: '/tools', icon: <Wrench />, permission: 'tools.view', tone: 'slate', group: 'Herramientas' },
       { title: 'Movimientos', description: 'Auditoría y actividad del sistema.', to: '/audit', icon: <History />, permission: 'audit.view', tone: 'slate', group: 'Herramientas' },
     ];
@@ -207,8 +251,12 @@ export function DashboardPage() {
             <h1 className="mt-4 text-3xl font-black leading-tight text-white sm:text-5xl">{greeting()}, {firstName(user?.display_name || user?.username || 'usuario')}</h1>
             <p className="mt-4 max-w-2xl text-base leading-7 text-slate-300">{dashboardLead(user)}</p>
             <div className="mt-6 grid gap-3 sm:grid-cols-3">
-              <HeroMetric label="Ventas activas" value={can('sales_web.manage') ? adminRequests.length : myRequests.length} />
-              <HeroMetric label="Pendientes" value={can('sales_web.manage') ? pendingAdmin : pendingMine} />
+              {(can('sales_web.view') || can('sales_web.manage')) && (
+                <>
+                  <HeroMetric label="Ventas activas" value={can('sales_web.manage') ? adminRequests.length : myRequests.length} />
+                  <HeroMetric label="Pendientes" value={can('sales_web.manage') ? pendingAdmin : pendingMine} />
+                </>
+              )}
               <HeroMetric label="Notificaciones" value={unreadCount} />
             </div>
           </div>

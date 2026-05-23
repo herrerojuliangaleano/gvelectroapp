@@ -435,9 +435,15 @@ def _require_any(user: Any, *permissions: str) -> None:
 
 
 def _user_deposit_name(user: Any) -> str:
-    if str(getattr(user, "branch_type", "") or "").lower() != "deposit":
-        raise HTTPException(403, "Tu usuario no está asignado a un depósito.")
+    branch_type = str(getattr(user, "branch_type", "") or "").lower()
     name = str(getattr(user, "branch_name", "") or getattr(user, "sucursal", "") or "").strip()
+    # Acepta branch_type="deposit" O branch name que claramente refiera a un depósito.
+    # Esto cubre usuarios cuyo branch fue creado antes de normalizar el campo type.
+    is_deposit = branch_type == "deposit" or any(
+        kw in name.lower() for kw in ("deposito", "depósito")
+    )
+    if not is_deposit:
+        raise HTTPException(403, "Tu usuario no está asignado a un depósito.")
     if not name:
         raise HTTPException(400, "Tu usuario no tiene depósito asignado.")
     return name
@@ -1026,7 +1032,7 @@ def list_remitos(
         "warranties.remitos.provider_delivery",
     )
 
-    # Scope: usuarios sin 'view' global solo ven su propia sucursal.
+    # Scope: usuarios sin 'view' global solo ven sus propios remitos.
     user_is_global = getattr(user, "has", lambda _p: False)("warranties.remitos.view")
     # Usar branch_name primero; si está vacío (usuario sin branch_id asignado)
     # caer a user.sucursal (campo legacy que también guarda el nombre de la sucursal).
@@ -1034,15 +1040,26 @@ def list_remitos(
         (getattr(user, "branch_name", None) or "") or
         (getattr(user, "sucursal",    None) or "")
     ).strip()
+    # Los operadores de depósito ven remitos DESTINADOS a su depósito (destino_deposito).
+    # Los operadores de sucursal ven remitos que su sucursal GENERÓ (origen_sucursal).
+    user_is_deposit_receiver = not user_is_global and (
+        getattr(user, "has", lambda _p: False)("warranties.remitos.receive") or
+        getattr(user, "has", lambda _p: False)("warranties.remitos.deposit_transfer")
+    )
 
     with db_connect() as conn:
         ensure_remito_tables(conn)
         sql    = "SELECT * FROM warranty_remitos WHERE 1=1"
         params: list[Any] = []
 
-        # Aplicar filtro de sucursal para usuarios no-globales
+        # Aplicar filtro de scope para usuarios no-globales
         if not user_is_global and user_branch:
-            sql += " AND LOWER(origen_sucursal) = LOWER(?)"
+            if user_is_deposit_receiver:
+                # Encargado/Cadete de depósito: ve remitos cuyo destino es su depósito
+                sql += " AND LOWER(destino_deposito) = LOWER(?)"
+            else:
+                # Encargado/Vendedor de sucursal: ve remitos que su sucursal generó
+                sql += " AND LOWER(origen_sucursal) = LOWER(?)"
             params.append(user_branch)
 
         if shipment_code:
@@ -1230,7 +1247,7 @@ def download_remito_pdf(
     depósito con permiso deposit_transfer también puede descargar el PDF de sus
     movimientos internos.
     """
-    _require_any(_user, "warranties.remitos.view", "warranties.remitos.deposit_transfer", "warranties.remitos.generate")
+    _require_any(_user, "warranties.remitos.view", "warranties.remitos.deposit_transfer", "warranties.remitos.generate", "warranties.remitos.receive")
     with db_connect() as conn:
         ensure_remito_tables(conn)
         ensure_warranty_tables(conn)
