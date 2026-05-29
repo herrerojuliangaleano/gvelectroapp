@@ -253,7 +253,7 @@ function ShipmentBanner({ info, onDownload, downloading }: { info: WarrantyExpor
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export function WarrantyExportPage() {
+export function WarrantyExportPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [options, setOptions] = useState<WarrantyOptions | null>(null);
   const [exports, setExports] = useState<WarrantyExportInfo[]>([]);
   const [filters, setFilters] = useState({ proveedor: '', marca: '', sucursal: '', deposito: '' });
@@ -395,18 +395,20 @@ export function WarrantyExportPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className={embedded ? 'space-y-6' : 'mx-auto max-w-6xl space-y-6'}>
       {/* Header */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-black uppercase tracking-wide text-emerald-100">
-            <Truck size={14} /> Lote proveedor
+        {!embedded && (
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-black uppercase tracking-wide text-emerald-100">
+              <Truck size={14} /> Lote proveedor
+            </div>
+            <h1 className="mt-3 text-3xl font-black sm:text-4xl">Exportación / ENV</h1>
+            <p className="mt-2 text-slate-400">
+              Seleccioná garantías revisadas, pendientes y sin lote previo. Esto crea el ENV y el Excel para avisar al proveedor; no implica retiro físico.
+            </p>
           </div>
-          <h1 className="mt-3 text-3xl font-black sm:text-4xl">Exportación / ENV</h1>
-          <p className="mt-2 text-slate-400">
-            Seleccioná garantías revisadas, pendientes y sin lote previo. Esto crea el ENV y el Excel para avisar al proveedor; no implica retiro físico.
-          </p>
-        </div>
+        )}
         <button
           onClick={loadBase}
           disabled={loadingOptions}

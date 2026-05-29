@@ -11,8 +11,36 @@ from fastapi.responses import FileResponse
 from ..audit import audit
 from ..auth import require_current_user, require_permission
 from ..config import get_settings
-from ..schemas import MeResponse, UserInfo
-from ..users import CurrentUser, get_current_user, get_employee_by_username, get_user, load_users, set_employee_photo, set_employee_photo_status
+from ..schemas import (
+    EmployeeCreateRequest,
+    EmployeeInfo,
+    EmployeeLinkUserRequest,
+    EmployeeListResponse,
+    EmployeeStatusChangeRequest,
+    EmployeeStatusHistoryResponse,
+    EmployeeUpdateRequest,
+    MeResponse,
+    UserInfo,
+    UserLinkCandidatesResponse,
+)
+from ..users import (
+    CurrentUser,
+    change_employee_status,
+    create_standalone_employee,
+    get_current_user,
+    get_employee_by_id,
+    get_employee_by_username,
+    get_user,
+    link_employee_user,
+    list_employee_status_history,
+    list_employees,
+    load_users,
+    search_users_for_link,
+    set_employee_photo,
+    set_employee_photo_status,
+    unlink_employee_user,
+    update_employee_by_id,
+)
 
 router = APIRouter(prefix="/api/employees", tags=["employees"])
 
@@ -164,3 +192,94 @@ def reject_employee_photo(username: str, user: Annotated[CurrentUser, Depends(re
         details={"username": username},
     )
     return _admin_user_response(username)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Fase 0 — Empleados como entidad propia (independiente del usuario)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.get("", response_model=EmployeeListResponse)
+@router.get("/", response_model=EmployeeListResponse)
+def list_all_employees(
+    _user: Annotated[CurrentUser, Depends(require_permission("employees.view"))],
+    q: str = "",
+    status: str = "",
+    work_branch_id: str = "",
+    has_user: str = "",
+    limit: int = 500,
+):
+    items = list_employees(q=q, status=status, work_branch_id=work_branch_id, has_user=has_user, limit=limit)
+    return EmployeeListResponse(items=[EmployeeInfo(**it) for it in items], total=len(items))
+
+
+@router.get("/users/link-candidates", response_model=UserLinkCandidatesResponse)
+def employee_link_candidates(
+    _user: Annotated[CurrentUser, Depends(require_permission("employees.manage"))],
+    q: str = "",
+    limit: int = 20,
+):
+    return UserLinkCandidatesResponse(items=search_users_for_link(q=q, limit=limit))
+
+
+@router.post("", response_model=EmployeeInfo)
+@router.post("/", response_model=EmployeeInfo)
+def create_employee(req: EmployeeCreateRequest, user: Annotated[CurrentUser, Depends(require_permission("employees.manage"))]):
+    try:
+        employee = create_standalone_employee(req.model_dump(exclude_none=True), actor=user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit("employees.create", user=user, resource_type="employee", resource_id=employee.get("id") or "", details={"dni": employee.get("dni")})
+    return EmployeeInfo(**employee)
+
+
+@router.get("/{employee_id}", response_model=EmployeeInfo)
+def get_employee(employee_id: str, _user: Annotated[CurrentUser, Depends(require_permission("employees.view"))]):
+    employee = get_employee_by_id(employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    return EmployeeInfo(**employee)
+
+
+@router.patch("/{employee_id}", response_model=EmployeeInfo)
+def patch_employee(employee_id: str, req: EmployeeUpdateRequest, user: Annotated[CurrentUser, Depends(require_permission("employees.manage"))]):
+    try:
+        employee = update_employee_by_id(employee_id, req.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit("employees.update", user=user, resource_type="employee", resource_id=employee_id, details={})
+    return EmployeeInfo(**employee)
+
+
+@router.post("/{employee_id}/link-user", response_model=EmployeeInfo)
+def link_user(employee_id: str, req: EmployeeLinkUserRequest, user: Annotated[CurrentUser, Depends(require_permission("employees.manage"))]):
+    try:
+        employee = link_employee_user(employee_id, req.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit("employees.link_user", user=user, resource_type="employee", resource_id=employee_id, details={"username": req.username})
+    return EmployeeInfo(**employee)
+
+
+@router.post("/{employee_id}/unlink-user", response_model=EmployeeInfo)
+def unlink_user(employee_id: str, user: Annotated[CurrentUser, Depends(require_permission("employees.manage"))]):
+    try:
+        employee = unlink_employee_user(employee_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit("employees.unlink_user", user=user, resource_type="employee", resource_id=employee_id, details={})
+    return EmployeeInfo(**employee)
+
+
+@router.post("/{employee_id}/status", response_model=EmployeeInfo)
+def change_status(employee_id: str, req: EmployeeStatusChangeRequest, user: Annotated[CurrentUser, Depends(require_permission("employees.manage"))]):
+    try:
+        employee = change_employee_status(employee_id, req.model_dump(exclude_none=True), actor=user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit("employees.status_change", user=user, resource_type="employee", resource_id=employee_id, details={"status": req.status})
+    return EmployeeInfo(**employee)
+
+
+@router.get("/{employee_id}/status-history", response_model=EmployeeStatusHistoryResponse)
+def status_history(employee_id: str, _user: Annotated[CurrentUser, Depends(require_permission("employees.view"))]):
+    return EmployeeStatusHistoryResponse(items=list_employee_status_history(employee_id))

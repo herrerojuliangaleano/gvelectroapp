@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  Package,
   Plus,
   Save,
   Search,
@@ -18,6 +19,19 @@ import {
   getCurrentUserFromStorage,
   searchWarrantyProducts,
 } from '../api/client';
+import { canCrossSelectBranches } from '../branchAccess';
+import {
+  ErpBadge,
+  ErpButton,
+  ErpCard,
+  ErpField,
+  ErpInput,
+  ErpNotice,
+  ErpPageHeader,
+  ErpSelect,
+  ErpTextarea,
+  ErpTag,
+} from '../components/ProUI';
 import type {
   WarrantyBranchOperativa,
   WarrantyCreateResponse,
@@ -142,35 +156,44 @@ export function WarrantyCreatePage() {
     const bName = normalizeKey(b.name || '');
     return bType === 'deposit' || bType === 'deposito' || bName.startsWith('deposito');
   });
-  const userRoleKey = normalizeKey(currentUser?.role || '');
   const canManage   = can('warranties.manage') || can('warranties.manage_provider');
+  // El usuario puede elegir CUALQUIER sucursal en los selects si:
+  //   - tiene permisos de gestión global (canManage), o
+  //   - tiene el permiso explícito branches.cross_select.
+  // En cualquier otro caso, queda limitado a su sucursal asignada.
+  const canChooseAnyBranch = canManage || canCrossSelectBranches(currentUser);
 
-  // Fase 31: el alcance principal es solo default operativo, no una cárcel.
-  // - Gestores/Admin/Superadmin usan la unidad principal como sugerencia, pero pueden cargar desde cualquier sucursal/deposito permitido.
-  // - Personal DEPOSITO sin permisos de gestión usa su depósito asignado aunque la branch principal haya quedado en otra unidad.
+  // El alcance principal es default operativo, no una cárcel.
+  // - Gestores/Admin/Superadmin (canChooseAnyBranch) usan la unidad principal como
+  //   sugerencia, pero pueden cargar desde cualquier sucursal/depósito permitido.
+  // - Personal de depósito (branch_type=deposit) sin permisos de elección usa su
+  //   depósito asignado aunque la branch principal haya quedado en otra unidad.
   // - Vendedores usan su sucursal principal.
-  const operationalDepositFallback = !canManage && userRoleKey === 'deposito' ? depositAssignedBranch : null;
-  const effectiveBranch = canManage
+  const branchType  = currentUser?.branch_type || primaryAssignedBranch?.type || depositAssignedBranch?.type || '';
+  const branchTypeKey = normalizeKey(branchType);
+  const isDepositBranchType = branchTypeKey === 'deposit' || branchTypeKey === 'deposito';
+  const operationalDepositFallback = !canChooseAnyBranch && isDepositBranchType ? depositAssignedBranch : null;
+  const effectiveBranch = canChooseAnyBranch
     ? (primaryAssignedBranch || depositAssignedBranch)
     : (operationalDepositFallback || primaryAssignedBranch || depositAssignedBranch);
-  const branchType  = currentUser?.branch_type || effectiveBranch?.type || '';
-  const branchTypeKey = normalizeKey(branchType);
   const userBranchNameRaw = currentUser?.branch_name || currentUser?.sucursal || effectiveBranch?.name || '';
   const userBranchNameKey = normalizeKey(userBranchNameRaw);
 
   // WEB: no puede cargar garantías.
   const isWebBranch = branchTypeKey === 'web';
 
-  // Sucursal física: branch_type = "physical" sin permisos de gestión.
-  // Fallback legacy: sin branch_type pero sin manage → asumimos sucursal, salvo que sea depósito.
-  const looksLikeDepositUser = branchTypeKey === 'deposit' || branchTypeKey === 'deposito' || userRoleKey === 'deposito' || userBranchNameKey.startsWith('deposito');
-  const isSucursalFisica = ((branchTypeKey === 'physical' || branchTypeKey === 'sucursal' || branchTypeKey === 'sucursal fisica') && !canManage)
-    || (!branchTypeKey && !canManage && Boolean(currentUser?.branch_name || currentUser?.sucursal) && !looksLikeDepositUser);
-  // Depósito: branch_type = "deposit" / "deposito" o rol DEPOSITO.
+  // Sucursal física: branch_type = "physical" sin posibilidad de cambiar.
+  // Fallback legacy: sin branch_type pero sin canChooseAnyBranch → asumimos sucursal,
+  // salvo que el nombre apunte claramente a un depósito.
+  const looksLikeDepositUser = isDepositBranchType || userBranchNameKey.startsWith('deposito');
+  const isSucursalFisica = ((branchTypeKey === 'physical' || branchTypeKey === 'sucursal' || branchTypeKey === 'sucursal fisica') && !canChooseAnyBranch)
+    || (!branchTypeKey && !canChooseAnyBranch && Boolean(currentUser?.branch_name || currentUser?.sucursal) && !looksLikeDepositUser);
+  // Depósito: branch_type = "deposit" o branch_name = "depósito ..."
   const isDeposito = looksLikeDepositUser;
-  // Depósito operativo: personal de depósito sin permisos de gestión/admin.
-  // Estos usuarios solo cargan "Cliente en depósito"; las otras opciones quedan para gestores/admin.
-  const isDepositoOperativo = isDeposito && !canManage;
+  // Depósito operativo: personal de depósito sin permisos de elegir otra sucursal.
+  // Estos usuarios solo cargan "Cliente en depósito"; las otras opciones quedan para
+  // gestores/admin o usuarios con branches.cross_select.
+  const isDepositoOperativo = isDeposito && !canChooseAnyBranch;
 
   // Nombre y ID de la unidad asignada al usuario (sucursal o depósito).
   const userBranchId   = currentUser?.branch_id   || effectiveBranch?.id || '';
@@ -398,263 +421,153 @@ export function WarrantyCreatePage() {
   // Usuarios de sucursal web: no pueden cargar garantías.
   if (isWebBranch) {
     return (
-      <div className="mx-auto max-w-2xl py-12">
-        <div className="rounded-3xl border border-amber-500/40 bg-amber-500/10 p-8 text-center shadow-xl">
-          <div className="mb-4 text-5xl">🌐</div>
-          <h1 className="text-2xl font-black text-amber-100">Sucursal web</h1>
-          <p className="mt-3 text-amber-200/80">
-            Los usuarios de sucursal web no cargan garantías directamente.
-            Las garantías deben ingresarse desde la{' '}
-            <strong className="text-amber-100">sucursal física</strong> o el{' '}
-            <strong className="text-amber-100">depósito</strong> que recibe el producto.
-          </p>
-          <p className="mt-4 text-sm text-amber-200/60">
-            Si recibís un producto para garantía, coordina con el depósito o sucursal correspondiente.
-          </p>
-        </div>
+      <div className="erp-stack-6">
+        <ErpPageHeader title="Carga de garantías" />
+        <ErpNotice tone="warning" title="Sucursal web — sin carga directa de garantías">
+          Los usuarios de sucursal web no cargan garantías directamente. Las garantías deben ingresarse desde la{' '}
+          <strong>sucursal física</strong> o el <strong>depósito</strong> que recibe el producto. Si recibís un
+          producto para garantía, coordiná con el depósito o sucursal correspondiente.
+        </ErpNotice>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-7xl">
-      {/* Header */}
-      <div className="mb-5 flex flex-col gap-4 sm:mb-8 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-black sm:text-3xl">Carga de garantías</h1>
-          <p className="mt-2 text-sm text-slate-400 sm:text-base">
-            Registrá garantías con responsable automático, ID interno y seguimiento operativo.
-          </p>
-        </div>
-        <div className="rounded-2xl border border-slate-700 bg-slate-900/70 px-4 py-3 text-sm text-slate-300">
-          Responsable: <span className="font-bold text-white">{username}</span>
-          {userSucursal && !canManage && (
-            <span className="ml-2 rounded-lg bg-blue-500/20 px-2 py-0.5 text-xs font-bold text-blue-200">
-              {userSucursal}
-            </span>
-          )}
-        </div>
-      </div>
+    <div className="erp-stack-6">
+      <ErpPageHeader
+        title="Carga de garantías"
+        description="Registrá garantías con responsable automático, ID interno y seguimiento operativo."
+        actions={
+          <ErpTag>
+            Responsable: <strong style={{ color: 'var(--text)' }}>{username}</strong>
+            {userSucursal && !canManage ? ` · ${userSucursal}` : ''}
+          </ErpTag>
+        }
+      />
 
-      {error && (
-        <div className="mb-5 rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-200 sm:text-base">
-          {error}
-        </div>
-      )}
+      {error && <ErpNotice tone="error" title="Revisá los datos">{error}</ErpNotice>}
 
       {/* Resultado exitoso */}
       {success && (
-        <div className="mb-6 space-y-4 rounded-3xl border border-emerald-500/40 bg-emerald-500/10 p-4 text-emerald-100 shadow-xl sm:p-5">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <div className="text-lg font-black">Garantías guardadas correctamente</div>
-              <div className="mt-1 text-sm text-emerald-200">
-                Se registraron {success.count} producto(s) en la base operativa.
-              </div>
-            </div>
-            <div className="rounded-full border border-emerald-400/40 px-3 py-1 text-xs font-bold uppercase tracking-wide text-emerald-100">
-              Listo ✓
-            </div>
-          </div>
+        <ErpNotice tone="success" title="Garantías guardadas correctamente">
+          <div className="erp-stack-3">
+            <div>Se registraron {success.count} producto(s) en la base operativa.</div>
 
-          <div className="rounded-2xl border border-emerald-300/40 bg-slate-950/60 p-4">
-            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="text-base font-black text-white">ID para WhatsApp</div>
-                <div className="text-xs text-emerald-200/80">
-                  Copiá el ID para identificar las fotos y el seguimiento interno.
+            <div className="rounded-md border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3">
+              <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-[13px] font-semibold text-[color:var(--text)]">ID para WhatsApp</div>
+                  <div className="text-[11.5px] text-[color:var(--text-2)]">Copiá el ID para identificar fotos y seguimiento interno.</div>
                 </div>
+                <ErpButton variant="primary" size="sm" onClick={() => copyToClipboard(whatsappIdsText)} leftIcon={copiedLabel(copied, whatsappIdsText)}>
+                  Copiar {successIds.length > 1 ? 'todos' : 'ID'}
+                </ErpButton>
               </div>
-              <button
-                type="button"
-                onClick={() => copyToClipboard(whatsappIdsText)}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-black text-white shadow-lg active:bg-emerald-600 sm:w-auto"
-              >
-                Copiar {successIds.length > 1 ? 'todos' : 'ID'} {copiedLabel(copied, whatsappIdsText)}
-              </button>
+              <textarea
+                readOnly
+                value={whatsappIdsText}
+                onFocus={(event) => event.currentTarget.select()}
+                className="erp-input font-mono"
+                style={{ minHeight: 80, fontWeight: 700 }}
+              />
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {successIds.map((id) => (
+                  <button key={id} type="button" onClick={() => copyToClipboard(id)} className="erp-tag font-mono" style={{ cursor: 'pointer' }}>
+                    {id} {copiedLabel(copied, id)}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <textarea
-              readOnly
-              value={whatsappIdsText}
-              onFocus={(event) => event.currentTarget.select()}
-              className="min-h-[92px] w-full resize-none rounded-2xl border border-emerald-400/30 bg-slate-950 px-4 py-3 font-mono text-lg font-black text-emerald-50 outline-none"
-            />
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              {successIds.map((id) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => copyToClipboard(id)}
-                  className="inline-flex items-center gap-2 rounded-xl border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 font-mono text-xs font-bold text-emerald-50 active:bg-emerald-500/20 sm:text-sm"
-                >
-                  {id} {copiedLabel(copied, id)}
-                </button>
+            <div className="erp-stack-2 text-[12.5px] text-[color:var(--text-2)]">
+              {success.items.map((item, index) => (
+                <div key={`${item.id_garantia}-${index}`} className="break-words">
+                  <span className="font-mono font-semibold text-[color:var(--text)]">{item.id_garantia}</span>
+                  {' · '}{item.producto}{item.sku ? ` · SKU ${item.sku}` : ''}
+                </div>
               ))}
             </div>
           </div>
-
-          <div className="space-y-1 text-xs text-emerald-200/90 sm:text-sm">
-            {success.items.map((item, index) => (
-              <div key={`${item.id_garantia}-${index}`} className="break-words">
-                <span className="font-mono font-bold">{item.id_garantia}</span>
-                {' · '}{item.producto}{item.sku ? ` · SKU ${item.sku}` : ''}
-              </div>
-            ))}
-          </div>
-        </div>
+        </ErpNotice>
       )}
 
-      <form onSubmit={submit} className="space-y-5 pb-24 md:pb-0">
+      <form onSubmit={submit} className="erp-stack-4">
         {/* Opción: agrupar bajo un mismo ID */}
-        <div className="rounded-3xl border border-blue-500/40 bg-blue-500/10 p-4 text-sm text-blue-100 shadow-lg sm:p-5">
-          <label className="flex items-start gap-3">
+        <ErpCard>
+          <label className="flex items-start gap-3 cursor-pointer">
             <input
               type="checkbox"
               checked={groupUnderOneId}
               onChange={(event) => setGroupUnderOneId(event.target.checked)}
-              className="mt-1 h-6 w-6 shrink-0 rounded border-slate-600 bg-slate-900"
+              className="erp-checkbox mt-0.5"
+              style={{ width: 18, height: 18 }}
             />
             <span>
-              <span className="block text-base font-black">
+              <span className="block text-[13.5px] font-semibold text-[color:var(--text)]">
                 Todo lo cargado pertenece al mismo caso
               </span>
-              <span className="mt-1 block text-blue-100/80">
-                Activá esto cuando cargás varios productos del mismo cliente/caso.
-                Se generan ítems operativos separados. Ej: <b>GAR-2026-CAS-0001-01</b>, <b>GAR-2026-CAS-0001-02</b>.
-              </span>
-              <span className="mt-1 block text-blue-100/70">
-                Sin activar, cada producto genera un caso independiente con su propio ID correlativo.
+              <span className="mt-1 block text-[12px] text-[color:var(--text-2)] leading-[1.5]">
+                Activá esto cuando cargás varios productos del mismo cliente/caso. Se generan ítems operativos separados:
+                <span className="font-mono"> GAR-2026-CAS-0001-01</span>, <span className="font-mono">…-02</span>. Sin activar, cada producto genera un caso independiente.
               </span>
             </span>
           </label>
-        </div>
+        </ErpCard>
 
+        {/* Datos compartidos del cliente (modo agrupado) */}
         {groupUnderOneId && validRows.some((row) => isClientIngreso(row.tipo_ingreso)) && (
-          <div className="rounded-3xl border border-amber-500/40 bg-amber-500/10 p-4 text-amber-100 shadow-lg sm:p-5">
-            <div className="mb-3">
-              <div className="text-base font-black text-white">Datos del cliente para esta garantía</div>
-              <p className="mt-1 text-sm text-amber-100/80">
-                Como todo pertenece al mismo caso madre, estos datos se cargan una sola vez y se copian a todos los ítems.
-                Cada producto igual queda separado para revisión, remitos, ENV/proveedor y resolución. El mail es opcional.
-              </p>
+          <ErpCard title="Datos del cliente para esta garantía" subtitle="Se cargan una sola vez y se copian a todos los ítems del caso. El mail es opcional.">
+            <div className="erp-form-grid erp-form-grid-2">
+              <ErpField label="Nombre del cliente" required>
+                <ErpInput value={sharedClientData.cliente_nombre} onChange={(e) => updateSharedClientData({ cliente_nombre: e.target.value })} placeholder="Apellido y nombre" />
+              </ErpField>
+              <ErpField label="Teléfono" required>
+                <ErpInput value={sharedClientData.cliente_telefono} onChange={(e) => updateSharedClientData({ cliente_telefono: e.target.value })} placeholder="Número de contacto" />
+              </ErpField>
+              <ErpField label="Correo electrónico" hint="Opcional" wide>
+                <ErpInput type="email" value={sharedClientData.cliente_email} onChange={(e) => updateSharedClientData({ cliente_email: e.target.value })} placeholder="cliente@email.com" />
+              </ErpField>
+              <ErpField label="N° factura / ticket" required>
+                <ErpInput value={sharedClientData.numero_factura} onChange={(e) => updateSharedClientData({ numero_factura: e.target.value })} placeholder="Ej: 0001-00012345" />
+              </ErpField>
+              <ErpField label="Fecha de compra" required>
+                <ErpInput type="date" value={sharedClientData.fecha_compra} onChange={(e) => updateSharedClientData({ fecha_compra: e.target.value })} />
+              </ErpField>
             </div>
-            <div className="grid grid-cols-12 gap-4">
-              <label className="col-span-12 sm:col-span-6">
-                <span className="mb-2 block text-sm font-semibold text-slate-200">Nombre del cliente <span className="text-red-400">*</span></span>
-                <input
-                  value={sharedClientData.cliente_nombre}
-                  onChange={(event) => updateSharedClientData({ cliente_nombre: event.target.value })}
-                  placeholder="Apellido y nombre"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                />
-              </label>
-              <label className="col-span-12 sm:col-span-6">
-                <span className="mb-2 block text-sm font-semibold text-slate-200">Teléfono <span className="text-red-400">*</span></span>
-                <input
-                  value={sharedClientData.cliente_telefono}
-                  onChange={(event) => updateSharedClientData({ cliente_telefono: event.target.value })}
-                  placeholder="Número de contacto"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                />
-              </label>
-              <label className="col-span-12 sm:col-span-6">
-                <span className="mb-2 block text-sm font-semibold text-slate-200">Correo electrónico <span className="text-xs font-normal text-slate-400">(opcional)</span></span>
-                <input
-                  type="email"
-                  value={sharedClientData.cliente_email}
-                  onChange={(event) => updateSharedClientData({ cliente_email: event.target.value })}
-                  placeholder="cliente@email.com"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                />
-              </label>
-              <label className="col-span-12 sm:col-span-3">
-                <span className="mb-2 block text-sm font-semibold text-slate-200">N° factura / ticket <span className="text-red-400">*</span></span>
-                <input
-                  value={sharedClientData.numero_factura}
-                  onChange={(event) => updateSharedClientData({ numero_factura: event.target.value })}
-                  placeholder="Ej: 0001-00012345"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                />
-              </label>
-              <label className="col-span-12 sm:col-span-3">
-                <span className="mb-2 block text-sm font-semibold text-slate-200">Fecha de compra <span className="text-red-400">*</span></span>
-                <input
-                  type="date"
-                  value={sharedClientData.fecha_compra}
-                  onChange={(event) => updateSharedClientData({ fecha_compra: event.target.value })}
-                  className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                />
-              </label>
-            </div>
-          </div>
+          </ErpCard>
         )}
 
         {/* Filas de garantías */}
         {rows.map((row, index) => {
           const isSucursal = row.tipo_ingreso === 'cliente_sucursal';
           const isDepositoTipo = row.tipo_ingreso === 'cliente_deposito';
-          // La sucursal queda bloqueada para usuarios de sucursal física.
           const sucursalLocked = isSucursal && isSucursalFisica;
-          // Mostrar sucursal_responsable cuando el tipo no es sucursal y hay opciones disponibles o el usuario es gestor.
-          // Para usuarios de depósito: siempre que no sea cliente_sucursal.
-          // Para gestores: cuando no es cliente_sucursal.
           const showSucursalResponsable = !isSucursalFisica && row.tipo_ingreso !== '' && !isSucursal;
           const sucursalResponsableRequired = isDepositoTipo;
 
           return (
-            <div key={row.localId} className="rounded-3xl border border-slate-700 bg-slate-950/60 p-4 shadow-xl sm:p-5">
-              {/* Cabecera de fila */}
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-black">Garantía #{index + 1}</h2>
-                  <p className="text-sm text-slate-400">
-                    Estado inicial: <span className="text-slate-300">{options?.estado_default || '1 - INGRESO'}</span>
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => removeRow(row.localId)}
-                  disabled={rows.length === 1}
-                  className="flex shrink-0 items-center gap-2 rounded-xl border border-red-500/30 px-3 py-2 text-sm font-semibold text-red-200 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <Trash2 size={16} /> <span className="hidden sm:inline">Quitar</span>
-                </button>
-              </div>
-
-              <div className="space-y-4">
+            <ErpCard
+              key={row.localId}
+              title={<span className="inline-flex items-center gap-2"><Package size={14} /> Garantía #{index + 1}</span>}
+              subtitle={<>Estado inicial: <span className="text-[color:var(--text)]">{options?.estado_default || '1 - INGRESO'}</span></>}
+              actions={
+                <ErpButton variant="danger" size="sm" leftIcon={<Trash2 size={13} />} onClick={() => removeRow(row.localId)} disabled={rows.length === 1}>
+                  Quitar
+                </ErpButton>
+              }
+            >
+              <div className="erp-stack-4">
                 {/* ── TIPO DE INGRESO ───────────────────────────────────────── */}
                 {isSucursalFisica ? (
-                  /* Usuario de sucursal física: tipo fijo "cliente_sucursal" */
-                  <div className="flex items-center gap-3 rounded-2xl border border-blue-500/30 bg-blue-500/5 px-4 py-3 text-sm">
-                    <span className="font-semibold text-blue-200">Tipo de ingreso:</span>
-                    <span className="rounded-full border border-blue-400/40 bg-blue-500/20 px-3 py-1 text-xs font-bold text-blue-100">
-                      Cliente en sucursal
-                    </span>
-                  </div>
+                  <ErpNotice tone="info">
+                    <span className="inline-flex items-center gap-2">Tipo de ingreso: <ErpBadge tone="info">Cliente en sucursal</ErpBadge></span>
+                  </ErpNotice>
                 ) : isDepositoOperativo ? (
-                  /* Usuario operativo de depósito: tipo fijo "cliente_deposito". */
-                  <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 text-sm">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <span className="font-semibold text-emerald-200">Tipo de ingreso:</span>
-                      <span className="rounded-full border border-emerald-400/40 bg-emerald-500/20 px-3 py-1 text-xs font-bold text-emerald-100">
-                        Cliente en depósito
-                      </span>
-                    </div>
-                    <p className="mt-2 text-xs text-emerald-100/75">
-                      Para personal de depósito este ingreso es automático. Falla al recibir mercadería, stock interno y otros tipos quedan para gestores/administradores.
-                    </p>
-                  </div>
+                  <ErpNotice tone="success" title={<span className="inline-flex items-center gap-2">Tipo de ingreso: <ErpBadge tone="success">Cliente en depósito</ErpBadge></span>}>
+                    Para personal de depósito este ingreso es automático. Falla al recibir mercadería, stock interno y otros tipos quedan para gestores/administradores.
+                  </ErpNotice>
                 ) : (
-                  /* Gestor/Admin: todos los tipos */
-                  <div>
-                    <label className="mb-1 block text-sm font-bold text-white">
-                      Tipo de ingreso <span className="text-red-400">*</span>
-                    </label>
-                    <p className="mb-2 text-xs text-slate-400">
-                      ¿Cómo llegó el producto a la garantía?
-                    </p>
+                  <ErpField label="Tipo de ingreso" required hint="¿Cómo llegó el producto a la garantía?">
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                       {tiposIngreso.map((opt) => (
                         <button
@@ -667,398 +580,228 @@ export function WarrantyCreatePage() {
                             sucursal_responsable: '',
                             sucursal_responsable_id: '',
                           })}
-                          className={`rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition-all ${
-                            row.tipo_ingreso === opt.value
-                              ? 'border-blue-400 bg-blue-500/20 text-white ring-2 ring-blue-400/40'
-                              : 'border-slate-700 bg-slate-900/60 text-slate-300 hover:border-slate-500 hover:bg-slate-900'
-                          }`}
+                          className={`erp-btn ${row.tipo_ingreso === opt.value ? 'erp-btn-primary' : 'erp-btn-secondary'}`}
+                          style={{ justifyContent: 'flex-start', height: 'auto', padding: '10px 12px' }}
                         >
                           {opt.label}
                         </button>
                       ))}
                     </div>
-                  </div>
+                  </ErpField>
                 )}
 
                 {/* ── DEPÓSITO ASIGNADO (usuario de depósito) ────────────────── */}
                 {isDeposito && userBranchName && (
-                  <div className="flex items-center gap-3 rounded-2xl border border-slate-600/40 bg-slate-900/40 px-4 py-3 text-sm">
-                    <span className="font-semibold text-slate-300">Depósito de carga:</span>
-                    <span className="rounded-full border border-slate-500/40 bg-slate-800 px-3 py-1 text-xs font-bold text-slate-100">
-                      {userBranchName}
-                    </span>
-                    <span className="ml-auto text-xs text-slate-500">(tu depósito asignado)</span>
+                  <div className="erp-info-row" style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span className="erp-info-label">Depósito de carga (asignado)</span>
+                    <ErpBadge tone="neutral" withDot={false}>{userBranchName}</ErpBadge>
                   </div>
                 )}
 
                 {/* ── SUCURSAL DE ORIGEN (cliente_sucursal) ──────────────────── */}
                 {isSucursal && (
-                  <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-4">
-                    <label className="mb-1 block text-sm font-bold text-blue-200">
-                      Sucursal de origen <span className="text-red-400">*</span>
-                    </label>
+                  <ErpField label="Sucursal de origen" required>
                     {sucursalLocked ? (
-                      <div className="flex items-center gap-2 rounded-xl border border-blue-400/30 bg-slate-900 px-4 py-3">
-                        <span className="font-semibold text-white">{userSucursal}</span>
-                        <span className="ml-auto text-xs text-blue-300/70">(tu sucursal)</span>
+                      <div className="erp-info-row" style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderColor: 'var(--primary)', background: 'var(--primary-soft)' }}>
+                        <span className="erp-info-value">{userSucursal}</span>
+                        <span className="text-[11px] text-[color:var(--text-3)]">(tu sucursal)</span>
                       </div>
                     ) : branchesParaSucursal.length > 0 ? (
-                      /* Sucursales reales del sistema */
-                      <select
-                        value={row.sucursal}
-                        onChange={(event) => updateRow(row.localId, { sucursal: event.target.value })}
-                        className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                      >
+                      <ErpSelect value={row.sucursal} onChange={(e) => updateRow(row.localId, { sucursal: e.target.value })}>
                         <option value="">Seleccioná sucursal…</option>
                         {branchesParaSucursal.map((b) => (
                           <option key={b.id} value={b.name}>{b.name}{b.company_name ? ` · ${b.company_name}` : ''}</option>
                         ))}
-                      </select>
+                      </ErpSelect>
                     ) : (
-                      /* Fallback: lista de config (sin branches configuradas aún) */
-                      <select
-                        value={row.sucursal}
-                        onChange={(event) => updateRow(row.localId, { sucursal: event.target.value })}
-                        className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                      >
+                      <ErpSelect value={row.sucursal} onChange={(e) => updateRow(row.localId, { sucursal: e.target.value })}>
                         <option value="">Seleccioná sucursal…</option>
-                        {(options?.sucursales || []).map((item) => (
-                          <option key={item} value={item}>{item}</option>
-                        ))}
-                      </select>
+                        {(options?.sucursales || []).map((item) => <option key={item} value={item}>{item}</option>)}
+                      </ErpSelect>
                     )}
-                  </div>
+                  </ErpField>
                 )}
 
-                {/* ── SUCURSAL RESPONSABLE (depósito/gestor con tipo depósito) ── */}
+                {/* ── SUCURSAL RESPONSABLE ──────────────────────────────────── */}
                 {showSucursalResponsable && (
-                  <div className={`rounded-2xl border p-4 ${
-                    sucursalResponsableRequired
-                      ? 'border-amber-500/30 bg-amber-500/5'
-                      : 'border-slate-700/60 bg-slate-900/30'
-                  }`}>
-                    <label className="mb-1 block text-sm font-bold text-amber-200">
-                      Sucursal responsable
-                      {sucursalResponsableRequired && <span className="text-red-400"> *</span>}
-                      {!sucursalResponsableRequired && <span className="ml-1 text-xs font-normal text-slate-400">(opcional)</span>}
-                    </label>
-                    <p className="mb-2 text-xs text-slate-400">
-                      {isDepositoTipo
-                        ? '¿En qué sucursal realizó la compra el cliente?'
-                        : '¿Qué sucursal es responsable comercialmente de esta garantía?'}
-                    </p>
+                  <ErpField
+                    label="Sucursal responsable"
+                    required={sucursalResponsableRequired}
+                    hint={isDepositoTipo ? '¿En qué sucursal compró el cliente?' : '¿Qué sucursal es responsable comercialmente? (opcional)'}
+                  >
                     {branchesParaResponsable.length > 0 ? (
-                      /* Usar branches reales del sistema (con IDs) */
-                      <select
+                      <ErpSelect
                         value={row.sucursal_responsable_id}
-                        onChange={(event) => {
-                          const selectedId = event.target.value;
+                        onChange={(e) => {
+                          const selectedId = e.target.value;
                           const branch = branchesParaResponsable.find((b) => b.id === selectedId);
-                          updateRow(row.localId, {
-                            sucursal_responsable_id: selectedId,
-                            sucursal_responsable: branch?.name || '',
-                          });
+                          updateRow(row.localId, { sucursal_responsable_id: selectedId, sucursal_responsable: branch?.name || '' });
                         }}
-                        className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
                       >
                         <option value="">{sucursalResponsableRequired ? 'Seleccioná sucursal…' : 'Ninguna / no aplica'}</option>
-                        {branchesParaResponsable.map((b) => (
-                          <option key={b.id} value={b.id}>{b.name}</option>
-                        ))}
-                      </select>
+                        {branchesParaResponsable.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                      </ErpSelect>
                     ) : (
-                      /* Fallback: lista de texto de config (sin IDs reales) */
-                      <select
+                      <ErpSelect
                         value={row.sucursal_responsable}
-                        onChange={(event) => updateRow(row.localId, {
-                          sucursal_responsable: event.target.value,
-                          sucursal_responsable_id: '',
-                        })}
-                        className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
+                        onChange={(e) => updateRow(row.localId, { sucursal_responsable: e.target.value, sucursal_responsable_id: '' })}
                       >
                         <option value="">{sucursalResponsableRequired ? 'Seleccioná sucursal…' : 'Ninguna / no aplica'}</option>
-                        {(options?.sucursales || []).map((suc) => (
-                          <option key={suc} value={suc}>{suc}</option>
-                        ))}
-                      </select>
+                        {(options?.sucursales || []).map((suc) => <option key={suc} value={suc}>{suc}</option>)}
+                      </ErpSelect>
                     )}
-                  </div>
+                  </ErpField>
                 )}
 
                 {/* ── PRODUCTO + CAMPOS TÉCNICOS ──────────────────────────────── */}
-                <div className="grid grid-cols-12 gap-4">
+                <div className="erp-form-grid erp-form-grid-3">
                   {/* Producto con búsqueda */}
-                  <label className="relative col-span-12 lg:col-span-6">
-                    <span className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-300">
-                      <Search size={15} /> Producto <span className="text-red-400">*</span>
-                    </span>
-                    <input
+                  <div className="erp-field erp-field-wide" style={{ position: 'relative' }}>
+                    <label className="erp-field-label">
+                      <span className="inline-flex items-center gap-1.5"><Search size={13} /> Producto <span className="erp-field-required">*</span></span>
+                    </label>
+                    <ErpInput
                       value={row.productQuery || row.producto}
-                      onChange={(event) => onProductTextChange(row, event.target.value)}
+                      onChange={(e) => onProductTextChange(row, e.target.value)}
                       placeholder="Escribí producto, descripción, SKU o marca"
                       autoComplete="off"
-                      className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
                     />
                     {(row.searching || row.suggestions.length > 0) && (
-                      <div className="absolute z-20 mt-2 max-h-72 w-full overflow-auto rounded-2xl border border-slate-700 bg-slate-950 shadow-2xl">
-                        {row.searching && (
-                          <div className="px-4 py-3 text-sm text-slate-400">Buscando…</div>
-                        )}
+                      <div className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded-md border border-[color:var(--border-strong)] bg-[color:var(--surface-elevated)] shadow-[var(--sh-pop)]" style={{ top: '100%' }}>
+                        {row.searching && <div className="px-3 py-2 text-[12.5px] text-[color:var(--text-2)]">Buscando…</div>}
                         {row.suggestions.map((product) => (
                           <button
                             key={`${product.sku}-${product.producto}`}
                             type="button"
                             onClick={() => chooseProduct(row, product)}
-                            className="block w-full border-b border-slate-800 px-4 py-3 text-left active:bg-slate-900 sm:hover:bg-slate-900"
+                            className="block w-full border-b border-[color:var(--divider)] px-3 py-2.5 text-left last:border-b-0 hover:bg-[color:var(--surface-hover)]"
                           >
-                            <div className="font-semibold text-slate-100">
-                              {product.producto || product.label}
-                            </div>
-                            <div className="text-xs text-slate-400">
-                              SKU: {product.sku || '-'} · {product.marca || 'Sin marca'} · {product.tipo || 'Sin tipo'}
-                            </div>
+                            <div className="text-[13px] font-medium text-[color:var(--text)]">{product.producto || product.label}</div>
+                            <div className="text-[11px] text-[color:var(--text-3)]">SKU: {product.sku || '-'} · {product.marca || 'Sin marca'} · {product.tipo || 'Sin tipo'}</div>
                             {(product.pvp_texto || product.provider_name) && (
-                              <div className="mt-1 text-xs text-blue-200">
-                                {product.pvp_texto ? `PVP ${product.pvp_texto}` : ''}
-                                {product.provider_name ? ` · Proveedor: ${product.provider_name}` : ''}
+                              <div className="mt-0.5 text-[11px] text-[color:var(--info-soft-text)]">
+                                {product.pvp_texto ? `PVP ${product.pvp_texto}` : ''}{product.provider_name ? ` · Prov: ${product.provider_name}` : ''}
                               </div>
                             )}
                           </button>
                         ))}
                       </div>
                     )}
-                  </label>
+                  </div>
 
-                  <label className="col-span-6 sm:col-span-4 lg:col-span-2">
-                    <span className="mb-2 block text-sm font-semibold text-slate-300">
-                      Fecha ingreso <span className="text-red-400">*</span>
-                    </span>
-                    <input
-                      type="date"
-                      value={row.fecha_ingreso || todayInputDate()}
-                      onChange={(event) => updateRow(row.localId, { fecha_ingreso: event.target.value })}
-                      className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                    />
-                  </label>
-
-                  <label className="col-span-6 sm:col-span-4 lg:col-span-2">
-                    <span className="mb-2 block text-sm font-semibold text-slate-300">SKU</span>
-                    <input
-                      value={row.sku || ''}
-                      onChange={(event) => updateRow(row.localId, { sku: event.target.value })}
-                      className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                    />
-                  </label>
-
-                  <label className="col-span-6 sm:col-span-4 lg:col-span-2">
-                    <span className="mb-2 block text-sm font-semibold text-slate-300">N° Serie</span>
-                    <input
-                      value={row.serie || ''}
-                      onChange={(event) => updateRow(row.localId, { serie: event.target.value })}
-                      placeholder="N° de serie"
-                      className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                    />
-                  </label>
+                  <ErpField label="Fecha ingreso" required>
+                    <ErpInput type="date" value={row.fecha_ingreso || todayInputDate()} onChange={(e) => updateRow(row.localId, { fecha_ingreso: e.target.value })} />
+                  </ErpField>
+                  <ErpField label="SKU">
+                    <ErpInput value={row.sku || ''} onChange={(e) => updateRow(row.localId, { sku: e.target.value })} />
+                  </ErpField>
+                  <ErpField label="N° Serie">
+                    <ErpInput value={row.serie || ''} onChange={(e) => updateRow(row.localId, { serie: e.target.value })} placeholder="N° de serie" />
+                  </ErpField>
 
                   {/* Depósito destino/carga */}
-                  <label className="col-span-12 sm:col-span-4 lg:col-span-2">
-                    <span className="mb-2 block text-sm font-semibold text-slate-300">
-                      {row.tipo_ingreso === 'cliente_sucursal' ? 'Destino obligatorio' : (isDepositoOperativo ? 'Depósito asignado' : 'Depósito de ingreso')} <span className="text-red-400">*</span>
-                    </span>
+                  <ErpField label={`${row.tipo_ingreso === 'cliente_sucursal' ? 'Destino obligatorio' : (isDepositoOperativo ? 'Depósito asignado' : 'Depósito de ingreso')}`} required>
                     {row.tipo_ingreso === 'cliente_sucursal' ? (
-                      <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-base font-semibold text-emerald-100">
-                        {centralDepositName}
-                        <div className="mt-1 text-xs font-normal text-emerald-200/80">Todo ingreso desde sucursal va a Chiclana.</div>
+                      <div className="erp-info-row" style={{ borderColor: 'rgba(34,197,94,0.32)', background: 'var(--success-soft)' }}>
+                        <span className="erp-info-value">{centralDepositName}</span>
+                        <span className="text-[10.5px] text-[color:var(--text-3)]">Todo ingreso desde sucursal va a Chiclana.</span>
                       </div>
                     ) : isDeposito && userBranchName ? (
-                      <div className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base font-semibold text-white">
-                        {userBranchName}
-                      </div>
+                      <div className="erp-info-row"><span className="erp-info-value">{userBranchName}</span></div>
                     ) : branchesParaDeposito.length > 0 ? (
-                      /* Depósitos reales del sistema */
-                      <select
-                        value={row.deposito}
-                        onChange={(event) => updateRow(row.localId, { deposito: event.target.value })}
-                        className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                      >
+                      <ErpSelect value={row.deposito} onChange={(e) => updateRow(row.localId, { deposito: e.target.value })}>
                         <option value="">Seleccioná…</option>
-                        {branchesParaDeposito.map((b) => (
-                          <option key={b.id} value={b.name}>{b.name}{b.company_name ? ` · ${b.company_name}` : ''}</option>
-                        ))}
-                      </select>
+                        {branchesParaDeposito.map((b) => <option key={b.id} value={b.name}>{b.name}{b.company_name ? ` · ${b.company_name}` : ''}</option>)}
+                      </ErpSelect>
                     ) : (
-                      /* Fallback: lista de config */
-                      <select
-                        value={row.deposito}
-                        onChange={(event) => updateRow(row.localId, { deposito: event.target.value })}
-                        className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                      >
+                      <ErpSelect value={row.deposito} onChange={(e) => updateRow(row.localId, { deposito: e.target.value })}>
                         <option value="">Seleccioná…</option>
-                        {(options?.depositos || []).map((item) => (
-                          <option key={item} value={item}>{item}</option>
-                        ))}
-                      </select>
+                        {(options?.depositos || []).map((item) => <option key={item} value={item}>{item}</option>)}
+                      </ErpSelect>
                     )}
-                  </label>
+                  </ErpField>
+
+                  {/* Proveedor */}
+                  <ErpField label="Proveedor / fabricante" hint="Se autocompleta al elegir producto (editable)">
+                    <ErpInput value={row.proveedor || ''} onChange={(e) => updateRow(row.localId, { proveedor: e.target.value })} placeholder="Proveedor" />
+                  </ErpField>
 
                   {/* Falla */}
-                  <label className="col-span-12 lg:col-span-6">
-                    <span className="mb-2 block text-sm font-semibold text-slate-300">
-                      Falla / problema <span className="text-red-400">*</span>
-                    </span>
-                    <textarea
-                      value={row.falla}
-                      onChange={(event) => updateRow(row.localId, { falla: event.target.value })}
-                      placeholder="Ej: no enciende, hace ruido, pantalla rota…"
-                      rows={3}
-                      className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                    />
-                  </label>
+                  <ErpField label="Falla / problema" required wide>
+                    <ErpTextarea value={row.falla} onChange={(e) => updateRow(row.localId, { falla: e.target.value })} placeholder="Ej: no enciende, hace ruido, pantalla rota…" rows={3} />
+                  </ErpField>
 
                   {/* Observaciones */}
-                  <label className="col-span-12 lg:col-span-6">
-                    <span className="mb-2 block text-sm font-semibold text-slate-300">Observaciones</span>
-                    <textarea
-                      value={row.observaciones || ''}
-                      onChange={(event) => updateRow(row.localId, { observaciones: event.target.value })}
-                      placeholder="Opcional — accesorios entregados, condición del equipo, etc."
-                      rows={3}
-                      className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                    />
-                  </label>
-
-                  {/* Proveedor sugerido */}
-                  <label className="col-span-12 sm:col-span-6">
-                    <span className="mb-2 block text-sm font-semibold text-slate-300">
-                      Proveedor / fabricante
-                    </span>
-                    <input
-                      value={row.proveedor || ''}
-                      onChange={(event) => updateRow(row.localId, { proveedor: event.target.value })}
-                      placeholder="Se autocompleta al elegir producto (editable)"
-                      className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                    />
-                  </label>
+                  <ErpField label="Observaciones" wide>
+                    <ErpTextarea value={row.observaciones || ''} onChange={(e) => updateRow(row.localId, { observaciones: e.target.value })} placeholder="Opcional — accesorios entregados, condición del equipo, etc." rows={3} />
+                  </ErpField>
                 </div>
 
                 {/* ── DATOS DEL CLIENTE ───────────────────────────────────── */}
                 {isClientIngreso(row.tipo_ingreso) && groupUnderOneId ? (
-                  <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-100">
-                    Los datos del cliente se cargan una sola vez arriba porque activaste “Todo lo cargado pertenece al mismo caso”.
-                  </div>
+                  <ErpNotice tone="warning">
+                    Los datos del cliente se cargan una sola vez arriba porque activaste "Todo lo cargado pertenece al mismo caso".
+                  </ErpNotice>
                 ) : (
-                  <div className={`rounded-2xl border ${isClientIngreso(row.tipo_ingreso) ? 'border-amber-500/40 bg-amber-500/5' : 'border-slate-700/60 bg-slate-900/40'}`}>
+                  <div className="rounded-md border border-[color:var(--border)] bg-[color:var(--surface-2)]">
                     <button
                       type="button"
                       onClick={() => updateRow(row.localId, { showClientData: !row.showClientData })}
-                      className="flex w-full items-center justify-between px-4 py-3 text-sm font-semibold text-slate-300 hover:text-white"
+                      className="flex w-full items-center justify-between px-3 py-2.5 text-[13px] font-semibold text-[color:var(--text-2)]"
                     >
                       <span className="flex items-center gap-2">
-                        <User size={15} />
-                        Datos del cliente
-                        {isClientIngreso(row.tipo_ingreso) ? (
-                          <span className="text-xs font-bold text-amber-200">(obligatorio)</span>
-                        ) : (
-                          <span className="text-xs font-normal text-slate-500">(opcional)</span>
-                        )}
+                        <User size={14} /> Datos del cliente
+                        {isClientIngreso(row.tipo_ingreso)
+                          ? <ErpBadge tone="warning" withDot={false}>obligatorio</ErpBadge>
+                          : <span className="text-[11px] font-normal text-[color:var(--text-3)]">(opcional)</span>}
                       </span>
                       {(row.showClientData || isClientIngreso(row.tipo_ingreso)) ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                     </button>
-
                     {(row.showClientData || isClientIngreso(row.tipo_ingreso)) && (
-                      <div className="grid grid-cols-12 gap-4 border-t border-slate-700/60 p-4">
-                        <label className="col-span-12 sm:col-span-6">
-                          <span className="mb-2 block text-sm font-semibold text-slate-300">Nombre del cliente {isClientIngreso(row.tipo_ingreso) && <span className="text-red-400">*</span>}</span>
-                          <input
-                            value={row.cliente_nombre || ''}
-                            onChange={(event) => updateRow(row.localId, { cliente_nombre: event.target.value })}
-                            placeholder="Apellido y nombre"
-                            className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                          />
-                        </label>
-
-                        <label className="col-span-12 sm:col-span-6">
-                          <span className="mb-2 block text-sm font-semibold text-slate-300">Teléfono {isClientIngreso(row.tipo_ingreso) && <span className="text-red-400">*</span>}</span>
-                          <input
-                            value={row.cliente_telefono || ''}
-                            onChange={(event) => updateRow(row.localId, { cliente_telefono: event.target.value })}
-                            placeholder="Número de contacto"
-                            className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                          />
-                        </label>
-
-                        <label className="col-span-12 sm:col-span-6">
-                          <span className="mb-2 block text-sm font-semibold text-slate-300">Correo electrónico <span className="text-xs font-normal text-slate-500">(opcional)</span></span>
-                          <input
-                            type="email"
-                            value={row.cliente_email || ''}
-                            onChange={(event) => updateRow(row.localId, { cliente_email: event.target.value })}
-                            placeholder="cliente@email.com"
-                            className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                          />
-                        </label>
-
-                        <label className="col-span-12 sm:col-span-3">
-                          <span className="mb-2 block text-sm font-semibold text-slate-300">N° factura / ticket {isClientIngreso(row.tipo_ingreso) && <span className="text-red-400">*</span>}</span>
-                          <input
-                            value={row.numero_factura || ''}
-                            onChange={(event) => updateRow(row.localId, { numero_factura: event.target.value })}
-                            placeholder="Ej: 0001-00012345"
-                            className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                          />
-                        </label>
-
-                        <label className="col-span-12 sm:col-span-3">
-                          <span className="mb-2 block text-sm font-semibold text-slate-300">Fecha de compra {isClientIngreso(row.tipo_ingreso) && <span className="text-red-400">*</span>}</span>
-                          <input
-                            type="date"
-                            value={row.fecha_compra || ''}
-                            onChange={(event) => updateRow(row.localId, { fecha_compra: event.target.value })}
-                            className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none focus:border-blue-400"
-                          />
-                        </label>
+                      <div className="erp-form-grid erp-form-grid-2 border-t border-[color:var(--divider)] p-3">
+                        <ErpField label={<>Nombre del cliente {isClientIngreso(row.tipo_ingreso) && <span className="erp-field-required">*</span>}</>}>
+                          <ErpInput value={row.cliente_nombre || ''} onChange={(e) => updateRow(row.localId, { cliente_nombre: e.target.value })} placeholder="Apellido y nombre" />
+                        </ErpField>
+                        <ErpField label={<>Teléfono {isClientIngreso(row.tipo_ingreso) && <span className="erp-field-required">*</span>}</>}>
+                          <ErpInput value={row.cliente_telefono || ''} onChange={(e) => updateRow(row.localId, { cliente_telefono: e.target.value })} placeholder="Número de contacto" />
+                        </ErpField>
+                        <ErpField label="Correo electrónico" hint="Opcional" wide>
+                          <ErpInput type="email" value={row.cliente_email || ''} onChange={(e) => updateRow(row.localId, { cliente_email: e.target.value })} placeholder="cliente@email.com" />
+                        </ErpField>
+                        <ErpField label={<>N° factura / ticket {isClientIngreso(row.tipo_ingreso) && <span className="erp-field-required">*</span>}</>}>
+                          <ErpInput value={row.numero_factura || ''} onChange={(e) => updateRow(row.localId, { numero_factura: e.target.value })} placeholder="Ej: 0001-00012345" />
+                        </ErpField>
+                        <ErpField label={<>Fecha de compra {isClientIngreso(row.tipo_ingreso) && <span className="erp-field-required">*</span>}</>}>
+                          <ErpInput type="date" value={row.fecha_compra || ''} onChange={(e) => updateRow(row.localId, { fecha_compra: e.target.value })} />
+                        </ErpField>
                       </div>
                     )}
                   </div>
                 )}
               </div>
-            </div>
+            </ErpCard>
           );
         })}
 
         {/* Botones — desktop */}
-        <div className="hidden flex-wrap gap-3 md:flex">
-          <button
-            type="button"
-            onClick={addRow}
-            className="flex items-center gap-2 rounded-xl border border-slate-600 px-4 py-3 font-bold text-slate-100 hover:bg-slate-900"
-          >
-            <Plus size={18} /> Agregar otra garantía
-          </button>
-          <button
-            disabled={saving}
-            className="flex items-center gap-2 rounded-xl bg-blue-500 px-5 py-3 font-bold text-white shadow-lg hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Save size={18} /> {saving ? 'Guardando…' : `Guardar ${validRows.length || 1} garantía(s)`}
-          </button>
+        <div className="hidden flex-wrap gap-2 md:flex">
+          <ErpButton type="button" variant="secondary" leftIcon={<Plus size={14} />} onClick={addRow}>
+            Agregar otra garantía
+          </ErpButton>
+          <ErpButton type="submit" variant="primary" loading={saving} leftIcon={<Save size={14} />}>
+            {saving ? 'Guardando…' : `Guardar ${validRows.length || 1} garantía(s)`}
+          </ErpButton>
         </div>
 
-        {/* Botones — mobile fijo al fondo */}
-        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-800 bg-slate-950/95 p-3 backdrop-blur md:hidden">
-          <div className="mx-auto flex max-w-7xl gap-2">
-            <button
-              type="button"
-              onClick={addRow}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-slate-600 px-3 py-3 text-sm font-bold text-slate-100 active:bg-slate-900"
-            >
-              <Plus size={18} /> Agregar
-            </button>
-            <button
-              disabled={saving}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-blue-500 px-3 py-3 text-sm font-bold text-white shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Save size={18} /> {saving ? 'Guardando…' : 'Guardar'}
-            </button>
+        {/* Botones — mobile fijo al fondo (oculta el bottom nav vía :has()) */}
+        <div data-mobile-form-footer className="erp-mobile-form-footer fixed inset-x-0 bottom-0 z-[46] border-t border-[color:var(--border)] bg-[color:var(--surface)] p-3 md:hidden">
+          <div className="flex gap-2">
+            <ErpButton type="button" variant="secondary" fullWidth leftIcon={<Plus size={16} />} onClick={addRow}>
+              Agregar
+            </ErpButton>
+            <ErpButton type="submit" variant="primary" fullWidth loading={saving} leftIcon={<Save size={16} />}>
+              {saving ? 'Guardando…' : 'Guardar'}
+            </ErpButton>
           </div>
         </div>
       </form>

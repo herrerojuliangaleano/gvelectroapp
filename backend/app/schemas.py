@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Literal
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 FieldType = Literal["text", "number", "date", "textarea", "checkbox", "select", "file", "multi_file"]
 
@@ -20,6 +20,14 @@ class UserBranchAssignment(BaseModel):
 
 
 
+class EmployeeLinkedUser(BaseModel):
+    username: str = ""
+    display_name: str = ""
+    role: str = ""
+    roles: list[str] = []
+    is_active: bool = True
+
+
 class EmployeeInfo(BaseModel):
     id: str = ""
     username: str = ""
@@ -30,16 +38,102 @@ class EmployeeInfo(BaseModel):
     phone: str = ""
     personal_email: str = ""
     position: str = ""
+    department: str = ""
+    address: str = ""
+    birthdate: str = ""
+    gender: str = ""
+    civil_status: str = ""
+    contract_type: str = ""
+    hire_date: str = ""
+    manager_employee_id: str = ""
     company_id: str = ""
     company_name: str = ""
     branch_id: str = ""
     branch_name: str = ""
     branch_type: str = ""
+    work_branch_id: str = ""
+    work_branch_name: str = ""
     photo_url: str = ""
     photo_status: str = "sin_foto"
+    photo_uploaded_at: str = ""
     status: str = "activo"
+    has_user: bool = False
+    user: EmployeeLinkedUser | None = None
     created_at: str = ""
     updated_at: str = ""
+
+
+class EmployeeListResponse(BaseModel):
+    items: list[EmployeeInfo] = []
+    total: int = 0
+
+
+class EmployeeCreateRequest(BaseModel):
+    dni: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    display_name: str | None = None
+    phone: str | None = None
+    personal_email: str | None = None
+    position: str | None = None
+    department: str | None = None
+    address: str | None = None
+    birthdate: str | None = None
+    gender: str | None = None
+    civil_status: str | None = None
+    contract_type: str | None = None
+    hire_date: str | None = None
+    manager_employee_id: str | None = None
+    company_id: str | None = None
+    branch_id: str | None = None
+    work_branch_id: str | None = None
+    status: str | None = None
+
+
+class EmployeeUpdateRequest(EmployeeCreateRequest):
+    pass
+
+
+class EmployeeLinkUserRequest(BaseModel):
+    username: str = Field(min_length=1)
+
+
+class EmployeeStatusChangeRequest(BaseModel):
+    status: str = Field(min_length=1)  # alta | licencia | baja
+    motivo: str | None = None
+    categoria: str | None = None
+    fecha_desde: str | None = None
+    fecha_hasta: str | None = None
+    observaciones: str | None = None
+
+
+class EmployeeStatusHistoryItem(BaseModel):
+    id: str
+    status: str = ""
+    previous_status: str = ""
+    motivo: str = ""
+    categoria: str = ""
+    fecha_desde: str = ""
+    fecha_hasta: str = ""
+    observaciones: str = ""
+    actor_username: str = ""
+    actor_name: str = ""
+    created_at: str = ""
+
+
+class EmployeeStatusHistoryResponse(BaseModel):
+    items: list[EmployeeStatusHistoryItem] = []
+
+
+class UserLinkCandidate(BaseModel):
+    username: str
+    display_name: str = ""
+    role: str = ""
+    is_active: bool = True
+
+
+class UserLinkCandidatesResponse(BaseModel):
+    items: list[UserLinkCandidate] = []
 
 
 class LoginRequest(BaseModel):

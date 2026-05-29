@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, ArrowRight, CheckCircle2, Clock,
+  AlertTriangle, ArrowRight, CheckCircle2, Clock, Eye,
   FileText, MapPin, Package, Plus, Printer, RefreshCw, Send, Truck, X,
 } from 'lucide-react';
 import {
@@ -20,8 +19,29 @@ import type {
   WarrantyRemitoInfo,
   WarrantySummary,
 } from '../types';
-import { computeLogisticsAlerts } from '../warrantyFlow';
+import { computeLogisticsAlerts, getWarrantyStatusMeta } from '../warrantyFlow';
 import { isWarrantyPrivilegedUser } from '../warrantyAccess';
+import { canCrossSelectBranches } from '../branchAccess';
+import { WarrantyQuickCreateModal } from '../components/WarrantyQuickCreateModal';
+import { WarrantyDetailDrawer } from '../components/WarrantyDetailDrawer';
+import { useMobileFab } from '../components/MobileFab';
+import {
+  ErpBadge,
+  ErpButton,
+  ErpCard,
+  ErpDataTable,
+  ErpField,
+  ErpKpiCard,
+  ErpNotice,
+  ErpPageHeader,
+  ErpSelect,
+  erpBtnGhost,
+  erpBtnPrimary,
+  erpBtnSecondary,
+  type ErpBadgeTone,
+  type ErpColumn,
+  type ErpRowAction,
+} from '../components/ProUI';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -37,6 +57,17 @@ function centralDepositName(options: WarrantyOptions | null): string {
   );
   if (byChiclana?.name) return byChiclana.name;
   return (options?.depositos ?? []).find((d) => d.toLowerCase().includes('chiclana')) ?? 'Deposito Chiclana';
+}
+
+function flowToneToBadgeTone(tone?: string): ErpBadgeTone {
+  switch (tone) {
+    case 'success': case 'green': return 'success';
+    case 'warning': case 'amber': case 'yellow': return 'warning';
+    case 'danger': case 'red': return 'danger';
+    case 'info': case 'blue': case 'cyan': return 'info';
+    case 'violet': case 'purple': return 'violet';
+    default: return 'neutral';
+  }
 }
 
 async function downloadPdf(code: string) {
@@ -71,120 +102,21 @@ async function printPdf(code: string) {
   }
 }
 
-// ─── sub-components ────────────────────────────────────────────────────────────
-
-
-function SucursalCard({ item, onOpenGenerate }: { item: WarrantySummary; onOpenGenerate: () => void }) {
-  const alerts = computeLogisticsAlerts(item).filter((a) => a.targetRole === 'encargado' || a.targetRole === 'all');
-  const isUrgent = item.estado_retiro_proveedor === 'retiro_solicitado';
-  const canGenerateRemito = can('warranties.remitos.generate') || can('warranties.remitos.dispatch');
-
-  return (
-    <div className={`rounded-2xl border p-4 ${
-      isUrgent
-        ? 'border-red-500/40 bg-red-500/5'
-        : item.transit_status === 'en_transito'
-        ? 'border-amber-500/25 bg-amber-500/5'
-        : 'border-slate-700 bg-slate-950/60'
-    }`}>
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <Link
-            to={`/warranties/${encodeURIComponent(item.id_garantia)}`}
-            className="font-mono text-lg font-black text-white hover:text-blue-200"
-          >
-            {item.id_garantia}
-          </Link>
-          {isUrgent && (
-            <span className="rounded-full border border-red-500/50 bg-red-500/10 px-2 py-0.5 text-xs font-black text-red-200">
-              Retiro solicitado
-            </span>
-          )}
-          {item.transit_status === 'en_transito' && (
-            <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-bold text-amber-200">
-              <Truck size={11} className="mr-1 inline" />En transito
-            </span>
-          )}
-          {item.transit_status === 'en_deposito' && (
-            <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-xs font-bold text-emerald-200">
-              <CheckCircle2 size={11} className="mr-1 inline" />Llego a deposito
-            </span>
-          )}
-        </div>
-        <span className="rounded-full border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs font-bold text-slate-400">
-          <Clock size={11} className="mr-1 inline" />{item.dias_pendiente ?? 0}d
-        </span>
-      </div>
-
-      <div className="mt-2 font-semibold text-slate-100">{item.producto_principal || 'Sin producto'}</div>
-      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-400">
-        {item.marca && <span><span className="text-slate-500">Marca:</span> {item.marca}</span>}
-        {item.sku && <span><span className="text-slate-500">SKU:</span> {item.sku}</span>}
-        {item.serie && <span><span className="text-slate-500">Serie:</span> {item.serie}</span>}
-      </div>
-
-      <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-400">
-        <MapPin size={12} className="shrink-0 text-slate-500" />
-        <span>{item.ubicacion_actual_label || item.ubicacion_actual || 'En sucursal'}</span>
-      </div>
-
-      {(can('warranties.remitos.view') || can('warranties.remitos.generate') || can('warranties.remitos.dispatch')) && item.remito_interno && (
-        <div className="mt-2 rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-1.5 font-mono text-xs text-slate-300">
-          REM: {item.remito_interno}
-        </div>
-      )}
-
-      {alerts.length > 0 && (
-        <div className="mt-3 space-y-1.5">
-          {alerts.map((alert, idx) => (
-            <div
-              key={idx}
-              className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-xs font-bold ${
-                alert.priority === 'high' ? 'border-red-500/50 bg-red-500/10 text-red-100' : 'border-amber-500/40 bg-amber-500/10 text-amber-100'
-              }`}
-            >
-              <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-              <div>
-                <div>{alert.message}</div>
-                <div className="mt-0.5 font-normal opacity-75">→ {alert.action}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        <Link
-          to={`/warranties/${encodeURIComponent(item.id_garantia)}`}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-bold text-slate-300 hover:bg-slate-800"
-        >
-          <ArrowRight size={13} /> Ver detalle
-        </Link>
-        {item.transit_status !== 'en_transito' && item.transit_status !== 'en_deposito' && canGenerateRemito && (
-          <button
-            onClick={onOpenGenerate}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 px-3 py-1.5 text-xs font-bold text-amber-200 hover:bg-amber-500/10"
-          >
-            <Send size={13} /> Generar remito
-          </button>
-        )}
-        {item.transit_status === 'en_transito' && (
-          <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-1.5 text-xs text-amber-400/70">
-            <Truck size={13} /> Remito activo (ver abajo)
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ─── main page ────────────────────────────────────────────────────────────────
 
 export function WarrantySucursalPage() {
   const currentUser  = getCurrentUserFromStorage();
   const branchName   = (currentUser?.branch_name || currentUser?.sucursal || '').trim();
-  const isPrivileged = isWarrantyPrivilegedUser(currentUser);
+  const isPrivileged = isWarrantyPrivilegedUser(currentUser) || canCrossSelectBranches(currentUser);
   const [selectedBranch, setSelectedBranch] = useState(branchName);
+  const [showCreate, setShowCreate] = useState(false);
+  const [drawerId, setDrawerId] = useState<string | null>(null);
+
+  useMobileFab(can('warranties.create') ? {
+    label: 'Nueva garantía',
+    icon: <Plus size={22} />,
+    onClick: () => setShowCreate(true),
+  } : null, []);
 
   // ── warranty list state ──
   const [data, setData]         = useState<WarrantyListResponse | null>(null);
@@ -207,12 +139,10 @@ export function WarrantySucursalPage() {
     setLoadingW(true);
     setErrorW('');
     try {
-      // sucursal_logistics=1 bypasses the branch-operator transit exclusion filter so
-      // the encargado can see en_transito/en_deposito warranties in this logistics view.
       const result = await fetchWarranties({ limit: 300, sucursal: selectedBranch || undefined, sucursal_logistics: 1 });
       setData(result);
     } catch (err) {
-      setErrorW(err instanceof Error ? err.message : 'No se pudo cargar las garantias de la sucursal');
+      setErrorW(err instanceof Error ? err.message : 'No se pudo cargar las garantías de la sucursal');
     } finally {
       setLoadingW(false);
     }
@@ -241,15 +171,21 @@ export function WarrantySucursalPage() {
     loadAvailable();
   }
 
+  const norm = (v?: string | null) => String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+
   async function handleGenerate(e: React.FormEvent) {
     e.preventDefault();
-    const destino = centralDepositName(options);
-    if (!destino) { setGenError('No se encontro el deposito destino.'); return; }
-    if (selected.size === 0) { setGenError('Selecciona al menos una garantia.'); return; }
+    const dest = centralDepositName(options);
+    if (!dest) { setGenError('No se encontró el depósito destino.'); return; }
+    if (norm(selectedBranch) === norm(dest)) {
+      setGenError('No se puede generar un remito de despacho desde el mismo depósito de destino. Este flujo es para enviar desde una sucursal al depósito central.');
+      return;
+    }
+    if (selected.size === 0) { setGenError('Seleccioná al menos una garantía.'); return; }
     setGenLoading(true); setGenError('');
     try {
       const res = await generateRemitos({
-        destino_deposito: destino,
+        destino_deposito: dest,
         warranty_codes: Array.from(selected),
         nota: genNota.trim() || undefined,
         sucursal: selectedBranch || undefined,
@@ -285,297 +221,355 @@ export function WarrantySucursalPage() {
   );
 
   const destino = centralDepositName(options);
+  const selectedIsDeposit = useMemo(() => {
+    if (!selectedBranch) return false;
+    if (norm(selectedBranch) === norm(destino)) return true;
+    const match = (options?.branches_operativas ?? []).find((b) => norm(b.name) === norm(selectedBranch));
+    return match?.type === 'deposit';
+  }, [selectedBranch, destino, options]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const WARRANTY_TABS = [
-    { id: 'pending'  as const, label: 'Necesitan ir al deposito', count: needsDispatch.length, items: needsDispatch },
-    { id: 'transito' as const, label: 'En transito',              count: inTransit.length,    items: inTransit },
-    { id: 'done'     as const, label: 'Llegaron al deposito',     count: arrived.length,      items: arrived },
+    { id: 'pending'  as const, label: 'Necesitan despacho', count: needsDispatch.length, items: needsDispatch },
+    { id: 'transito' as const, label: 'En tránsito',         count: inTransit.length,    items: inTransit },
+    { id: 'done'     as const, label: 'En depósito',          count: arrived.length,      items: arrived },
   ];
 
-  const activeWItems = WARRANTY_TABS.find((t) => t.id === wTab)?.items || [];
+  const activeWItems = useMemo(() => {
+    const list = WARRANTY_TABS.find((t) => t.id === wTab)?.items || [];
+    return [...list].sort((a, b) => {
+      const aU = a.estado_retiro_proveedor === 'retiro_solicitado' ? 1 : 0;
+      const bU = b.estado_retiro_proveedor === 'retiro_solicitado' ? 1 : 0;
+      if (aU !== bU) return bU - aU;
+      return Number(b.dias_pendiente || 0) - Number(a.dias_pendiente || 0);
+    });
+  }, [wTab, needsDispatch, inTransit, arrived]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const canGenerateRemito = can('warranties.remitos.generate') || can('warranties.remitos.dispatch');
+
+  // Columnas para desktop
+  const columns: ErpColumn<WarrantySummary>[] = [
+    {
+      key: 'id',
+      header: 'N.º',
+      width: 130,
+      render: (row) => (
+        <div className="erp-cell-stack">
+          <span className="erp-cell-mono">{row.id_garantia}</span>
+          {row.estado_retiro_proveedor === 'retiro_solicitado' && <ErpBadge tone="solid-danger">Retiro solicitado</ErpBadge>}
+        </div>
+      ),
+    },
+    {
+      key: 'producto',
+      header: 'Producto',
+      render: (row) => (
+        <div className="erp-cell-stack">
+          <span className="erp-cell-stack-primary">{row.producto_principal || 'Sin producto'}</span>
+          <span className="erp-cell-stack-secondary">{[row.marca, row.serie ? `S/N ${row.serie}` : ''].filter(Boolean).join(' · ') || '—'}</span>
+        </div>
+      ),
+    },
+    {
+      key: 'ubicacion',
+      header: 'Ubicación',
+      width: 160,
+      muted: true,
+      render: (row) => (
+        <span className="inline-flex items-center gap-1"><MapPin size={11} className="text-[color:var(--text-3)]" />{row.ubicacion_actual_label || row.ubicacion_actual || 'En sucursal'}</span>
+      ),
+    },
+    {
+      key: 'estado',
+      header: 'Estado',
+      width: 150,
+      render: (row) => {
+        if (row.transit_status === 'en_transito') return <ErpBadge tone="warning">En tránsito</ErpBadge>;
+        if (row.transit_status === 'en_deposito') return <ErpBadge tone="success">En depósito</ErpBadge>;
+        const meta = getWarrantyStatusMeta(row.estado);
+        return <ErpBadge tone={flowToneToBadgeTone(meta.tone)}>{meta.shortLabel || row.estado}</ErpBadge>;
+      },
+    },
+    {
+      key: 'dias',
+      header: 'Días',
+      width: 80,
+      align: 'right',
+      render: (row) => {
+        const d = Number(row.dias_pendiente || 0);
+        if (d <= 0) return <span className="text-[color:var(--text-3)]">—</span>;
+        if (d >= 15) return <ErpBadge tone="solid-danger">{d}d</ErpBadge>;
+        if (d >= 7) return <ErpBadge tone="warning">{d}d</ErpBadge>;
+        return <span className="tabular-nums text-[color:var(--text-2)]">{d}d</span>;
+      },
+    },
+  ];
+
+  const rowActions: ErpRowAction<WarrantySummary>[] = [
+    { key: 'view', label: 'Vista rápida', icon: <Eye size={14} />, onClick: (row) => setDrawerId(row.id_garantia) },
+    {
+      key: 'dispatch',
+      label: 'Despachar a depósito',
+      icon: <Send size={14} />,
+      hidden: (row) => !canGenerateRemito || row.transit_status === 'en_transito' || row.transit_status === 'en_deposito',
+      onClick: () => openGenerate(),
+    },
+  ];
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
-
-      {/* Header */}
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-black uppercase tracking-wide text-amber-100">
-            <Send size={13} /> Logistica de Sucursal
-          </div>
-          <h1 className="mt-3 text-3xl font-black sm:text-4xl">
-            {selectedBranch ? `Garantias — ${selectedBranch}` : 'Mis garantias'}
-          </h1>
-          <p className="mt-1 text-slate-400">
-            Equipos pendientes, remitos en transito y recepciones confirmadas.
-          </p>
-          {isPrivileged && options?.branches_operativas && options.branches_operativas.length > 1 && (
-            <div className="mt-3 flex items-center gap-2">
-              <span className="text-xs font-semibold text-slate-500">Sucursal / Deposito:</span>
-              <select
-                value={selectedBranch}
-                onChange={(e) => { setShowGen(false); setSelectedBranch(e.target.value); }}
-                className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm font-bold text-white focus:border-blue-500 focus:outline-none"
-              >
-                {options.branches_operativas.map((b) => (
-                  <option key={b.id} value={b.name}>{b.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {can('warranties.remitos.generate') && selectedBranch && (
-            <button
-              onClick={openGenerate}
-              className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2.5 font-bold text-emerald-200 hover:bg-emerald-500/20"
-            >
-              <Plus size={16} /> Nuevo remito
+    <div className="erp-stack-6">
+      <ErpPageHeader
+        title={selectedBranch ? `Garantías — ${selectedBranch}` : 'Mi sucursal'}
+        description="Cargá garantías, despachá equipos al depósito central y seguí el tránsito de tu sucursal."
+        actions={
+          <>
+            {can('warranties.create') && (
+              <button type="button" onClick={() => setShowCreate(true)} className={erpBtnPrimary}>
+                <Plus size={14} /> Nueva garantía
+              </button>
+            )}
+            {canGenerateRemito && selectedBranch && !selectedIsDeposit && (
+              <button type="button" onClick={openGenerate} className={erpBtnSecondary}>
+                <Send size={14} /> Despachar a {destino || 'depósito'}
+              </button>
+            )}
+            <button type="button" onClick={loadWarranties} className={erpBtnGhost}>
+              <RefreshCw size={14} className={loadingW ? 'erp-spin' : ''} /> Actualizar
             </button>
-          )}
-          <button
-            onClick={() => { loadWarranties(); }}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-600 px-4 py-2.5 font-bold text-slate-100 hover:bg-slate-900"
-          >
-            <RefreshCw size={16} className={loadingW ? 'animate-spin' : ''} /> Actualizar
-          </button>
-        </div>
-      </div>
+          </>
+        }
+      />
 
-      {errorW && <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-red-100">{errorW}</div>}
-
-      {urgentCount > 0 && (
-        <div className="flex items-center gap-3 rounded-2xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm font-black text-red-100">
-          <AlertTriangle size={18} className="shrink-0 text-red-400" />
-          {urgentCount === 1
-            ? '1 caso URGENTE: el proveedor solicito retiro. Despachar a deposito lo antes posible.'
-            : `${urgentCount} casos URGENTES: el proveedor solicito retiro. Despachar a deposito lo antes posible.`}
+      {/* Selector de sucursal para privilegiados */}
+      {isPrivileged && options?.branches_operativas && options.branches_operativas.length > 1 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[12px] font-semibold text-[color:var(--text-3)]">Sucursal / Depósito:</span>
+          <div style={{ minWidth: 220 }}>
+            <ErpSelect value={selectedBranch} onChange={(e) => { setShowGen(false); setSelectedBranch(e.target.value); }} style={{ height: 32, fontSize: 13 }}>
+              {options.branches_operativas.map((b) => <option key={b.id} value={b.name}>{b.name}</option>)}
+            </ErpSelect>
+          </div>
         </div>
       )}
 
-      {/* ── Section 1: Garantias ──────────────────────────────────────────────── */}
-      <section className="space-y-4">
-        <h2 className="text-sm font-black uppercase tracking-widest text-slate-500">
-          {isPrivileged && selectedBranch ? `Garantias de ${selectedBranch}` : 'Garantias de mi sucursal'}
-        </h2>
+      {errorW && <ErpNotice tone="error">{errorW}</ErpNotice>}
 
-        <div className="flex flex-wrap gap-2">
-          {WARRANTY_TABS.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setWTab(tab.id)}
-              className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-all ${
-                wTab === tab.id
-                  ? 'border-blue-500/60 bg-blue-500/15 text-blue-100'
-                  : 'border-slate-700 text-slate-400 hover:bg-slate-900 hover:text-slate-200'
-              }`}
-            >
-              {tab.label}
-              <span className={`rounded-full border px-1.5 py-0.5 text-xs font-black ${
-                wTab === tab.id ? 'border-blue-400/40 bg-blue-500/20 text-blue-200' : 'border-slate-700 bg-slate-800 text-slate-400'
-              }`}>{tab.count}</span>
-            </button>
-          ))}
-        </div>
+      {urgentCount > 0 && (
+        <ErpNotice tone="error" title={urgentCount === 1 ? '1 caso URGENTE' : `${urgentCount} casos URGENTES`}>
+          El proveedor solicitó retiro. Despachá a depósito lo antes posible.
+        </ErpNotice>
+      )}
 
-        {loadingW && (
-          <div className="rounded-2xl border border-slate-700 bg-slate-950/60 p-6 text-center text-slate-400">
-            <div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-slate-700 border-t-amber-400" />
-            Cargando garantias...
-          </div>
-        )}
-
-        {!loadingW && activeWItems.length === 0 && (
-          <div className="rounded-2xl border border-slate-700 bg-slate-950/60 p-8 text-center">
-            <Package size={36} className="mx-auto mb-3 text-slate-600" />
-            <div className="font-bold text-slate-400">
-              {wTab === 'pending'  ? 'No hay equipos pendientes de despacho.' :
-               wTab === 'transito' ? 'No hay remitos en transito actualmente.' :
-               'No hay recepciones confirmadas recientemente.'}
-            </div>
-            {wTab === 'pending' && can('warranties.remitos.generate') && (
-              <button
-                onClick={openGenerate}
-                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-500/20"
-              >
-                <Plus size={15} /> Generar remito
-              </button>
-            )}
-          </div>
-        )}
-
-        {!loadingW && activeWItems.length > 0 && (
-          <div className="space-y-3">
-            {activeWItems
-              .sort((a, b) => {
-                const aU = a.estado_retiro_proveedor === 'retiro_solicitado' ? 1 : 0;
-                const bU = b.estado_retiro_proveedor === 'retiro_solicitado' ? 1 : 0;
-                if (aU !== bU) return bU - aU;
-                return Number(b.dias_pendiente || 0) - Number(a.dias_pendiente || 0);
-              })
-              .map((item) => (
-                <SucursalCard key={item.id_garantia} item={item} onOpenGenerate={openGenerate} />
-              ))}
-          </div>
-        )}
+      {/* KPIs */}
+      <section className="erp-kpi-row" aria-label="Resumen de la sucursal">
+        <ErpKpiCard
+          label="Necesitan despacho"
+          value={needsDispatch.length}
+          detail={needsDispatch.length > 0 ? 'Equipos para enviar al depósito' : 'Todo despachado'}
+          variant={needsDispatch.length > 0 ? 'alert' : 'default'}
+          icon={<Package size={13} />}
+        />
+        <ErpKpiCard
+          label="En tránsito"
+          value={inTransit.length}
+          detail={inTransit.length > 0 ? 'En camino al depósito central' : 'Sin envíos abiertos'}
+          icon={<Truck size={13} />}
+        />
+        <ErpKpiCard
+          label="En depósito"
+          value={arrived.length}
+          detail="Confirmados en el depósito"
+          variant="success"
+          icon={<CheckCircle2 size={13} />}
+        />
+        <ErpKpiCard
+          label="Urgentes"
+          value={urgentCount}
+          detail={urgentCount > 0 ? 'Retiro solicitado por proveedor' : 'Sin urgencias'}
+          variant={urgentCount > 0 ? 'danger' : 'default'}
+          icon={<AlertTriangle size={13} />}
+        />
       </section>
 
-      {/* ── Panel de generación de remito ───────────────────────────────────── */}
-      {selectedBranch && can('warranties.remitos.generate') && showGen && (
-            <section className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-5">
-              <div className="mb-4 flex items-center gap-2">
-                <Send size={18} className="text-emerald-400" />
-                <h3 className="text-base font-black text-emerald-200">Nuevo remito interno</h3>
-              </div>
-              <div className="mb-4 flex flex-wrap gap-4 rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3 text-sm">
-                <span><span className="text-slate-500">Origen:</span> <span className="font-bold text-slate-200">{selectedBranch}</span></span>
-                <span className="text-slate-600">→</span>
-                <span><span className="text-slate-500">Destino:</span> <span className="font-bold text-emerald-200">{destino}</span></span>
-              </div>
+      {/* Tabla de garantías con tabs */}
+      <div className="erp-card erp-card-flat" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
+          <div className="erp-tab-bar">
+            {WARRANTY_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`erp-tab ${wTab === tab.id ? 'is-active' : ''}`}
+                onClick={() => setWTab(tab.id)}
+              >
+                <span>{tab.label}</span>
+                <span className="erp-tab-count">{tab.count}</span>
+              </button>
+            ))}
+          </div>
+        </div>
 
-              {availLoading && (
-                <div className="flex items-center gap-2 py-4 text-sm text-slate-400">
-                  <RefreshCw size={14} className="animate-spin" /> Cargando garantias disponibles...
+        <ErpDataTable<WarrantySummary>
+          columns={columns}
+          rows={activeWItems}
+          rowKey={(row) => row.id_garantia}
+          loading={loadingW}
+          onRowClick={(row) => setDrawerId(row.id_garantia)}
+          rowActions={rowActions}
+          empty={{
+            title: wTab === 'pending' ? 'No hay equipos pendientes de despacho'
+              : wTab === 'transito' ? 'No hay remitos en tránsito'
+              : 'No hay recepciones confirmadas',
+            description: wTab === 'pending' ? 'Cargá una garantía o esperá nuevos ingresos.' : 'Cambiá de pestaña para ver otras garantías.',
+            cta: wTab === 'pending' && can('warranties.create')
+              ? <button type="button" onClick={() => setShowCreate(true)} className={erpBtnPrimary}><Plus size={14} /> Nueva garantía</button>
+              : undefined,
+          }}
+          renderMobileCard={(row) => {
+            const d = Number(row.dias_pendiente || 0);
+            const isUrgent = row.estado_retiro_proveedor === 'retiro_solicitado';
+            const alerts = computeLogisticsAlerts(row).filter((a) => a.targetRole === 'encargado' || a.targetRole === 'all');
+            return (
+              <div className="erp-mcard" style={isUrgent ? { borderColor: 'rgba(239,68,68,0.4)', background: 'var(--danger-soft)' } : undefined}>
+                <div className="erp-mcard-head">
+                  <span className="erp-mcard-title"><span className="erp-cell-mono">{row.id_garantia}</span></span>
+                  {row.transit_status === 'en_transito' ? <ErpBadge tone="warning">En tránsito</ErpBadge>
+                   : row.transit_status === 'en_deposito' ? <ErpBadge tone="success">En depósito</ErpBadge>
+                   : <ErpBadge tone={flowToneToBadgeTone(getWarrantyStatusMeta(row.estado).tone)}>{getWarrantyStatusMeta(row.estado).shortLabel || row.estado}</ErpBadge>}
                 </div>
-              )}
-              {!availLoading && available.length === 0 && (
-                <div className="rounded-xl border border-slate-700 bg-slate-900/60 py-8 text-center">
-                  <Package size={28} className="mx-auto mb-2 text-slate-600" />
-                  <p className="text-sm text-slate-400">No hay garantias disponibles para remito en <strong className="text-slate-300">{selectedBranch}</strong>.</p>
-                  <p className="mt-1 text-xs text-slate-500">Las garantias aparecen cuando estan en la sucursal y no tienen remito activo.</p>
+                <div className="erp-mcard-title" style={{ fontWeight: 600 }}>{row.producto_principal || 'Sin producto'}</div>
+                <div className="erp-mcard-sub">{[row.marca, row.serie ? `S/N ${row.serie}` : ''].filter(Boolean).join(' · ') || '—'}</div>
+                <div className="erp-mcard-meta">
+                  <span><MapPin size={10} /> {row.ubicacion_actual_label || row.ubicacion_actual || 'En sucursal'}</span>
+                  {d > 0 && <span><Clock size={10} /> {d}d</span>}
+                  {isUrgent && <ErpBadge tone="solid-danger">Retiro solicitado</ErpBadge>}
                 </div>
-              )}
-              {!availLoading && available.length > 0 && (
-                <div className="mb-4 overflow-hidden rounded-xl border border-slate-700">
-                  <div className="flex items-center gap-3 border-b border-slate-700 bg-slate-800/60 px-4 py-2.5">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-emerald-500"
-                      checked={selected.size === available.length && available.length > 0}
-                      onChange={() => setSelected(
-                        selected.size === available.length ? new Set() : new Set(available.map((w) => w.warranty_code)),
-                      )}
-                    />
-                    <span className="flex-1 text-xs font-semibold text-slate-300">
-                      {selected.size > 0
-                        ? `${selected.size} de ${available.length} seleccionadas`
-                        : `${available.length} garantias disponibles`}
-                    </span>
-                  </div>
-                  <div className="max-h-64 divide-y divide-slate-800 overflow-y-auto">
-                    {available.map((w) => (
-                      <label
-                        key={w.warranty_code}
-                        className={`flex cursor-pointer items-start gap-3 px-4 py-2.5 transition-colors hover:bg-slate-800/50 ${
-                          selected.has(w.warranty_code) ? 'bg-emerald-950/30' : ''
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          className="mt-0.5 h-4 w-4 accent-emerald-500"
-                          checked={selected.has(w.warranty_code)}
-                          onChange={() => setSelected((p) => {
-                            const n = new Set(p);
-                            n.has(w.warranty_code) ? n.delete(w.warranty_code) : n.add(w.warranty_code);
-                            return n;
-                          })}
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-mono text-xs font-bold text-white">{w.warranty_code}</span>
-                            {w.estado && <span className="rounded-full bg-slate-700/60 px-1.5 py-0.5 text-[10px] text-slate-300">{w.estado}</span>}
-                            {w.marca && <span className="text-[10px] text-slate-500">{w.marca}</span>}
-                          </div>
-                          <div className="mt-0.5 truncate text-xs text-slate-400">
-                            {w.producto || '—'}
-                            {w.serie && <span className="ml-2 text-slate-500">Serie: {w.serie}</span>}
-                          </div>
-                        </div>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <form onSubmit={handleGenerate} className="space-y-3">
-                <input
-                  className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
-                  placeholder="Nota opcional: viaje del miercoles, bulto 2..."
-                  value={genNota}
-                  onChange={(e) => setGenNota(e.target.value)}
-                />
-                {genError && (
-                  <div className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
-                    <AlertTriangle size={14} className="shrink-0" />{genError}
+                {alerts.length > 0 && (
+                  <div className="mt-1 text-[11px] text-[color:var(--warning-soft-text)]">
+                    ⚠ {alerts[0].message}
                   </div>
                 )}
-                <div className="flex gap-2">
-                  <button
-                    type="submit"
-                    disabled={genLoading || selected.size === 0}
-                    className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50"
-                  >
-                    {genLoading ? <RefreshCw size={15} className="animate-spin" /> : <Send size={15} />}
-                    {selected.size > 0 ? `Generar remito (${selected.size} garantias)` : 'Generar remito'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setShowGen(false); setAvailable([]); setSelected(new Set()); }}
-                    className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-semibold text-slate-300 hover:bg-slate-800"
-                  >
-                    Cancelar
-                  </button>
-                </div>
-              </form>
-            </section>
-          )}
-
-          {/* Last generated */}
-          {lastGenerated.length > 0 && (
-            <section className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm font-bold text-emerald-300">
-                  <CheckCircle2 size={16} />
-                  {lastGenerated.length === 1 ? 'Remito generado' : `${lastGenerated.length} remitos generados`} — descarga el PDF para acompanar el envio
-                </div>
-                <button onClick={() => setLastGenerated([])} className="text-slate-500 hover:text-slate-300">
-                  <X size={16} />
-                </button>
               </div>
-              <div className="space-y-2">
-                {lastGenerated.map((r) => (
-                  <div
-                    key={r.remito_code}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/20 bg-slate-900 px-4 py-3"
+            );
+          }}
+        />
+      </div>
+
+      {/* Panel de generación de remito */}
+      {selectedBranch && canGenerateRemito && showGen && !selectedIsDeposit && (
+        <ErpCard
+          title={<span className="inline-flex items-center gap-2"><Send size={14} /> Despachar al depósito central</span>}
+          subtitle={`${selectedBranch} → ${destino}`}
+          actions={<ErpButton size="sm" variant="ghost" leftIcon={<X size={13} />} onClick={() => { setShowGen(false); setAvailable([]); setSelected(new Set()); }}>Cerrar</ErpButton>}
+        >
+          {availLoading && (
+            <div className="erp-inline-spinner"><RefreshCw size={14} className="erp-spin" /> Cargando garantías disponibles…</div>
+          )}
+          {!availLoading && available.length === 0 && (
+            <ErpNotice tone="info">
+              No hay garantías disponibles para remito en <strong>{selectedBranch}</strong>. Aparecen cuando están en la sucursal y no tienen remito activo.
+            </ErpNotice>
+          )}
+          {!availLoading && available.length > 0 && (
+            <div className="erp-card erp-card-flat" style={{ padding: 0, overflow: 'hidden' }}>
+              <div className="flex items-center gap-2 border-b border-[color:var(--border)] px-3 py-2">
+                <input
+                  type="checkbox"
+                  className="erp-checkbox"
+                  checked={selected.size === available.length && available.length > 0}
+                  onChange={() => setSelected(selected.size === available.length ? new Set() : new Set(available.map((w) => w.warranty_code)))}
+                />
+                <span className="text-[12.5px] font-semibold">
+                  {selected.size > 0 ? `${selected.size} de ${available.length} seleccionadas` : `${available.length} disponibles`}
+                </span>
+              </div>
+              <div className="max-h-72 overflow-y-auto">
+                {available.map((w) => (
+                  <label
+                    key={w.warranty_code}
+                    className={`flex cursor-pointer items-start gap-3 border-b border-[color:var(--divider)] px-3 py-2.5 transition-colors last:border-b-0 ${selected.has(w.warranty_code) ? 'bg-[color:var(--primary-soft)]' : 'hover:bg-[color:var(--surface-hover)]'}`}
                   >
-                    <div>
-                      <span className="font-mono text-base font-black text-white">{r.remito_code}</span>
-                      <div className="mt-0.5 flex flex-wrap gap-3 text-xs text-slate-400">
-                        <span>{r.warranties_count} producto{r.warranties_count !== 1 ? 's' : ''}</span>
-                        <span className="text-slate-600">·</span>
-                        <span>{r.origen_sucursal} → {r.destino_deposito}</span>
+                    <input
+                      type="checkbox"
+                      className="erp-checkbox mt-1"
+                      checked={selected.has(w.warranty_code)}
+                      onChange={() => setSelected((p) => {
+                        const n = new Set(p);
+                        if (n.has(w.warranty_code)) n.delete(w.warranty_code); else n.add(w.warranty_code);
+                        return n;
+                      })}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="erp-cell-mono text-[12.5px] font-semibold">{w.warranty_code}</span>
+                        {w.estado && <ErpBadge tone="neutral" withDot={false}>{w.estado}</ErpBadge>}
+                        {w.marca && <span className="text-[10.5px] text-[color:var(--text-3)]">{w.marca}</span>}
+                      </div>
+                      <div className="mt-0.5 truncate text-[12.5px] text-[color:var(--text-2)]">
+                        {w.producto || '—'}{w.serie ? ` · Serie: ${w.serie}` : ''}
                       </div>
                     </div>
-                    <div className="flex gap-1.5">
-                      <button
-                        onClick={() => printPdf(r.remito_code)}
-                        className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500"
-                      >
-                        <Printer size={13} /> Imprimir
-                      </button>
-                      <button
-                        onClick={() => downloadPdf(r.remito_code)}
-                        className="flex items-center gap-1.5 rounded-xl border border-emerald-500/50 px-3 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/10"
-                      >
-                        <FileText size={13} /> PDF
-                      </button>
-                    </div>
-                  </div>
+                  </label>
                 ))}
               </div>
-            </section>
+            </div>
           )}
 
+          <form onSubmit={handleGenerate} className="mt-3 erp-stack-3">
+            <ErpField label="Nota (opcional)">
+              <input
+                className="erp-input"
+                placeholder="Ej: viaje del miércoles, bulto 2…"
+                value={genNota}
+                onChange={(e) => setGenNota(e.target.value)}
+              />
+            </ErpField>
+            {genError && <ErpNotice tone="error">{genError}</ErpNotice>}
+            <div className="erp-form-actions">
+              <ErpButton type="button" variant="ghost" onClick={() => { setShowGen(false); setAvailable([]); setSelected(new Set()); }}>Cancelar</ErpButton>
+              <ErpButton type="submit" variant="primary" disabled={selected.size === 0} loading={genLoading} leftIcon={<Send size={14} />}>
+                {selected.size > 0 ? `Generar remito (${selected.size})` : 'Generar remito'}
+              </ErpButton>
+            </div>
+          </form>
+        </ErpCard>
+      )}
+
+      {/* Remitos generados */}
+      {lastGenerated.length > 0 && (
+        <ErpNotice tone="success" title={lastGenerated.length === 1 ? 'Remito generado' : `${lastGenerated.length} remitos generados`}>
+          <div className="erp-stack-2 mt-1">
+            {lastGenerated.map((r) => (
+              <div key={r.remito_code} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[color:var(--border)] bg-[color:var(--surface-2)] px-2.5 py-2">
+                <div className="min-w-0">
+                  <span className="font-mono text-[13px] font-semibold text-[color:var(--text)]">{r.remito_code}</span>
+                  <span className="ml-2 text-[11.5px] text-[color:var(--text-2)]">{r.warranties_count} prod. · {r.origen_sucursal} <ArrowRight size={10} className="inline align-middle" /> {r.destino_deposito}</span>
+                </div>
+                <div className="flex gap-1.5">
+                  <ErpButton size="sm" variant="secondary" leftIcon={<Printer size={12} />} onClick={() => printPdf(r.remito_code)}>Imprimir</ErpButton>
+                  <ErpButton size="sm" variant="ghost" leftIcon={<FileText size={12} />} onClick={() => downloadPdf(r.remito_code)}>PDF</ErpButton>
+                </div>
+              </div>
+            ))}
+          </div>
+        </ErpNotice>
+      )}
+
+      <WarrantyQuickCreateModal
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        onCreated={() => { loadWarranties(); }}
+        options={options}
+        defaultSucursal={selectedBranch || branchName}
+        centralDeposit={destino}
+        existingWarranties={items}
+      />
+
+      <WarrantyDetailDrawer
+        open={drawerId !== null}
+        warrantyId={drawerId}
+        onClose={() => setDrawerId(null)}
+        onChanged={() => loadWarranties()}
+      />
     </div>
   );
 }

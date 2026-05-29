@@ -23,6 +23,11 @@ import type {
   ConfigStatus,
   CurrentUser,
   EmployeeInfo,
+  EmployeeListResponse,
+  EmployeeCreatePayload,
+  EmployeeStatusChangePayload,
+  EmployeeStatusHistoryResponse,
+  UserLinkCandidatesResponse,
   GoogleAdminStatus,
   JobInfo,
   NotificationInfo,
@@ -79,6 +84,7 @@ import type {
   WarrantyReviewPayload,
   WarrantyProviderSendPayload,
   WarrantyProviderResponsePayload,
+  WarrantyProviderCorrectionResolvePayload,
   WarrantyProviderPickupPayload,
   WarrantyClaimPayload,
   WarrantyResendMailPayload,
@@ -351,6 +357,35 @@ export async function rejectEmployeePhoto(username: string): Promise<UserInfo> {
   return request(`/api/employees/${encodeURIComponent(username)}/photo/reject`, { method: 'POST' });
 }
 
+// ── Empleados como entidad propia (Fase 0) ──────────────────────────────────
+export async function fetchEmployees(params: { q?: string; status?: string; work_branch_id?: string; has_user?: string; limit?: number } = {}): Promise<EmployeeListResponse> {
+  return request(`/api/employees${buildQs(params)}`);
+}
+export async function fetchEmployee(id: string): Promise<EmployeeInfo> {
+  return request(`/api/employees/${encodeURIComponent(id)}`);
+}
+export async function createEmployee(payload: EmployeeCreatePayload): Promise<EmployeeInfo> {
+  return request('/api/employees', { method: 'POST', body: JSON.stringify(payload) });
+}
+export async function updateEmployee(id: string, payload: EmployeeCreatePayload): Promise<EmployeeInfo> {
+  return request(`/api/employees/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) });
+}
+export async function linkEmployeeUser(id: string, username: string): Promise<EmployeeInfo> {
+  return request(`/api/employees/${encodeURIComponent(id)}/link-user`, { method: 'POST', body: JSON.stringify({ username }) });
+}
+export async function unlinkEmployeeUser(id: string): Promise<EmployeeInfo> {
+  return request(`/api/employees/${encodeURIComponent(id)}/unlink-user`, { method: 'POST' });
+}
+export async function changeEmployeeStatus(id: string, payload: EmployeeStatusChangePayload): Promise<EmployeeInfo> {
+  return request(`/api/employees/${encodeURIComponent(id)}/status`, { method: 'POST', body: JSON.stringify(payload) });
+}
+export async function fetchEmployeeStatusHistory(id: string): Promise<EmployeeStatusHistoryResponse> {
+  return request(`/api/employees/${encodeURIComponent(id)}/status-history`);
+}
+export async function fetchEmployeeLinkCandidates(q = ''): Promise<UserLinkCandidatesResponse> {
+  return request(`/api/employees/users/link-candidates${buildQs({ q })}`);
+}
+
 export async function fetchTools(): Promise<ToolInfo[]> { return request('/api/tools'); }
 export async function fetchTool(toolId: string): Promise<ToolInfo> { return request(`/api/tools/${toolId}`); }
 export async function runTool(toolId: string, payload: Record<string, unknown>, files: Record<string, File[]>): Promise<{ job_id: string; status: string }> {
@@ -407,6 +442,9 @@ export async function registerWarrantyProviderResponse(id: string, payload: Warr
 }
 export async function registerWarrantyProviderPickupRequest(id: string, payload: WarrantyProviderPickupPayload): Promise<WarrantyDetailResponse> {
   return request(`/api/warranties/${encodeURIComponent(id)}/provider-pickup-request`, { method: 'POST', body: JSON.stringify(payload) });
+}
+export async function resolveWarrantyProviderCorrection(id: string, payload: WarrantyProviderCorrectionResolvePayload = {}): Promise<WarrantyDetailResponse> {
+  return request(`/api/warranties/${encodeURIComponent(id)}/provider-correction-resolve`, { method: 'POST', body: JSON.stringify(payload) });
 }
 export async function registerWarrantyClaim(id: string, payload: WarrantyClaimPayload): Promise<WarrantyDetailResponse> {
   return request(`/api/warranties/${encodeURIComponent(id)}/claim`, { method: 'POST', body: JSON.stringify(payload) });
@@ -491,8 +529,9 @@ export async function generateRemitos(payload: GenerateRemitosPayload): Promise<
 export async function fetchDepositTransferOptions(): Promise<DepositTransferOptions> {
   return request('/api/warranties/remitos/deposit-transfer/options');
 }
-export async function fetchAvailableWarrantiesForDepositTransfer(): Promise<{ items: import('../types').AvailableWarrantyForRemito[]; total: number; origen_deposito: string }> {
-  return request('/api/warranties/remitos/deposit-transfer/available-warranties');
+export async function fetchAvailableWarrantiesForDepositTransfer(origen: string = ''): Promise<{ items: import('../types').AvailableWarrantyForRemito[]; total: number; origen_deposito: string }> {
+  const qs = origen ? `?origen=${encodeURIComponent(origen)}` : '';
+  return request(`/api/warranties/remitos/deposit-transfer/available-warranties${qs}`);
 }
 export async function generateDepositTransferRemito(payload: DepositTransferPayload): Promise<{ ok: boolean; remitos: WarrantyRemitoInfo[]; count: number }> {
   const res = await request<{ ok: boolean; created: WarrantyRemitoInfo[] }>(

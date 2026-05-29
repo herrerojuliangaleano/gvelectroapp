@@ -1,17 +1,21 @@
 import {
-  Activity, Archive, BarChart2, Bell, Building2, Calculator, ChevronDown, ChevronRight, CircleDollarSign, ClipboardList, Cloud, FileSpreadsheet, FileText, Globe2, History, Home, Info, KeyRound, LayoutDashboard, LogOut, MapPin, Menu, PackageCheck, Settings, ShieldCheck, SlidersHorizontal, Truck, User, UserCog, Wrench, X,
+  Activity, Archive, BarChart2, Bell, Building2, Calculator, Camera, ChevronDown, ChevronRight, CircleDollarSign, ClipboardList, Cloud, FileSpreadsheet, FileText, Globe2, History, Home, IdCard, Info, KeyRound, LayoutDashboard, LogOut, MapPin, Menu, MoreHorizontal, PackageCheck, Settings, ShieldCheck, SlidersHorizontal, Truck, User, UserCog, Wrench, X,
 } from 'lucide-react';
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { getBrandForUser } from '../brand';
-import { BrandLogo } from '../components/BrandLogo';
+import { Breadcrumbs } from '../components/Breadcrumbs';
+import { MobileFabProvider } from '../components/MobileFab';
+import { Topbar } from '../components/Topbar';
 import { PwaInstallPrompt } from '../components/PwaInstallPrompt';
 import { UpdatePrompt } from '../components/UpdatePrompt';
+import { useEdgeSwipe } from '../hooks/useEdgeSwipe';
 import { can, fetchNotifications, fetchSystemStatus, fetchUnreadNotificationsCount, getCurrentUserFromStorage, logout } from '../api/client';
 import { cleanupPushNotifications, initPushNotifications } from '../services/pushNotifications';
 import type { SystemPublicStatus } from '../types';
 import { canSeeDepositReceivePage, canSeeGestorPanel, canSeeRemitoTracking, canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantySync, canSeeSucursalLogistics, canUseRemitosHub, isCadeteDeposito, isPlainDepositOperator } from '../warrantyAccess';
+import { canCrossSelectBranches } from '../branchAccess';
 
 type NavItemDef = {
   to: string;
@@ -22,6 +26,7 @@ type NavItemDef = {
   visible?: boolean;
   exact?: boolean;
   children?: NavItemDef[];
+  count?: number;
 };
 type NavSectionDef = { title: string; items: NavItemDef[]; };
 
@@ -57,10 +62,22 @@ function scopeLabel(user: ReturnType<typeof getCurrentUserFromStorage>) {
   if (!user) return '';
   const assignedCount = user.branches?.length || 0;
   if (user.company_name || user.branch_name || user.sucursal) {
-    return `${user.company_name ? `${user.company_name} · ` : ''}${user.branch_name || user.sucursal}${assignedCount > 1 ? ` +${assignedCount - 1}` : ''}`;
+    const base = `${user.company_name ? `${user.company_name} · ` : ''}${user.branch_name || user.sucursal}${assignedCount > 1 ? ` +${assignedCount - 1}` : ''}`;
+    // Si tiene permiso para cruzar sucursales, lo marcamos sutilmente en el label.
+    if (canCrossSelectBranches(user) && assignedCount > 0) {
+      return `${base} · multi-sucursal`;
+    }
+    return base;
   }
-  if (String(user.role || '').toUpperCase().includes('ADMIN') || String(user.role || '').toUpperCase().includes('SUPER')) return 'Acceso global';
+  // Sin sucursal asignada pero con permiso de cruzar sucursales = acceso global por permisos.
+  if (canCrossSelectBranches(user)) return 'Acceso global';
   return 'Alcance pendiente';
+}
+
+function userInitials(name: string): string {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/).slice(0, 2);
+  return parts.map((p) => p[0]?.toUpperCase() || '').join('') || name[0]?.toUpperCase() || '?';
 }
 
 export function AppLayout({ children }: { children: ReactNode }) {
@@ -118,59 +135,65 @@ export function AppLayout({ children }: { children: ReactNode }) {
     const user = getCurrentUserFromStorage();
     const sections: NavSectionDef[] = [
       { title: 'Inicio', items: [
-        { to: '/', icon: <Home size={18} />, label: 'Mi inicio', permission: 'profile.view', exact: true },
-        { to: '/notificaciones', icon: <Bell size={18} />, label: unread > 0 ? `Notificaciones (${unread})` : 'Notificaciones', permission: 'notifications.view' },
+        { to: '/', icon: <Home size={16} />, label: 'Mi inicio', permission: 'profile.view', exact: true },
+        { to: '/notificaciones', icon: <Bell size={16} />, label: 'Notificaciones', permission: 'notifications.view', count: unread },
       ] },
       { title: 'Operación', items: [
-        { to: '/venta', icon: <Globe2 size={18} />, label: 'Ventas', children: [
-          { to: '/venta/admin', icon: <Globe2 size={16} />, label: 'Bandeja', permission: 'sales_web.view', visible: canWorkSales },
-          { to: '/venta/pendientes', icon: <Globe2 size={16} />, label: 'Pendientes', permission: 'sales_web.take' },
-          { to: '/venta/nueva', icon: <Globe2 size={16} />, label: 'Nueva venta', permission: 'sales_web.create' },
-          { to: '/venta/mis-solicitudes', icon: <Globe2 size={16} />, label: 'Mis ventas', permission: 'sales_web.view' },
-          { to: '/budgets/new', icon: <Calculator size={16} />, label: 'Presupuestos', permission: 'budgets.view' },
+        { to: '/venta', icon: <Globe2 size={16} />, label: 'Ventas', children: [
+          { to: '/venta/admin', icon: <Globe2 size={14} />, label: 'Bandeja', permission: 'sales_web.view', visible: canWorkSales },
+          { to: '/venta/pendientes', icon: <Globe2 size={14} />, label: 'Pendientes', permission: 'sales_web.take' },
+          { to: '/venta/nueva', icon: <Globe2 size={14} />, label: 'Nueva venta', permission: 'sales_web.create' },
+          { to: '/venta/mis-solicitudes', icon: <Globe2 size={14} />, label: 'Mis ventas', permission: 'sales_web.view' },
+          { to: '/budgets/new', icon: <Calculator size={14} />, label: 'Presupuestos', permission: 'budgets.view' },
         ] },
-        { to: '/warranties', icon: <ShieldCheck size={18} />, label: 'Garantías', children: [
-          { to: '/warranties/dashboard',  icon: <Activity size={16} />,         label: 'Panel',                   visible: canSeeWarrantyDashboard(user) },
-          { to: '/warranties/gestor',     icon: <LayoutDashboard size={16} />,   label: 'Panel gestor',            visible: canSeeGestorPanel(user) },
-          { to: '/warranties/sucursal',   icon: <MapPin size={16} />,            label: 'Mi sucursal',             visible: canSeeSucursalLogistics(user) },
-          { to: '/warranties',            icon: <ShieldCheck size={16} />,       label: 'Listado',                 visible: canSeeWarrantyList(user), exact: true },
-          { to: '/warranties/new',        icon: <ShieldCheck size={16} />,       label: 'Nueva garantía',          permission: 'warranties.create' },
-          { to: '/warranties/gestion',    icon: <Building2 size={16} />,         label: 'Gestión',                 visible: canSeeWarrantyProviderManagement(user) },
-          { to: '/warranties/deposito',          icon: <PackageCheck size={16} />,       label: 'Recepción depósito',      visible: canSeeDepositReceivePage(user) },
-          { to: '/warranties/remitos',          icon: <Truck size={16} />,             label: 'Remitos',                 visible: !isPlainDepositOperator(user) && canUseRemitosHub(user) },
-          { to: '/warranties/remito-historial', icon: <History size={16} />,           label: 'Historial de remitos',    visible: canSeeRemitoTracking(user) },
-          { to: '/warranties/export',     icon: <FileSpreadsheet size={16} />,   label: 'Exportación',             visible: canSeeWarrantyExport(user) },
-          { to: '/warranties/sync',       icon: <Cloud size={16} />,             label: 'Sincronización',          visible: canSeeWarrantySync(user) },
-          { to: '/warranties/config',     icon: <SlidersHorizontal size={16} />, label: 'Configuración',           visible: canSeeWarrantyConfig(user) },
+        { to: '/warranties', icon: <ShieldCheck size={16} />, label: 'Garantías', children: [
+          // ── Núcleo operativo (el flujo: sucursal → gestor → posventa) ──
+          // Espacio operativo unificado: sucursal o depósito según el perfil.
+          { to: '/warranties/mi-espacio', icon: <MapPin size={14} />,            label: 'Mi espacio',              visible: canSeeSucursalLogistics(user) || canSeeDepositReceivePage(user) },
+          // Revisor: el puente entre sucursal y posventa (aprueba/corrige ingresos).
+          { to: '/warranties/gestor',     icon: <LayoutDashboard size={14} />,   label: 'Panel gestor',            visible: canSeeGestorPanel(user) },
+          // Posventa consolidado: gestión proveedor + entrega + exportación.
+          { to: '/warranties/posventa',   icon: <Building2 size={14} />,         label: 'Posventa',                visible: canSeeWarrantyProviderManagement(user) || canSeeWarrantyExport(user) },
+          { to: '/warranties/new',        icon: <ShieldCheck size={14} />,       label: 'Carga masiva',            permission: 'warranties.create' },
+          // ── Consulta / global (no operativo: ver el panorama) ──
+          { to: '/warranties',            icon: <ShieldCheck size={14} />,       label: 'Listado',                 visible: canSeeWarrantyList(user), exact: true },
+          { to: '/warranties/dashboard',  icon: <Activity size={14} />,          label: 'Métricas',                visible: canSeeWarrantyDashboard(user) },
+          { to: '/warranties/remito-historial', icon: <History size={14} />,           label: 'Historial de remitos',    visible: canSeeRemitoTracking(user) },
+          // ── Administración del módulo ──
+          { to: '/warranties/sync',       icon: <Cloud size={14} />,             label: 'Sincronización',          visible: canSeeWarrantySync(user) },
+          { to: '/warranties/config',     icon: <SlidersHorizontal size={14} />, label: 'Configuración',           visible: canSeeWarrantyConfig(user) },
         ] },
       ] },
       { title: 'Gestión interna', items: [
-        { to: '/productos', icon: <FileSpreadsheet size={18} />, label: 'Productos y proveedores', permission: 'products.view' },
-        { to: '/precios-costos', icon: <CircleDollarSign size={18} />, label: 'Precios y costos', anyPermission: ['price_updates.view', 'cost_updates.view'] },
-        { to: '/ventas-bi', icon: <BarChart2 size={18} />, label: 'Inteligencia comercial', children: [
-          { to: '/ventas-bi/historial', icon: <History size={16} />, label: 'Historial', permission: 'sales_bi.view' },
-          { to: '/ventas-bi/importar', icon: <FileSpreadsheet size={16} />, label: 'Importar planilla', permission: 'sales_bi.import' },
+        { to: '/productos', icon: <FileSpreadsheet size={16} />, label: 'Productos y proveedores', permission: 'products.view' },
+        { to: '/precios-costos', icon: <CircleDollarSign size={16} />, label: 'Precios y costos', anyPermission: ['price_updates.view', 'cost_updates.view'] },
+        { to: '/ventas-bi', icon: <BarChart2 size={16} />, label: 'Inteligencia comercial', children: [
+          { to: '/ventas-bi/historial', icon: <History size={14} />, label: 'Historial', permission: 'sales_bi.view' },
+          { to: '/ventas-bi/importar', icon: <FileSpreadsheet size={14} />, label: 'Importar planilla', permission: 'sales_bi.import' },
         ] },
-        { to: '/recibos', icon: <FileText size={18} />, label: 'Recibos de sueldo', anyPermission: ['payroll_receipts.view_own', 'payroll_receipts.view_all', 'payroll_receipts.upload'] },
+        { to: '/recibos', icon: <FileText size={16} />, label: 'Recibos de sueldo', anyPermission: ['payroll_receipts.view_own', 'payroll_receipts.view_all', 'payroll_receipts.upload'] },
       ] },
       { title: 'Herramientas', items: [
-        { to: '/tools', icon: <Wrench size={18} />, label: 'Herramientas internas', permission: 'tools.view' },
-        { to: '/jobs', icon: <History size={18} />, label: 'Historial de procesos', permission: 'jobs.view' },
-        { to: '/audit', icon: <ClipboardList size={18} />, label: 'Movimientos', permission: 'audit.view' },
+        { to: '/tools', icon: <Wrench size={16} />, label: 'Herramientas internas', permission: 'tools.view' },
+        { to: '/jobs', icon: <History size={16} />, label: 'Historial de procesos', permission: 'jobs.view' },
+        { to: '/audit', icon: <ClipboardList size={16} />, label: 'Movimientos', permission: 'audit.view' },
       ] },
       { title: 'Administración', items: [
-        { to: '/admin/users', icon: <UserCog size={18} />, label: 'Usuarios', permission: 'users.view' },
-        { to: '/admin/roles', icon: <KeyRound size={18} />, label: 'Roles y permisos', permission: 'roles.view' },
-        { to: '/admin/companies-branches', icon: <Building2 size={18} />, label: 'Empresas y sucursales', permission: 'branches.view' },
-        { to: '/admin/operational-config', icon: <SlidersHorizontal size={18} />, label: 'Config. operativa', permission: 'ops_config.view' },
-        { to: '/admin/google', icon: <Cloud size={18} />, label: 'Google', permission: 'google.manage' },
-        { to: '/admin/backups', icon: <Archive size={18} />, label: 'Backups', permission: 'backups.view' },
-        { to: '/admin/diagnostico', icon: <Activity size={18} />, label: 'Diagnóstico', permission: 'system.diagnostics.view' },
-        { to: '/settings', icon: <Settings size={18} />, label: 'Config. técnica', permission: 'settings.view' },
+        { to: '/administracion/usuarios', icon: <UserCog size={16} />, label: 'Usuarios', permission: 'users.view' },
+        { to: '/administracion/empleados', icon: <IdCard size={16} />, label: 'Empleados', permission: 'employees.view' },
+        { to: '/administracion/fotos', icon: <Camera size={16} />, label: 'Fotos profesionales', permission: 'employees.photo.approve' },
+        { to: '/admin/roles', icon: <KeyRound size={16} />, label: 'Roles y permisos', permission: 'roles.view' },
+        { to: '/admin/companies-branches', icon: <Building2 size={16} />, label: 'Empresas y sucursales', permission: 'branches.view' },
+        { to: '/admin/operational-config', icon: <SlidersHorizontal size={16} />, label: 'Config. operativa', permission: 'ops_config.view' },
+        { to: '/admin/google', icon: <Cloud size={16} />, label: 'Google', permission: 'google.manage' },
+        { to: '/admin/backups', icon: <Archive size={16} />, label: 'Backups', permission: 'backups.view' },
+        { to: '/admin/diagnostico', icon: <Activity size={16} />, label: 'Diagnóstico', permission: 'system.diagnostics.view' },
+        { to: '/settings', icon: <Settings size={16} />, label: 'Config. técnica', permission: 'settings.view' },
       ] },
       { title: 'Cuenta', items: [
-        { to: '/me', icon: <User size={18} />, label: 'Mi usuario', permission: 'profile.view' },
-        { to: '/about', icon: <Info size={18} />, label: 'Acerca del sistema', permission: 'about.view' },
+        { to: '/me', icon: <User size={16} />, label: 'Mi usuario', permission: 'profile.view' },
+        { to: '/mi-legajo', icon: <IdCard size={16} />, label: 'Mi legajo', permission: 'profile.view' },
+        { to: '/about', icon: <Info size={16} />, label: 'Acerca del sistema', permission: 'about.view' },
       ] },
     ];
     return sections
@@ -180,20 +203,44 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
   const mobileQuickNav = useMemo<NavItemDef[]>(() => {
     const user = getCurrentUserFromStorage();
+    // 4 ítems prioritarios mobile (estilo mockup): Inicio · Garantías · Remitos · Reportes.
+    // Los demás accesos viven en "Más" (botón del bottom nav).
     const items: NavItemDef[] = [
       { to: '/', icon: <Home size={19} />, label: 'Inicio', permission: 'profile.view', exact: true },
-      { to: '/venta/nueva', icon: <Globe2 size={19} />, label: 'Venta', permission: 'sales_web.create' },
-      { to: '/venta/mis-solicitudes', icon: <ClipboardList size={19} />, label: 'Mis ventas', permission: 'sales_web.view' },
-      { to: '/warranties/new', icon: <ShieldCheck size={19} />, label: 'Garantía', permission: 'warranties.create' },
-      { to: '/warranties/sucursal', icon: <MapPin size={19} />, label: 'Sucursal', visible: canSeeSucursalLogistics(user) },
-      { to: '/warranties/gestor', icon: <LayoutDashboard size={19} />, label: 'Gestor', visible: canSeeGestorPanel(user) },
-      { to: '/warranties/deposito', icon: <PackageCheck size={19} />, label: 'Recepción', visible: canSeeDepositReceivePage(user) },
-      { to: '/warranties/remitos',  icon: <Truck size={19} />,        label: 'Remitos',   visible: !isPlainDepositOperator(user) && canUseRemitosHub(user) },
-      { to: '/warranties/gestion', icon: <Building2 size={19} />, label: 'Gestión', visible: canSeeWarrantyProviderManagement(user) },
-      { to: '/precios-costos', icon: <CircleDollarSign size={19} />, label: 'Precios', anyPermission: ['price_updates.view', 'cost_updates.view'] },
-      { to: '/notificaciones', icon: <Bell size={19} />, label: 'Avisos', permission: 'notifications.view' },
+      // Garantías: para roles que las cargan, el link va a "Nueva"; para gestor al panel.
+      ...(can('warranties.create')
+        ? [{ to: '/warranties/new', icon: <ShieldCheck size={19} />, label: 'Garantía', permission: 'warranties.create' }]
+        : []
+      ),
+      ...(!can('warranties.create') && canSeeGestorPanel(user)
+        ? [{ to: '/warranties/gestor', icon: <LayoutDashboard size={19} />, label: 'Garantías', visible: canSeeGestorPanel(user) }]
+        : []
+      ),
+      ...(!can('warranties.create') && !canSeeGestorPanel(user) && canSeeWarrantyList(user)
+        ? [{ to: '/warranties', icon: <ShieldCheck size={19} />, label: 'Garantías', visible: canSeeWarrantyList(user), exact: true }]
+        : []
+      ),
+      // Espacio operativo / posventa: depósito y sucursal van a "Mi espacio";
+      // posventa a su pantalla; el resto al historial de remitos.
+      ...(canSeeDepositReceivePage(user) || canSeeSucursalLogistics(user)
+        ? [{ to: '/warranties/mi-espacio', icon: <PackageCheck size={19} />, label: 'Mi espacio', visible: true }]
+        : (canSeeWarrantyProviderManagement(user) || canSeeWarrantyExport(user))
+          ? [{ to: '/warranties/posventa', icon: <Building2 size={19} />, label: 'Posventa', visible: true }]
+          : canSeeRemitoTracking(user)
+            ? [{ to: '/warranties/remito-historial', icon: <Truck size={19} />, label: 'Remitos', visible: true }]
+            : []
+      ),
+      // Reportes / BI
+      ...(can('sales_bi.view')
+        ? [{ to: '/ventas-bi/historial', icon: <BarChart2 size={19} />, label: 'Reportes', permission: 'sales_bi.view' }]
+        : canSeeWarrantyDashboard(user)
+          ? [{ to: '/warranties/dashboard', icon: <BarChart2 size={19} />, label: 'Reportes', visible: true }]
+          : []
+      ),
+      // Fallback: ventas web
+      { to: '/venta', icon: <Globe2 size={19} />, label: 'Ventas', permission: 'sales_web.view' },
     ];
-    return items.map(filterNavItem).filter(Boolean).slice(0, 5) as NavItemDef[];
+    return items.map(filterNavItem).filter(Boolean).slice(0, 4) as NavItemDef[];
   }, []);
 
   useEffect(() => {
@@ -208,92 +255,245 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
   function doLogout() { logout(); navigate('/login'); }
 
-  const shellBg = brand.key === 'abc'
-    ? 'bg-[radial-gradient(circle_at_top_left,#0c5f7a_0,#081827_38%,#050914_100%)]'
-    : 'bg-[radial-gradient(circle_at_top_left,#12365c_0,#08111f_38%,#050914_100%)]';
+  const systemPillState = !status
+    ? { className: 'erp-sidebar-status erp-sidebar-status-err', label: 'Backend no disponible' }
+    : status.available
+      ? { className: 'erp-sidebar-status erp-sidebar-status-ok', label: 'Sistema abierto' }
+      : status.mode === 'maintenance'
+        ? { className: 'erp-sidebar-status erp-sidebar-status-warn', label: 'En mantenimiento' }
+        : { className: 'erp-sidebar-status', label: 'Sistema cerrado' };
+
+  // Swipe gestures (mobile): borde izquierdo abre el menú, swipe-left dentro lo cierra.
+  const sidebarRef = useRef<HTMLElement | null>(null);
+  const isMobile = typeof window !== 'undefined' && window.matchMedia?.('(max-width: 1023px)').matches;
+  useEdgeSwipe({
+    edge: 'left',
+    onOpen: () => setOpen(true),
+    onClose: () => setOpen(false),
+    drawerRef: sidebarRef,
+    isOpen: open,
+    disabled: !isMobile,
+  });
+
+  // Saludo corto para el header mobile.
+  const mobileGreeting = useMemo(() => {
+    const hour = new Date().getHours();
+    const tod = hour < 12 ? 'Buen día' : hour < 19 ? 'Buenas tardes' : 'Buenas noches';
+    const first = user ? (user.display_name || user.username || '').split(' ')[0] : '';
+    return first ? `${tod}, ${first}` : tod;
+  }, [user]);
+
+  // Estado de conexión (banner offline).
+  const [online, setOnline] = useState<boolean>(typeof navigator === 'undefined' ? true : navigator.onLine);
+  useEffect(() => {
+    function onOnline() { setOnline(true); }
+    function onOffline() { setOnline(false); }
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
 
   return (
-    <div className={`min-h-screen ${shellBg} text-slate-100`}>
-      <header className="sticky top-0 z-40 border-b border-slate-800/90 bg-slate-950/92 px-3 py-2 shadow-xl shadow-black/20 backdrop-blur-xl lg:hidden">
-        <div className="flex items-center justify-between gap-3">
-          <button onClick={() => setOpen(true)} className="touch-target rounded-2xl border border-slate-700 bg-slate-900/70 p-2.5 active:bg-slate-800" aria-label="Abrir menú"><Menu size={22} /></button>
-          <div className="min-w-0 flex-1">
-            <BrandLogo brand={brand} size="sm" className="min-w-0" />
-            {user && <div className="mt-1 truncate text-[11px] font-semibold text-slate-500">{scopeLabel(user)}</div>}
-          </div>
-          {can('notifications.view') && <button onClick={() => navigate('/notificaciones')} className="touch-target relative rounded-2xl border border-slate-700 bg-slate-900/70 p-2.5 active:bg-slate-800" aria-label="Notificaciones"><Bell size={20} />{unread > 0 && <span className="absolute -right-1 -top-1 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-black text-white">{unread}</span>}</button>}
+    <div className={`erp-shell ${open ? 'is-drawer-open' : ''}`}>
+      {/* Banner global de conexión (no se muestra si hay sesión normal con red) */}
+      {!online && (
+        <div className="erp-global-banner is-error" role="status" aria-live="polite">
+          <span aria-hidden="true">⚠</span>
+          <span>Sin conexión a internet. Algunas acciones pueden fallar hasta que se restablezca.</span>
         </div>
+      )}
+      {online && status && !status.available && (
+        <div className="erp-global-banner" role="status" aria-live="polite">
+          <span aria-hidden="true">●</span>
+          <span>{status.mode === 'maintenance' ? 'Sistema en mantenimiento — operaciones restringidas.' : 'Sistema cerrado en este momento.'}</span>
+        </div>
+      )}
+      {/* Header móvil estilo ERP (lg:hidden) */}
+      <header className="erp-mobile-header lg:hidden" role="banner">
+        <button
+          onClick={() => setOpen(true)}
+          className="erp-mobile-header-grip"
+          aria-label="Abrir menú"
+          title="Abrir menú (también podés deslizar desde el borde izquierdo)"
+        >
+          <Menu size={18} />
+        </button>
+        <div className="erp-mobile-header-text">
+          <span className="erp-mobile-header-title">{mobileGreeting}</span>
+          {user && <span className="erp-mobile-header-sub">{scopeLabel(user)}</span>}
+        </div>
+        {can('notifications.view') && (
+          <button
+            onClick={() => navigate('/notificaciones')}
+            className="erp-mobile-header-bell"
+            aria-label={unread > 0 ? `Notificaciones (${unread} sin leer)` : 'Notificaciones'}
+          >
+            <Bell size={18} />
+            {unread > 0 && (
+              <span className="erp-mobile-header-bell-dot">{unread > 99 ? '99+' : unread}</span>
+            )}
+          </button>
+        )}
       </header>
-      {open && <div className="fixed inset-0 z-40 bg-slate-950/75 backdrop-blur-sm lg:hidden" onClick={() => setOpen(false)} />}
-      <aside className={`fixed left-0 top-0 z-50 h-screen w-80 max-w-[92vw] overflow-y-auto border-r border-slate-800 bg-slate-950/95 p-4 shadow-2xl shadow-black/30 backdrop-blur transition-transform lg:translate-x-0 ${open ? 'translate-x-0' : '-translate-x-full'} lg:block`}>
-        <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <BrandLogo brand={brand} size="md" />
-            <button className="rounded-xl border border-slate-700 p-2 lg:hidden" onClick={() => setOpen(false)} aria-label="Cerrar menú"><X size={18} /></button>
+
+      {open && <div className="erp-sidebar-overlay lg:hidden" onClick={() => setOpen(false)} aria-hidden="true" />}
+
+      {/* Sidebar — drawer mobile (overlay) + fijo en desktop (estilo ERP nuevo) */}
+      <aside
+        ref={sidebarRef}
+        className={`erp-sidebar transition-transform ${open ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
+        aria-label="Navegación principal"
+      >
+        <div className="erp-sidebar-header">
+          <span
+            className="erp-sidebar-brand-dot"
+            style={{ background: brand.accentDark, boxShadow: `0 0 0 3px ${brand.accentDark}33` }}
+            aria-hidden="true"
+          />
+          <div className="erp-sidebar-brand-text">
+            <span className="erp-sidebar-brand-name">{brand.name}</span>
+            <span className="erp-sidebar-brand-sub">{brand.subtitle}</span>
           </div>
-          <SystemPill status={status} />
-          {user && (
-            <div className="mt-3 rounded-2xl border border-slate-800 bg-slate-950/90 px-3 py-3 text-xs text-slate-300">
-              <div className="truncate font-black text-white">{user.display_name}</div>
-              <div className="mt-1 truncate text-slate-400">{user.username} · {roleLabel(user)}</div>
-              <div className="mt-2 inline-flex max-w-full rounded-full border border-blue-500/30 bg-blue-500/10 px-2.5 py-1 text-[11px] font-bold text-blue-100">
-                <span className="truncate">{scopeLabel(user)}</span>
-              </div>
-            </div>
-          )}
+          <button
+            className="ml-auto rounded-md border border-slate-700 p-1.5 text-slate-300 lg:hidden"
+            onClick={() => setOpen(false)}
+            aria-label="Cerrar menú"
+          >
+            <X size={16} />
+          </button>
         </div>
-        <nav className="mt-5 space-y-5 pb-24">
-          {navSections.map((section) => <section key={section.title}>
-            <div className="mb-2 px-3 text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">{section.title}</div>
-            <div className="space-y-1.5">{section.items.map((item) => <NavEntry key={`${section.title}-${item.to}-${item.label}`} sectionTitle={section.title} item={item} expanded={expanded} setExpanded={setExpanded} onNavigate={() => setOpen(false)} />)}</div>
-          </section>)}
+
+        <span className={systemPillState.className}>
+          <span className="erp-sidebar-status-dot" aria-hidden="true" />
+          <span>{systemPillState.label}</span>
+        </span>
+
+        <nav className="erp-sidebar-nav">
+          {navSections.map((section) => (
+            <div key={section.title} className="erp-sidebar-section">
+              <div className="erp-sidebar-section-title">{section.title}</div>
+              {section.items.map((item) => (
+                <SidebarEntry
+                  key={`${section.title}-${item.to}-${item.label}`}
+                  sectionTitle={section.title}
+                  item={item}
+                  expanded={expanded}
+                  setExpanded={setExpanded}
+                  onNavigate={() => setOpen(false)}
+                />
+              ))}
+            </div>
+          ))}
         </nav>
-        <button onClick={doLogout} className="sticky bottom-3 mt-4 flex w-full items-center gap-3 rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm font-semibold text-slate-300 shadow-xl shadow-black/20 hover:bg-slate-900"><LogOut size={18} /> Salir</button>
+
+        <div className="erp-sidebar-footer">
+          <div className="erp-sidebar-avatar" aria-hidden="true">{userInitials(user?.display_name || user?.username || '?')}</div>
+          <div className="erp-sidebar-user">
+            <span className="erp-sidebar-user-name">{user?.display_name || user?.username || 'Sin sesión'}</span>
+            <span className="erp-sidebar-user-meta">{roleLabel(user)} · {scopeLabel(user)}</span>
+          </div>
+          <button className="erp-sidebar-logout" onClick={doLogout} aria-label="Cerrar sesión" title="Cerrar sesión">
+            <LogOut size={14} />
+          </button>
+        </div>
       </aside>
-      <main className="min-h-screen p-3 pb-40 sm:p-6 sm:pb-40 lg:ml-80 lg:p-8 lg:pb-8">{children}</main>
+
+      {/* Main: topbar + breadcrumbs + content */}
+      <div className="erp-main">
+        <Topbar
+          user={user}
+          status={status}
+          unread={unread}
+          canSeeNotifications={can('notifications.view')}
+          branchLabel={scopeLabel(user)}
+        />
+        <MobileFabProvider>
+          <main className="erp-content">
+            <div className="hidden lg:block">
+              <Breadcrumbs />
+            </div>
+            {children}
+          </main>
+        </MobileFabProvider>
+      </div>
+
       <PwaInstallPrompt />
       <UpdatePrompt />
-      <MobileQuickNav items={mobileQuickNav} unread={unread} />
+      <MobileQuickNav items={mobileQuickNav} unread={unread} onOpenMenu={() => setOpen(true)} />
     </div>
   );
 }
 
-function MobileQuickNav({ items, unread }: { items: NavItemDef[]; unread: number }) {
-  if (!items.length) return null;
-  return <nav className="mobile-bottom-nav lg:hidden" aria-label="Accesos rápidos">
-    <div className="mobile-bottom-nav-inner">
-      {items.map((item) => (
-        <NavLink key={`${item.to}-${item.label}`} to={item.to} end={item.exact} className={({ isActive }) => `mobile-bottom-item ${isActive ? 'mobile-bottom-item-active' : ''}`}>
-          <span className="relative">{item.icon}{item.to === '/notificaciones' && unread > 0 && <span className="mobile-bottom-badge">{unread}</span>}</span>
-          <span>{item.label}</span>
-        </NavLink>
-      ))}
-    </div>
-  </nav>;
+function MobileQuickNav({ items, unread, onOpenMenu }: { items: NavItemDef[]; unread: number; onOpenMenu: () => void }) {
+  // Garantizamos 5 slots: 4 ítems prioritarios + "Más" que abre el sidebar.
+  // Si el usuario tiene menos de 4 accesos, dejamos los que haya + el botón "Más".
+  const prioritized = items.slice(0, 4);
+  const slots = prioritized.length + 1;
+  return (
+    <nav className="mobile-bottom-nav lg:hidden" aria-label="Accesos rápidos" style={{ ['--mobile-nav-count' as any]: slots }}>
+      <div className="mobile-bottom-nav-inner" style={{ ['--mobile-nav-count' as any]: slots }}>
+        {prioritized.map((item) => (
+          <NavLink key={`${item.to}-${item.label}`} to={item.to} end={item.exact} className={({ isActive }) => `mobile-bottom-item ${isActive ? 'mobile-bottom-item-active' : ''}`}>
+            <span className="relative">{item.icon}{item.to === '/notificaciones' && unread > 0 && <span className="mobile-bottom-badge">{unread}</span>}</span>
+            <span>{item.label}</span>
+          </NavLink>
+        ))}
+        <button type="button" onClick={onOpenMenu} className="mobile-bottom-item" aria-label="Abrir menú completo" title="Más opciones · podés deslizar desde el borde izquierdo">
+          <span className="relative"><MoreHorizontal size={19} /></span>
+          <span>Más</span>
+        </button>
+      </div>
+    </nav>
+  );
 }
 
-function SystemPill({ status }: { status: SystemPublicStatus | null }) {
-  if (!status) return <div className="mt-4 rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-200">Backend no disponible</div>;
-  const cls = status.available ? 'border-green-500/40 bg-green-500/10 text-green-200' : status.mode === 'maintenance' ? 'border-amber-500/40 bg-amber-500/10 text-amber-200' : 'border-slate-600 bg-slate-800 text-slate-200';
-  return <div className={`mt-4 rounded-xl border px-3 py-2 text-xs font-bold ${cls}`}>{status.available ? 'Sistema abierto' : status.mode === 'maintenance' ? 'Mantenimiento' : 'Sistema cerrado'}</div>;
-}
-
-function NavEntry({ sectionTitle, item, expanded, setExpanded, onNavigate }: { sectionTitle: string; item: NavItemDef; expanded: Record<string, boolean>; setExpanded: Dispatch<SetStateAction<Record<string, boolean>>>; onNavigate: () => void }) {
+function SidebarEntry({ sectionTitle, item, expanded, setExpanded, onNavigate }: { sectionTitle: string; item: NavItemDef; expanded: Record<string, boolean>; setExpanded: Dispatch<SetStateAction<Record<string, boolean>>>; onNavigate: () => void }) {
   const location = useLocation();
   const active = itemIsActive(item, location.pathname);
   if (item.children?.length) {
     const key = `${sectionTitle}:${item.label}`;
     const isOpen = expanded[key] ?? active;
-    return <div>
-      <button type="button" onClick={() => setExpanded((prev) => ({ ...prev, [key]: !isOpen }))} className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition ${active ? 'bg-slate-800 text-white ring-1 ring-blue-500/30' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-100'}`}>
-        {item.icon}<span className="min-w-0 flex-1 truncate text-left">{item.label}</span>{isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-      </button>
-      {isOpen && <div className="ml-5 mt-1 space-y-1 border-l border-slate-800 pl-3">{item.children.map((child) => <NavItem key={`${key}-${child.to}-${child.label}`} {...child} onClick={onNavigate} compact />)}</div>}
-    </div>;
+    return (
+      <div>
+        <button
+          type="button"
+          onClick={() => setExpanded((prev) => ({ ...prev, [key]: !isOpen }))}
+          className={`erp-sidebar-item ${active ? 'is-active' : ''} w-full text-left`}
+          aria-expanded={isOpen}
+        >
+          <span className="erp-sidebar-icon">{item.icon}</span>
+          <span className="erp-sidebar-label">{item.label}</span>
+          <ChevronRight size={14} className={`erp-sidebar-chevron ${isOpen ? 'is-open' : ''}`} />
+        </button>
+        {isOpen && (
+          <div className="erp-sidebar-subnav">
+            {item.children.map((child) => (
+              <SidebarLink key={`${key}-${child.to}-${child.label}`} item={child} onClick={onNavigate} />
+            ))}
+          </div>
+        )}
+      </div>
+    );
   }
-  return <NavItem {...item} onClick={onNavigate} />;
+  return <SidebarLink item={item} onClick={onNavigate} />;
 }
 
-function NavItem({ to, icon, label, exact, onClick, compact = false }: NavItemDef & { onClick: () => void; compact?: boolean }) {
-  return <NavLink to={to} end={exact} onClick={onClick} className={({ isActive }) => `flex items-center gap-3 rounded-2xl ${compact ? 'px-3 py-2.5 text-sm' : 'px-4 py-3 text-sm'} font-semibold transition ${isActive ? 'bg-blue-500 text-white shadow-lg shadow-blue-950/30' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-100'}`}>{icon}<span className="truncate">{label}</span></NavLink>;
+function SidebarLink({ item, onClick }: { item: NavItemDef; onClick: () => void }) {
+  return (
+    <NavLink
+      to={item.to}
+      end={item.exact}
+      onClick={onClick}
+      className={({ isActive }) => `erp-sidebar-item ${isActive ? 'is-active' : ''}`}
+    >
+      <span className="erp-sidebar-icon">{item.icon}</span>
+      <span className="erp-sidebar-label">{item.label}</span>
+      {typeof item.count === 'number' && item.count > 0 && (
+        <span className="erp-sidebar-count">{item.count > 99 ? '99+' : item.count}</span>
+      )}
+    </NavLink>
+  );
 }

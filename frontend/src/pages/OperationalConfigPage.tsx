@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
+  can,
   fetchOperationalConfig,
   fetchProductCatalogStatus,
   getCurrentUserFromStorage,
@@ -81,9 +82,12 @@ export function OperationalConfigPage() {
   const [error, setError] = useState<string | null>(null);
   const [validation, setValidation] = useState<OperationalConfigValidationResult | null>(null);
   const user = getCurrentUserFromStorage();
-  const isSuperadmin = user?.role === 'SUPERADMIN' || user?.permissions?.includes('*');
+  // El control "desbloquear / sobrescribir un bloqueo" se decide por permiso, no por rol.
+  // Cualquier usuario con ops_config.manage (típicamente admins) puede desbloquear
+  // sin importar su rol. Wildcard '*' funciona como fallback explícito.
+  const canManageOps = can('ops_config.manage') || user?.permissions?.includes('*');
   const locked = !!config?.locked;
-  const readOnly = locked && !isSuperadmin;
+  const readOnly = locked && !canManageOps;
 
   async function load() {
     setLoading(true);
@@ -211,7 +215,7 @@ export function OperationalConfigPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <button onClick={load} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-bold text-slate-200 hover:bg-slate-800"><RefreshCw size={16} className="inline" /> Recargar</button>
-          {locked ? <button disabled={!isSuperadmin || saving} onClick={() => toggleLock(false)} className="rounded-xl border border-amber-500/50 px-4 py-2 text-sm font-bold text-amber-100 disabled:opacity-40"><Unlock size={16} className="inline" /> Desbloquear</button>
+          {locked ? <button disabled={!canManageOps || saving} onClick={() => toggleLock(false)} className="rounded-xl border border-amber-500/50 px-4 py-2 text-sm font-bold text-amber-100 disabled:opacity-40"><Unlock size={16} className="inline" /> Desbloquear</button>
             : <button disabled={saving} onClick={() => toggleLock(true)} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-bold text-slate-200 hover:bg-slate-800"><Lock size={16} className="inline" /> Bloquear</button>}
           <button disabled={saving || readOnly} onClick={() => save(false)} className="rounded-xl bg-blue-500 px-4 py-2 text-sm font-black text-white disabled:opacity-40"><Save size={16} className="inline" /> Guardar</button>
           <button disabled={saving || readOnly} onClick={() => save(true)} className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-black text-white disabled:opacity-40">Guardar y bloquear</button>

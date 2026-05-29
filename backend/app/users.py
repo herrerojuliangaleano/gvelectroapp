@@ -33,6 +33,13 @@ def _db_ready(conn: sqlite3.Connection) -> bool:
         return False
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    """Agrega una columna si no existe (migración aditiva idempotente)."""
+    existing = {str(r["name"]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
 def _normalize_branch_token(value: str) -> str:
     raw = str(value or "").upper()
     # Soporta textos viejos tipo "1 - CANNING", "Canning WEB" o "CANNING_WEB".
@@ -364,11 +371,44 @@ def _ensure_employees_table(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    # Fase 0 — Empleados como entidad propia. Campos laborales/legales adicionales.
+    # Todos aditivos y opcionales: empleados existentes no se ven afectados.
+    _ensure_column(conn, "employees", "work_branch_id", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(conn, "employees", "department", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(conn, "employees", "address", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(conn, "employees", "birthdate", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(conn, "employees", "gender", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(conn, "employees", "civil_status", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(conn, "employees", "contract_type", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(conn, "employees", "hire_date", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(conn, "employees", "manager_employee_id", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(conn, "employees", "photo_uploaded_at", "TEXT NOT NULL DEFAULT ''")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_employees_username ON employees(username)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_employees_dni ON employees(dni)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_employees_company ON employees(company_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_employees_branch ON employees(branch_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_employees_work_branch ON employees(work_branch_id)")
+    # Historial de estado laboral (alta / licencia / baja) con motivo y fechas.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS employee_status_history (
+            id TEXT PRIMARY KEY,
+            employee_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT '',
+            previous_status TEXT NOT NULL DEFAULT '',
+            motivo TEXT NOT NULL DEFAULT '',
+            categoria TEXT NOT NULL DEFAULT '',
+            fecha_desde TEXT NOT NULL DEFAULT '',
+            fecha_hasta TEXT NOT NULL DEFAULT '',
+            observaciones TEXT NOT NULL DEFAULT '',
+            actor_username TEXT NOT NULL DEFAULT '',
+            actor_name TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_emp_status_hist_emp ON employee_status_history(employee_id)")
 
 
 def _clean_dni(value: str | None) -> str:
@@ -382,6 +422,17 @@ def _split_display_name(value: str) -> tuple[str, str]:
     if len(parts) == 1:
         return parts[0], ""
     return " ".join(parts[:-1]), parts[-1]
+
+
+def _row_has(row: sqlite3.Row, key: str) -> bool:
+    try:
+        return key in row.keys()
+    except Exception:
+        return False
+
+
+def _rv(row: sqlite3.Row, key: str, default: str = "") -> str:
+    return str(row[key]) if _row_has(row, key) and row[key] is not None else default
 
 
 def _employee_public_from_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -398,13 +449,24 @@ def _employee_public_from_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
         "phone": str(row["phone"] or ""),
         "personal_email": str(row["personal_email"] or ""),
         "position": str(row["position"] or ""),
+        "department": _rv(row, "department"),
+        "address": _rv(row, "address"),
+        "birthdate": _rv(row, "birthdate"),
+        "gender": _rv(row, "gender"),
+        "civil_status": _rv(row, "civil_status"),
+        "contract_type": _rv(row, "contract_type"),
+        "hire_date": _rv(row, "hire_date"),
+        "manager_employee_id": _rv(row, "manager_employee_id"),
         "company_id": str(row["company_id"] or ""),
         "company_name": str(row["company_name"] or ""),
         "branch_id": str(row["branch_id"] or ""),
         "branch_name": str(row["branch_name"] or ""),
         "branch_type": str(row["branch_type"] or ""),
+        "work_branch_id": _rv(row, "work_branch_id"),
+        "work_branch_name": _rv(row, "work_branch_name"),
         "photo_url": str(row["photo_url"] or ""),
         "photo_status": str(row["photo_status"] or "sin_foto"),
+        "photo_uploaded_at": _rv(row, "photo_uploaded_at"),
         "status": str(row["status"] or "activo"),
         "created_at": str(row["created_at"] or ""),
         "updated_at": str(row["updated_at"] or ""),
@@ -929,6 +991,351 @@ def set_employee_photo_status(username: str, photo_status: str) -> dict[str, Any
     if not employee:
         raise ValueError("No se pudo actualizar el estado de foto")
     return employee
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Fase 0 — Empleados como entidad propia (standalone, vínculo opcional con usuario)
+# ──────────────────────────────────────────────────────────────────────────────
+
+_EMP_SELECT = """
+    SELECT e.*, c.name AS company_name, b.name AS branch_name, b.type AS branch_type,
+           wb.name AS work_branch_name
+    FROM employees e
+    LEFT JOIN companies c ON c.id = e.company_id
+    LEFT JOIN branches b ON b.id = e.branch_id
+    LEFT JOIN branches wb ON wb.id = e.work_branch_id
+"""
+
+# Estados laborales canónicos. 'activo'/'inactivo' quedan como alias heredados.
+EMPLOYEE_STATUSES = {"alta", "licencia", "baja"}
+EMPLOYEE_STATUS_ALIASES = {"activo": "alta", "inactivo": "baja", "": "alta"}
+
+
+def _normalize_emp_status(value: str | None) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in EMPLOYEE_STATUSES:
+        return raw
+    return EMPLOYEE_STATUS_ALIASES.get(raw, raw or "alta")
+
+
+def _user_summary_for_employee(username: str) -> dict[str, Any] | None:
+    if not str(username or "").strip():
+        return None
+    record = load_users().get(username)
+    if not record:
+        return None
+    return {
+        "username": record.username,
+        "display_name": record.display_name,
+        "role": record.role,
+        "roles": _roles_for_record(record),
+        "is_active": record.is_active,
+    }
+
+
+def _employee_full_public(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    public = _employee_public_from_row(row)
+    if public is None:
+        return None
+    public["status"] = _normalize_emp_status(public.get("status"))
+    public["user"] = _user_summary_for_employee(public.get("username") or "")
+    public["has_user"] = bool(public.get("username"))
+    return public
+
+
+def _fetch_employee_row_by_id(conn: sqlite3.Connection, employee_id: str) -> sqlite3.Row | None:
+    return conn.execute(_EMP_SELECT + " WHERE e.id = ?", (employee_id,)).fetchone()
+
+
+def get_employee_by_id(employee_id: str) -> dict[str, Any] | None:
+    eid = str(employee_id or "").strip()
+    if not eid:
+        return None
+    try:
+        with _db_connect() as conn:
+            _ensure_employees_table(conn)
+            return _employee_full_public(_fetch_employee_row_by_id(conn, eid))
+    except Exception:
+        return None
+
+
+def list_employees(
+    *,
+    q: str = "",
+    status: str = "",
+    work_branch_id: str = "",
+    has_user: str = "",
+    limit: int = 500,
+) -> list[dict[str, Any]]:
+    """Lista empleados (incluye los que NO tienen usuario)."""
+    try:
+        with _db_connect() as conn:
+            _ensure_employees_table(conn)
+            rows = conn.execute(_EMP_SELECT + " ORDER BY e.last_name COLLATE NOCASE, e.first_name COLLATE NOCASE").fetchall()
+    except Exception:
+        return []
+    items = [p for p in (_employee_full_public(r) for r in rows) if p]
+
+    q_key = re.sub(r"\s+", " ", str(q or "").strip().lower())
+    status_key = _normalize_emp_status(status) if str(status or "").strip() else ""
+    wb_key = str(work_branch_id or "").strip()
+    hu_key = str(has_user or "").strip().lower()
+
+    def matches(emp: dict[str, Any]) -> bool:
+        if status_key and _normalize_emp_status(emp.get("status")) != status_key:
+            return False
+        if wb_key and str(emp.get("work_branch_id") or "") != wb_key:
+            return False
+        if hu_key in {"true", "1", "yes", "si"} and not emp.get("has_user"):
+            return False
+        if hu_key in {"false", "0", "no"} and emp.get("has_user"):
+            return False
+        if q_key:
+            hay = " ".join([
+                str(emp.get("display_name") or ""), str(emp.get("dni") or ""),
+                str(emp.get("position") or ""), str(emp.get("username") or ""),
+                str(emp.get("personal_email") or ""), str(emp.get("branch_name") or ""),
+                str(emp.get("work_branch_name") or ""),
+            ]).lower()
+            if not all(tok in hay for tok in q_key.split(" ")):
+                return False
+        return True
+
+    return [e for e in items if matches(e)][: max(1, int(limit or 500))]
+
+
+_EMP_EDITABLE_FIELDS = (
+    "first_name", "last_name", "display_name", "phone", "personal_email", "position",
+    "department", "address", "birthdate", "gender", "civil_status", "contract_type",
+    "hire_date", "manager_employee_id", "company_id", "branch_id", "work_branch_id",
+)
+
+
+def _emp_clean_payload(data: dict[str, Any]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for key in _EMP_EDITABLE_FIELDS:
+        if key in data and data[key] is not None:
+            out[key] = str(data[key]).strip()
+    return out
+
+
+def create_standalone_employee(payload: dict[str, Any], actor: Any = None) -> dict[str, Any]:
+    """Crea un empleado SIN usuario asociado (username = NULL)."""
+    data = dict(payload or {})
+    dni = _clean_dni(data.get("dni"))
+    fields = _emp_clean_payload(data)
+    first = fields.get("first_name", "")
+    last = fields.get("last_name", "")
+    display = fields.get("display_name") or " ".join([first, last]).strip()
+    if not display:
+        raise ValueError("Indicá al menos el nombre del empleado")
+    if not first and not last:
+        first, last = _split_display_name(display)
+    now = datetime.now(timezone.utc).isoformat()
+    employee_id = str(data.get("id") or uuid.uuid4())
+    with _store_lock:
+        with _db_connect() as conn:
+            _ensure_employees_table(conn)
+            if dni:
+                dup = conn.execute("SELECT id FROM employees WHERE dni = ?", (dni,)).fetchone()
+                if dup:
+                    raise ValueError(f"El DNI {dni} ya está asignado a otro empleado")
+            row_fields = {
+                "id": employee_id,
+                "username": None,
+                "dni": dni or None,
+                "first_name": first,
+                "last_name": last,
+                "display_name": display,
+                "phone": fields.get("phone", ""),
+                "personal_email": fields.get("personal_email", ""),
+                "position": fields.get("position", ""),
+                "department": fields.get("department", ""),
+                "address": fields.get("address", ""),
+                "birthdate": fields.get("birthdate", ""),
+                "gender": fields.get("gender", ""),
+                "civil_status": fields.get("civil_status", ""),
+                "contract_type": fields.get("contract_type", ""),
+                "hire_date": fields.get("hire_date", ""),
+                "manager_employee_id": fields.get("manager_employee_id", ""),
+                "company_id": fields.get("company_id", ""),
+                "branch_id": fields.get("branch_id", ""),
+                "work_branch_id": fields.get("work_branch_id", ""),
+                "photo_url": "",
+                "photo_status": "sin_foto",
+                "status": _normalize_emp_status(data.get("status")),
+                "created_at": now,
+                "updated_at": now,
+            }
+            cols = ", ".join(row_fields.keys())
+            placeholders = ", ".join(f":{k}" for k in row_fields.keys())
+            try:
+                conn.execute(f"INSERT INTO employees ({cols}) VALUES ({placeholders})", row_fields)
+            except sqlite3.IntegrityError as exc:
+                raise ValueError("No se pudo crear el empleado. Revisá que el DNI no esté repetido.") from exc
+            conn.commit()
+            return _employee_full_public(_fetch_employee_row_by_id(conn, employee_id))
+
+
+def update_employee_by_id(employee_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    eid = str(employee_id or "").strip()
+    data = dict(payload or {})
+    fields = _emp_clean_payload(data)
+    now = datetime.now(timezone.utc).isoformat()
+    with _store_lock:
+        with _db_connect() as conn:
+            _ensure_employees_table(conn)
+            existing = conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone()
+            if not existing:
+                raise ValueError("Empleado no encontrado")
+            updates: dict[str, Any] = dict(fields)
+            if "dni" in data:
+                dni = _clean_dni(data.get("dni"))
+                if dni:
+                    dup = conn.execute("SELECT id FROM employees WHERE dni = ? AND id != ?", (dni, eid)).fetchone()
+                    if dup:
+                        raise ValueError(f"El DNI {dni} ya está asignado a otro empleado")
+                updates["dni"] = dni or None
+            if "status" in data:
+                updates["status"] = _normalize_emp_status(data.get("status"))
+            if not updates:
+                return _employee_full_public(_fetch_employee_row_by_id(conn, eid))
+            updates["updated_at"] = now
+            assignments = ", ".join(f"{k} = :{k}" for k in updates)
+            updates["__id"] = eid
+            try:
+                conn.execute(f"UPDATE employees SET {assignments} WHERE id = :__id", updates)
+            except sqlite3.IntegrityError as exc:
+                raise ValueError("No se pudo guardar. Revisá que el DNI no esté repetido.") from exc
+            conn.commit()
+            return _employee_full_public(_fetch_employee_row_by_id(conn, eid))
+
+
+def link_employee_user(employee_id: str, username: str) -> dict[str, Any]:
+    """Vincula un usuario existente a un empleado (1:1 opcional)."""
+    eid = str(employee_id or "").strip()
+    uname = str(username or "").strip()
+    if not uname:
+        raise ValueError("Indicá el usuario a vincular")
+    if not get_user(uname):
+        raise ValueError("El usuario no existe")
+    now = datetime.now(timezone.utc).isoformat()
+    with _store_lock:
+        with _db_connect() as conn:
+            _ensure_employees_table(conn)
+            emp = conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone()
+            if not emp:
+                raise ValueError("Empleado no encontrado")
+            other = conn.execute("SELECT id FROM employees WHERE username = ? AND id != ?", (uname, eid)).fetchone()
+            if other:
+                raise ValueError(f"El usuario {uname} ya está vinculado a otro empleado")
+            conn.execute("UPDATE employees SET username = ?, updated_at = ? WHERE id = ?", (uname, now, eid))
+            conn.commit()
+            return _employee_full_public(_fetch_employee_row_by_id(conn, eid))
+
+
+def unlink_employee_user(employee_id: str) -> dict[str, Any]:
+    eid = str(employee_id or "").strip()
+    now = datetime.now(timezone.utc).isoformat()
+    with _store_lock:
+        with _db_connect() as conn:
+            _ensure_employees_table(conn)
+            emp = conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone()
+            if not emp:
+                raise ValueError("Empleado no encontrado")
+            conn.execute("UPDATE employees SET username = NULL, updated_at = ? WHERE id = ?", (now, eid))
+            conn.commit()
+            return _employee_full_public(_fetch_employee_row_by_id(conn, eid))
+
+
+def change_employee_status(employee_id: str, payload: dict[str, Any], actor: Any = None) -> dict[str, Any]:
+    """Cambia el estado laboral (alta/licencia/baja) y registra el historial."""
+    eid = str(employee_id or "").strip()
+    new_status = _normalize_emp_status((payload or {}).get("status"))
+    if new_status not in EMPLOYEE_STATUSES:
+        raise ValueError("Estado laboral inválido. Usá: alta, licencia o baja.")
+    now = datetime.now(timezone.utc).isoformat()
+    with _store_lock:
+        with _db_connect() as conn:
+            _ensure_employees_table(conn)
+            emp = conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone()
+            if not emp:
+                raise ValueError("Empleado no encontrado")
+            previous = _normalize_emp_status(emp["status"])
+            conn.execute("UPDATE employees SET status = ?, updated_at = ? WHERE id = ?", (new_status, now, eid))
+            conn.execute(
+                """
+                INSERT INTO employee_status_history
+                    (id, employee_id, status, previous_status, motivo, categoria, fecha_desde, fecha_hasta, observaciones, actor_username, actor_name, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid.uuid4()), eid, new_status, previous,
+                    str((payload or {}).get("motivo") or "").strip(),
+                    str((payload or {}).get("categoria") or "").strip(),
+                    str((payload or {}).get("fecha_desde") or "").strip(),
+                    str((payload or {}).get("fecha_hasta") or "").strip(),
+                    str((payload or {}).get("observaciones") or "").strip(),
+                    getattr(actor, "username", "") or "",
+                    getattr(actor, "display_name", "") or "",
+                    now,
+                ),
+            )
+            conn.commit()
+            return _employee_full_public(_fetch_employee_row_by_id(conn, eid))
+
+
+def list_employee_status_history(employee_id: str) -> list[dict[str, Any]]:
+    eid = str(employee_id or "").strip()
+    try:
+        with _db_connect() as conn:
+            _ensure_employees_table(conn)
+            rows = conn.execute(
+                "SELECT * FROM employee_status_history WHERE employee_id = ? ORDER BY created_at DESC, id DESC",
+                (eid,),
+            ).fetchall()
+    except Exception:
+        return []
+    return [
+        {
+            "id": str(r["id"]), "status": str(r["status"] or ""), "previous_status": str(r["previous_status"] or ""),
+            "motivo": str(r["motivo"] or ""), "categoria": str(r["categoria"] or ""),
+            "fecha_desde": str(r["fecha_desde"] or ""), "fecha_hasta": str(r["fecha_hasta"] or ""),
+            "observaciones": str(r["observaciones"] or ""),
+            "actor_username": str(r["actor_username"] or ""), "actor_name": str(r["actor_name"] or ""),
+            "created_at": str(r["created_at"] or ""),
+        }
+        for r in rows
+    ]
+
+
+def search_users_for_link(q: str = "", limit: int = 20) -> list[dict[str, Any]]:
+    """Usuarios candidatos para vincular a un empleado (no vinculados a otro con DNI)."""
+    q_key = str(q or "").strip().lower()
+    linked: set[str] = set()
+    try:
+        with _db_connect() as conn:
+            _ensure_employees_table(conn)
+            for r in conn.execute("SELECT username, dni FROM employees WHERE username IS NOT NULL AND TRIM(COALESCE(dni,'')) != ''").fetchall():
+                linked.add(str(r["username"]))
+    except Exception:
+        pass
+    out: list[dict[str, Any]] = []
+    for record in load_users().values():
+        if record.username in linked:
+            continue
+        hay = f"{record.username} {record.display_name}".lower()
+        if q_key and not all(tok in hay for tok in q_key.split()):
+            continue
+        out.append({
+            "username": record.username,
+            "display_name": record.display_name,
+            "role": record.role,
+            "is_active": record.is_active,
+        })
+        if len(out) >= max(1, int(limit or 20)):
+            break
+    return out
 
 
 def get_current_user(username: str) -> CurrentUser | None:

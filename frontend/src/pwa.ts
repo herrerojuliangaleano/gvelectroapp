@@ -41,6 +41,18 @@ export function registerPwa(): void {
 
   if (!('serviceWorker' in navigator)) return;
 
+  // En desarrollo (vite dev), no registramos el service worker:
+  // intercepta fetchs, cachea index.html viejo y rompe el HMR. Además
+  // desinstalamos cualquier SW residual de una sesión previa para que
+  // localhost:5173 quede limpio.
+  if (import.meta.env.DEV) {
+    navigator.serviceWorker.getRegistrations()
+      .then((regs) => Promise.all(regs.map((r) => r.unregister())))
+      .then(() => caches?.keys?.().then((keys) => Promise.all(keys.map((k) => caches.delete(k)))))
+      .catch(() => undefined);
+    return;
+  }
+
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').then((registration) => {
       registration.addEventListener('updatefound', () => {

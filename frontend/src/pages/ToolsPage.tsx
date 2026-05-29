@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import { fetchTools } from '../api/client';
+import {
+  ErpBadge,
+  ErpEmptyState,
+  ErpLoadingState,
+  ErpNotice,
+  ErpPageHeader,
+} from '../components/ProUI';
 import { ToolCard } from '../components/ToolCard';
 import type { ToolInfo } from '../types';
 
@@ -8,8 +15,13 @@ export function ToolsPage() {
   const [tools, setTools] = useState<ToolInfo[]>([]);
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => { fetchTools().then(setTools).catch((err) => setError(err.message)); }, []);
+  useEffect(() => {
+    fetchTools()
+      .then((res) => { setTools(res); setLoading(false); })
+      .catch((err) => { setError(err.message); setLoading(false); });
+  }, []);
 
   const grouped = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -23,30 +35,49 @@ export function ToolsPage() {
   }, [query, tools]);
 
   return (
-    <div className="mx-auto max-w-7xl">
-      <div className="mb-6">
-        <h1 className="text-2xl font-black sm:text-3xl">Herramientas internas</h1>
-        <p className="mt-2 text-sm text-slate-400">Panel general para ejecutar procesos internos. Elegí la herramienta correcta antes de correr cualquier proceso pesado.</p>
+    <div className="erp-stack-6">
+      <ErpPageHeader
+        title="Herramientas internas"
+        description="Panel general para ejecutar procesos internos. Elegí la herramienta correcta antes de correr cualquier proceso pesado."
+      />
+
+      {error && <ErpNotice tone="error">{error}</ErpNotice>}
+
+      <div className="relative max-w-md">
+        <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[color:var(--text-3)]" />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className="erp-input"
+          style={{ paddingLeft: 32 }}
+          placeholder="Buscar por nombre, categoría o uso..."
+        />
       </div>
-      {error && <div className="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-red-200">{error}</div>}
-      <div className="mb-6 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-        <label className="flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-4 py-3">
-          <Search size={18} className="text-slate-500" />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} className="w-full bg-transparent outline-none" placeholder="Buscar por nombre, categoría o uso..." />
-        </label>
-      </div>
-      <div className="space-y-8">
-        {grouped.map(([category, list]) => (
-          <section key={category}>
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <h2 className="text-sm font-black uppercase tracking-[0.16em] text-slate-400">{category}</h2>
-              <span className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-400">{list.length} herramienta/s</span>
-            </div>
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">{list.map((tool) => <ToolCard key={tool.id} tool={tool} />)}</div>
-          </section>
-        ))}
-        {!grouped.length && <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-8 text-center text-slate-400">No hay herramientas para mostrar con ese filtro.</div>}
-      </div>
+
+      {loading && <ErpLoadingState />}
+
+      {!loading && !error && (
+        <div className="erp-stack-6">
+          {grouped.map(([category, list]) => (
+            <section key={category}>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h2 className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-[color:var(--text-3)]">{category}</h2>
+                <ErpBadge tone="neutral" withDot={false}>{list.length}</ErpBadge>
+              </div>
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
+                {list.map((tool) => <ToolCard key={tool.id} tool={tool} />)}
+              </div>
+            </section>
+          ))}
+          {!grouped.length && (
+            <ErpEmptyState
+              icon={<Search size={20} />}
+              title={query ? 'Ninguna herramienta coincide' : 'No hay herramientas disponibles'}
+              description={query ? 'Ajustá el término de búsqueda o limpialo para ver todas.' : 'No tenés herramientas habilitadas con tus permisos actuales.'}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }

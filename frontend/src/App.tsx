@@ -5,7 +5,13 @@ import { AppLayout } from './layouts/AppLayout';
 import { canSeeDepositReceivePage, canSeeGestorPanel, canSeeRemitoTracking, canSeeSucursalLogistics, canSeeWarrantyConfig, canSeeWarrantyDashboard, canSeeWarrantyExport, canSeeWarrantyList, canSeeWarrantyProviderManagement, canSeeWarrantySync, canUseRemitosHub, isCadeteDeposito, isPlainDepositOperator } from './warrantyAccess';
 import { AboutSystemPage } from './pages/AboutSystemPage';
 import { AdminRolesPage } from './pages/AdminRolesPage';
-import { AdminUsersPage } from './pages/AdminUsersPage';
+import { AdminUsuariosPage } from './pages/AdminUsuariosPage';
+import { AdminEmpleadosPage } from './pages/AdminEmpleadosPage';
+import { EmployeeLegajoPage } from './pages/EmployeeLegajoPage';
+import { EmployeeCreatePage } from './pages/EmployeeCreatePage';
+import { UserCreateWizardPage } from './pages/UserCreateWizardPage';
+import { PhotoApprovalPage } from './pages/PhotoApprovalPage';
+import { MyLegajoPage } from './pages/MyLegajoPage';
 import { AuditLogPage } from './pages/AuditLogPage';
 import { BackupsPage } from './pages/BackupsPage';
 import { BudgetCreatePage } from './pages/BudgetCreatePage';
@@ -38,7 +44,9 @@ import { WarrantyExportPage } from './pages/WarrantyExportPage';
 import { WarrantySyncPage } from './pages/WarrantySyncPage';
 import { WarrantyConfigPage } from './pages/WarrantyConfigPage';
 import { WarrantyGestorPage } from './pages/WarrantyGestorPage';
+import { WarrantyPosventaPage } from './pages/WarrantyPosventaPage';
 import { WarrantySucursalPage } from './pages/WarrantySucursalPage';
+import { WarrantyWorkspacePage } from './pages/WarrantyWorkspacePage';
 import { WarrantyDepositReceivePage } from './pages/WarrantyDepositReceivePage';
 import { WarrantyRemitosPage } from './pages/WarrantyRemitosPage';
 import { WarrantyRemitoTrackingPage } from './pages/WarrantyRemitoTrackingPage';
@@ -78,12 +86,12 @@ function defaultRedirect() {
   if (can('price_updates.view') || can('cost_updates.view')) return <Navigate to="/precios-costos" replace />;
   if (can('payroll_receipts.view_own') || can('payroll_receipts.view_all')) return <Navigate to="/recibos" replace />;
   if (can('warranties.gestor.panel') || can('warranties.manage') || can('warranties.review')) return <Navigate to="/warranties/gestor" replace />;
-  if (can('warranties.manage_provider')) return <Navigate to="/warranties/gestion" replace />;
-  if (can('warranties.sucursal.logistics')) return <Navigate to="/warranties/sucursal" replace />;
+  if (can('warranties.manage_provider')) return <Navigate to="/warranties/posventa" replace />;
+  if (can('warranties.sucursal.logistics')) return <Navigate to="/warranties/mi-espacio" replace />;
   if (can('warranties.view')) return <Navigate to="/warranties" replace />;
   if (can('warranties.create')) return <Navigate to="/warranties/new" replace />;
   if (can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer')) {
-    if (isPlainDepositOperator(getCurrentUserFromStorage())) return <Navigate to="/warranties/deposito" replace />;
+    if (isPlainDepositOperator(getCurrentUserFromStorage())) return <Navigate to="/warranties/mi-espacio" replace />;
   }
   if (can('warranties.remitos.deposit_transfer') || can('warranties.remitos.provider_delivery')) return <Navigate to="/warranties/remitos" replace />;
   if (can('budgets.view')) return <Navigate to="/budgets/new" replace />;
@@ -94,8 +102,8 @@ function EntryPoint() {
   if (!getToken()) return <Navigate to="/login" replace />;
   const user = getCurrentUserFromStorage();
   if (user?.must_change_password) return <Navigate to="/set-password" replace />;
-  // Encargado de Depósito → directo a su pantalla de recepción, sin pasar por el Dashboard
-  if (isPlainDepositOperator(user)) return <Navigate to="/warranties/deposito" replace />;
+  // Encargado de Depósito → directo a su espacio de trabajo, sin pasar por el Dashboard
+  if (isPlainDepositOperator(user)) return <Navigate to="/warranties/mi-espacio" replace />;
   if (can('profile.view')) return <ProtectedLayout permission="profile.view"><DashboardPage /></ProtectedLayout>;
   return defaultRedirect();
 }
@@ -115,6 +123,7 @@ export default function App() {
       <Route path="/set-password" element={<RequireAuth><SetPasswordPage /></RequireAuth>} />
       <Route path="/" element={<EntryPoint />} />
       <Route path="/me" element={<ProtectedLayout permission="profile.view"><MyUserPage /></ProtectedLayout>} />
+      <Route path="/mi-legajo" element={<ProtectedLayout permission="profile.view"><MyLegajoPage /></ProtectedLayout>} />
       <Route path="/about" element={<ProtectedLayout permission="about.view"><AboutSystemPage /></ProtectedLayout>} />
       <Route path="/tools" element={<ProtectedLayout permission="tools.view"><ToolsPage /></ProtectedLayout>} />
       <Route path="/tools/:toolId" element={<ProtectedLayout permission="tools.view"><ToolRunPage /></ProtectedLayout>} />
@@ -125,7 +134,9 @@ export default function App() {
       <Route path="/warranties/revision" element={<Navigate to="/warranties/gestor" replace />} />
       <Route path="/warranties/review" element={<Navigate to="/warranties/gestor" replace />} />
       <Route path="/warranties/gestor" element={<ProtectedLayout allowed={() => canSeeGestorPanel(getCurrentUserFromStorage())}><WarrantyGestorPage /></ProtectedLayout>} />
+      <Route path="/warranties/mi-espacio" element={<ProtectedLayout allowed={() => { const u = getCurrentUserFromStorage(); return canSeeSucursalLogistics(u) || canSeeDepositReceivePage(u); }}><WarrantyWorkspacePage /></ProtectedLayout>} />
       <Route path="/warranties/sucursal" element={<ProtectedLayout allowed={() => canSeeSucursalLogistics(getCurrentUserFromStorage())}><WarrantySucursalPage /></ProtectedLayout>} />
+      <Route path="/warranties/posventa" element={<ProtectedLayout allowed={() => { const u = getCurrentUserFromStorage(); return canSeeWarrantyProviderManagement(u) || canSeeWarrantyExport(u); }}><WarrantyPosventaPage /></ProtectedLayout>} />
       <Route path="/warranties/gestion" element={<ProtectedLayout allowed={() => canSeeWarrantyProviderManagement(getCurrentUserFromStorage())}><WarrantyManagementPage /></ProtectedLayout>} />
       <Route path="/warranties/management" element={<Navigate to="/warranties/gestion" replace />} />
       <Route path="/warranties/export" element={<ProtectedLayout allowed={() => canSeeWarrantyExport(getCurrentUserFromStorage())}><WarrantyExportPage /></ProtectedLayout>} />
@@ -174,7 +185,14 @@ export default function App() {
       <Route path="/admin/operational-config" element={<ProtectedLayout permission="ops_config.view"><OperationalConfigPage /></ProtectedLayout>} />
       <Route path="/admin/companies-branches" element={<ProtectedLayout permission="branches.view"><CompaniesBranchesPage /></ProtectedLayout>} />
       <Route path="/admin/empresas-sucursales" element={<Navigate to="/admin/companies-branches" replace />} />
-      <Route path="/admin/users" element={<ProtectedLayout permission="users.view"><AdminUsersPage /></ProtectedLayout>} />
+      <Route path="/administracion/usuarios" element={<ProtectedLayout permission="users.view"><AdminUsuariosPage /></ProtectedLayout>} />
+      <Route path="/administracion/usuarios/nuevo" element={<ProtectedLayout permission="users.manage"><UserCreateWizardPage /></ProtectedLayout>} />
+      <Route path="/administracion/usuarios/:username" element={<ProtectedLayout permission="users.view"><AdminUsuariosPage /></ProtectedLayout>} />
+      <Route path="/administracion/empleados" element={<ProtectedLayout permission="employees.view"><AdminEmpleadosPage /></ProtectedLayout>} />
+      <Route path="/administracion/empleados/nuevo" element={<ProtectedLayout permission="employees.manage"><EmployeeCreatePage /></ProtectedLayout>} />
+      <Route path="/administracion/empleados/:id" element={<ProtectedLayout permission="employees.view"><EmployeeLegajoPage /></ProtectedLayout>} />
+      <Route path="/administracion/fotos" element={<ProtectedLayout permission="employees.photo.approve"><PhotoApprovalPage /></ProtectedLayout>} />
+      <Route path="/admin/users" element={<Navigate to="/administracion/usuarios" replace />} />
       <Route path="/admin/roles" element={<ProtectedLayout permission="roles.view"><AdminRolesPage /></ProtectedLayout>} />
       <Route path="/admin/google" element={<ProtectedLayout permission="google.manage"><GoogleAdminPage /></ProtectedLayout>} />
       <Route path="/admin/backups" element={<ProtectedLayout permission="backups.view"><BackupsPage /></ProtectedLayout>} />

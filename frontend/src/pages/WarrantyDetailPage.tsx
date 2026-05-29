@@ -10,6 +10,7 @@ import {
   fetchWarrantyDetail, fetchWarrantyOptions, markWarrantyIncomplete,
   takeWarrantyIntoReview, updateWarranty, updateWarrantyEntryBase,
 } from '../api/client';
+import { ErpConfirmDialog, ErpTimeline, ErpTimelineItem } from '../components/ProUI';
 import type { WarrantyDetailResponse, WarrantyItemUpdatePayload, WarrantyOptions } from '../types';
 import {
   flowToneClass, getDetailStateConfig, getReviewStatusMeta,
@@ -76,6 +77,8 @@ export function WarrantyDetailPage() {
   const [cancelReason, setCancelReason] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState('');
   const [showAdminActions, setShowAdminActions] = useState(false);
+  const [confirmCancelOpen, setConfirmCancelOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   // ui
   const [error, setError] = useState('');
@@ -187,29 +190,39 @@ export function WarrantyDetailPage() {
     } finally { setSaving(false); }
   }
 
-  async function cancelCurrentWarranty() {
+  function requestCancelWarranty() {
     if (!cancelReason.trim()) { setError('Indicá el motivo de anulación.'); return; }
-    if (!window.confirm('La garantía se marcará como anulada y quedará registrada en historial. ¿Continuar?')) return;
+    setError('');
+    setConfirmCancelOpen(true);
+  }
+
+  async function cancelCurrentWarranty() {
     setSaving(true); setError(''); setMessage('');
     try {
       const updated = await cancelWarranty(id, { reason: cancelReason.trim() });
       hydrate(updated, options);
       setCancelReason('');
       setMessage('Garantía anulada correctamente.');
+      setConfirmCancelOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo anular la garantía');
     } finally { setSaving(false); }
   }
 
-  async function deleteCurrentWarranty() {
+  function requestDeleteWarranty() {
     if (deleteConfirm.trim().toUpperCase() !== 'ELIMINAR') { setError('Para eliminar definitivamente, escribí ELIMINAR.'); return; }
-    if (!window.confirm('Esta acción elimina definitivamente la garantía y sus productos asociados. Usala solo para cargas de prueba o errores de alta. ¿Continuar?')) return;
+    setError('');
+    setConfirmDeleteOpen(true);
+  }
+
+  async function deleteCurrentWarranty() {
     setSaving(true); setError(''); setMessage('');
     try {
       await deleteWarranty(id);
       navigate('/warranties', { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo eliminar la garantía');
+      setConfirmDeleteOpen(false);
     } finally { setSaving(false); }
   }
 
@@ -785,56 +798,48 @@ export function WarrantyDetailPage() {
             {data.history.length === 0 ? (
               <p className="text-sm text-slate-400">Todavía no hay movimientos registrados.</p>
             ) : (
-              <div className="relative space-y-0">
-                {/* vertical timeline line */}
-                <div className="absolute left-[17px] top-0 h-full w-px bg-slate-800" aria-hidden />
+              <ErpTimeline>
                 {data.history.map((event, idx) => {
                   const details = event.details as Record<string, unknown> | undefined;
                   const oldStatus = details?.old_status as string | undefined;
                   const newStatus = details?.new_status as string | undefined;
-                  // Backend stores remito code in details.remito (not details.remito_code)
                   const remitoCode = (details?.remito ?? details?.remito_code) as string | undefined;
-                  // Message: show full note if user has remito permission, otherwise strip codes
                   const displayMessage = hasRemitoPermission
                     ? event.message
                     : event.message?.replace(/\b(?:[A-Z]{2,6}-R-\d{4}-\d{4}|RP-\d{4}-\d{4})\b/g, '').replace(/\s{2,}/g, ' ').replace(/·\s*$/, '').trim() || null;
+                  // El evento más reciente (idx === 0) se muestra como "ahora"
+                  const dotState: 'now' | 'err' | 'warn' | 'default' =
+                    idx === 0 ? 'now'
+                    : event.status === 'error' ? 'err'
+                    : event.event_type.includes('cancel') || event.event_type.includes('reject') ? 'err'
+                    : event.event_type.includes('incomplete') || event.event_type.includes('warning') ? 'warn'
+                    : 'default';
                   return (
-                    <div key={event.id} className={`relative flex gap-3 pb-4 ${idx === data.history.length - 1 ? '' : ''}`}>
-                      {/* dot */}
-                      <div className="relative z-10 mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-700 bg-slate-900 text-slate-400">
-                        {historyIcon(event.event_type)}
-                      </div>
-                      <div className="min-w-0 flex-1 rounded-2xl border border-slate-800 bg-slate-900/50 p-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-bold text-white">{historyEventLabel(event.event_type)}</span>
-                          {event.status && (
-                            <span className="rounded-full border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs text-slate-300">
-                              {event.status}
+                    <ErpTimelineItem
+                      key={event.id}
+                      state={dotState}
+                      title={
+                        <span className="flex flex-wrap items-center gap-1.5">
+                          <span>{historyEventLabel(event.event_type)}</span>
+                          {oldStatus && newStatus && (
+                            <span className="text-[11.5px] font-normal text-[color:var(--text-3)]">
+                              {getWarrantyStatusMeta(oldStatus).shortLabel} → <span className="text-[color:var(--text-2)]">{getWarrantyStatusMeta(newStatus).shortLabel}</span>
                             </span>
                           )}
-                        </div>
-                        {oldStatus && newStatus && (
-                          <div className="mt-1 text-xs text-slate-400">
-                            <span className="text-slate-500">{getWarrantyStatusMeta(oldStatus).shortLabel}</span>
-                            {' → '}
-                            <span className="text-slate-200">{getWarrantyStatusMeta(newStatus).shortLabel}</span>
-                          </div>
-                        )}
-                        {hasRemitoPermission && remitoCode && (
-                          <div className="mt-1 text-xs text-slate-400">Remito: <span className="font-mono text-slate-200">{remitoCode}</span></div>
-                        )}
-                        {displayMessage && <div className="mt-1 text-sm text-slate-300">{displayMessage}</div>}
-                        <div className="mt-1.5 flex flex-wrap gap-2 text-xs text-slate-500">
+                        </span>
+                      }
+                      meta={
+                        <>
                           <span>{event.created_at}</span>
-                          {(event.actor_display_name || event.actor_username) && (
-                            <span>· {event.actor_display_name || event.actor_username}</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                          {(event.actor_display_name || event.actor_username) && <span> · {event.actor_display_name || event.actor_username}</span>}
+                          {hasRemitoPermission && remitoCode && <span> · Remito: <span className="font-mono text-[color:var(--text-2)]">{remitoCode}</span></span>}
+                        </>
+                      }
+                      note={displayMessage || undefined}
+                    />
                   );
                 })}
-              </div>
+              </ErpTimeline>
             )}
           </div>
         )}
@@ -873,7 +878,7 @@ export function WarrantyDetailPage() {
                     <textarea value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} rows={2}
                       placeholder="Motivo de anulación (obligatorio)"
                       className="w-full rounded-xl border border-red-500/30 bg-slate-950 px-4 py-3 text-sm outline-none focus:border-red-300" />
-                    <button disabled={saving || !cancelReason.trim()} onClick={cancelCurrentWarranty}
+                    <button disabled={saving || !cancelReason.trim()} onClick={requestCancelWarranty}
                       className="inline-flex items-center justify-center rounded-xl border border-red-500/50 px-4 py-3 text-sm font-black text-red-100 hover:bg-red-500/10 disabled:opacity-40">
                       Anular garantía
                     </button>
@@ -900,7 +905,7 @@ export function WarrantyDetailPage() {
                     <input value={deleteConfirm} onChange={(e) => setDeleteConfirm(e.target.value)}
                       placeholder="Escribí ELIMINAR para confirmar"
                       className="w-full rounded-xl border border-red-700/40 bg-slate-950 px-4 py-3 text-sm outline-none focus:border-red-300" />
-                    <button disabled={saving || deleteConfirm.trim().toUpperCase() !== 'ELIMINAR'} onClick={deleteCurrentWarranty}
+                    <button disabled={saving || deleteConfirm.trim().toUpperCase() !== 'ELIMINAR'} onClick={requestDeleteWarranty}
                       className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-3 text-sm font-black text-white hover:bg-red-500 disabled:opacity-40">
                       <Trash2 size={16} /> Eliminar
                     </button>
@@ -911,6 +916,41 @@ export function WarrantyDetailPage() {
           )}
         </div>
       )}
+
+      <ErpConfirmDialog
+        open={confirmCancelOpen}
+        onClose={() => setConfirmCancelOpen(false)}
+        onConfirm={cancelCurrentWarranty}
+        title="Anular garantía"
+        tone="warning"
+        confirmLabel="Sí, anular"
+        cancelLabel="Volver"
+        loading={saving}
+        body={
+          <>
+            La garantía <strong className="font-mono">{id}</strong> se marcará como anulada y quedará registrada en historial con el motivo:
+            <div className="mt-2 rounded-md border border-[color:var(--border)] bg-[color:var(--surface-2)] p-2.5 text-[12.5px] italic">
+              {cancelReason || 'Sin motivo'}
+            </div>
+          </>
+        }
+      />
+
+      <ErpConfirmDialog
+        open={confirmDeleteOpen}
+        onClose={() => setConfirmDeleteOpen(false)}
+        onConfirm={deleteCurrentWarranty}
+        title="Eliminar definitivamente"
+        tone="danger"
+        confirmLabel="Sí, eliminar"
+        cancelLabel="Volver"
+        loading={saving}
+        body={
+          <>
+            Esta acción elimina la garantía <strong className="font-mono">{id}</strong> y todos sus productos asociados. <strong className="text-[color:var(--danger-soft-text)]">No tiene vuelta atrás.</strong> Usala solo para cargas de prueba o errores de alta sin historial relevante.
+          </>
+        }
+      />
     </Page>
   );
 }

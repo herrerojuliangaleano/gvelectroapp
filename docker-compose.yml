@@ -1,0 +1,40 @@
+# ElectroGV — Fase 1 (Docker)
+# Levanta el backend FastAPI en un contenedor reproducible.
+# La base sigue siendo SQLite (Fase 2 agrega PostgreSQL como servicio).
+#
+# Uso:
+#   docker compose up -d --build      → levanta en segundo plano (compila la 1ra vez)
+#   docker compose logs -f            → ver logs en vivo
+#   docker compose down               → apagar
+#
+# El frontend sigue en su servicio (Vercel) y apunta al backend por su URL/ngrok.
+# Para servir el frontend desde el backend (todo junto), ver la nota al final.
+
+services:
+  backend:
+    build: ./backend
+    image: electrogv-backend:latest
+    container_name: electrogv-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      # Valores propios del contenedor (tienen prioridad sobre el .env).
+      STORAGE_DIR: /app/storage
+      PORT: "8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persistencia: la base SQLite, uploads, recibos, exports y credenciales
+      # viven en el host (no se pierden al reconstruir la imagen).
+      - ./backend/storage:/app/storage
+      # --- Opcional "todo junto" (Fase 1.b) ---
+      # Si compilás el frontend (cd frontend && npm run build), descomentá esto
+      # y el backend sirve el SPA en http://localhost:8000 (ya tiene la lógica).
+      # - ./frontend/dist:/app/frontend/dist:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 25s

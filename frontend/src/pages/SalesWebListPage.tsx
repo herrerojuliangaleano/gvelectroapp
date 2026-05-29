@@ -1,6 +1,26 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { Eye, FileText, Globe2, Plus, Receipt, Search, User } from 'lucide-react';
 import { can, fetchSalesWebOptions, fetchSalesWebRequests, getCurrentUserFromStorage } from '../api/client';
+import { canCrossSelectBranches } from '../branchAccess';
+import { useMobileFab } from '../components/MobileFab';
+import {
+  ErpBadge,
+  ErpCard,
+  ErpDataTable,
+  ErpField,
+  ErpFilterBar,
+  ErpKpiCard,
+  ErpNotice,
+  ErpPageHeader,
+  ErpSelect,
+  erpBtnPrimary,
+  erpBtnSecondary,
+  type ErpBadgeTone,
+  type ErpColumn,
+  type ErpFilterChipDef,
+  type ErpRowAction,
+} from '../components/ProUI';
 import type { SalesWebOptions, SalesWebRequest } from '../types';
 
 const STATUS_ORDER = ['Pendiente', 'En proceso', 'Completado', 'Enviado a venta web', 'Cancelado'];
@@ -9,9 +29,26 @@ function displaySalesStatus(estado: string) {
   return estado === 'Enviado a venta web' ? 'Enviado a venta' : estado;
 }
 
+function statusTone(estado: string): ErpBadgeTone {
+  switch (estado) {
+    case 'Pendiente': return 'warning';
+    case 'En proceso': return 'info';
+    case 'Completado': return 'success';
+    case 'Enviado a venta web': return 'violet';
+    case 'Cancelado': return 'danger';
+    default: return 'neutral';
+  }
+}
+
+// Mantenemos el export para retrocompatibilidad con SalesWebDetailPage.
+export function StatusBadge({ estado }: { estado: string }) {
+  return <ErpBadge tone={statusTone(estado)}>{displaySalesStatus(estado)}</ErpBadge>;
+}
+
 type ListMode = 'auto' | 'mine' | 'admin';
 
 export function SalesWebListPage({ mode = 'auto', defaultEstado = '' }: { mode?: ListMode; defaultEstado?: string }) {
+  const navigate = useNavigate();
   const [items, setItems] = useState<SalesWebRequest[]>([]);
   const [options, setOptions] = useState<SalesWebOptions | null>(null);
   const [estado, setEstado] = useState(defaultEstado);
@@ -22,8 +59,16 @@ export function SalesWebListPage({ mode = 'auto', defaultEstado = '' }: { mode?:
   const user = getCurrentUserFromStorage();
   const canManageAll = can('sales_web.manage');
   const canManageBranch = can('sales_web.branch_manage') || can('sales_web.take') || can('sales_web.complete') || can('sales_web.send') || can('sales_web.cancel');
+  const canChooseAnyBranch = canManageAll || canCrossSelectBranches(user);
   const mineOnly = mode === 'mine' || (!canManageAll && !canManageBranch && mode !== 'admin');
   const adminView = mode === 'admin' && (canManageAll || canManageBranch);
+
+  // FAB mobile: Nueva venta si tiene permiso.
+  useMobileFab(can('sales_web.create') ? {
+    label: 'Nueva venta',
+    icon: <Plus size={22} />,
+    to: '/venta/nueva',
+  } : null, []);
 
   async function load() {
     setLoading(true);
@@ -56,14 +101,18 @@ export function SalesWebListPage({ mode = 'auto', defaultEstado = '' }: { mode?:
     return b.id - a.id;
   }), [items]);
 
-  const bySucursal = useMemo(() => {
-    const map = new Map<string, SalesWebRequest[]>();
-    for (const item of sorted) {
-      const key = item.sucursal?.trim() || 'Sin sucursal';
-      map.set(key, [...(map.get(key) || []), item]);
-    }
-    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [sorted]);
+  const filtered = useMemo(() => {
+    const query = q.trim().toLowerCase();
+    if (!query) return sorted;
+    return sorted.filter((item) =>
+      String(item.numero_solicitud || '').toLowerCase().includes(query) ||
+      String(item.apellido_nombre || '').toLowerCase().includes(query) ||
+      String(item.dni || '').toLowerCase().includes(query) ||
+      String(item.telefono || '').toLowerCase().includes(query) ||
+      String(item.vendedor_nombre || '').toLowerCase().includes(query) ||
+      String(item.numero_remito_prefactura || '').toLowerCase().includes(query),
+    );
+  }, [sorted, q]);
 
   const statusCounts = useMemo(() => {
     const out: Record<string, number> = {};
@@ -72,103 +121,199 @@ export function SalesWebListPage({ mode = 'auto', defaultEstado = '' }: { mode?:
     return out;
   }, [items]);
 
-  const title = mineOnly ? 'Mis ventas' : 'Panel de Ventas';
+  const title = mineOnly ? 'Mis ventas' : 'Bandeja de ventas';
   const subtitle = mineOnly
     ? 'Seguimiento de tus ventas: pendientes, en proceso, completadas y enviadas.'
     : canManageAll
       ? 'Bandeja general por sucursal operativa para tomar, facturar y gestionar ventas.'
       : `Bandeja de trabajo de ${user?.sucursal || 'tu sucursal'}.`;
 
+  const filterChips: ErpFilterChipDef[] = [
+    {
+      key: 'estado',
+      label: estado ? `Estado: ${displaySalesStatus(estado)}` : 'Estado',
+      active: !!estado,
+      onClear: () => setEstado(''),
+    },
+    ...(canChooseAnyBranch || !user?.sucursal ? [{
+      key: 'sucursal',
+      label: sucursal ? `Sucursal: ${sucursal}` : 'Sucursal',
+      active: !!sucursal,
+      onClear: () => setSucursal(''),
+    }] : []),
+  ];
+
+  const rowActions: ErpRowAction<SalesWebRequest>[] = [
+    {
+      key: 'view',
+      label: 'Abrir',
+      icon: <Eye size={14} />,
+      onClick: (row) => navigate(`/venta/${row.id}`),
+    },
+  ];
+
+  const columns: ErpColumn<SalesWebRequest>[] = [
+    {
+      key: 'numero',
+      header: 'Venta',
+      width: 130,
+      render: (row) => (
+        <div className="erp-cell-stack">
+          <span className="erp-cell-mono">{row.numero_solicitud}</span>
+          <ErpBadge tone={statusTone(row.estado)}>{displaySalesStatus(row.estado)}</ErpBadge>
+        </div>
+      ),
+    },
+    {
+      key: 'cliente',
+      header: 'Cliente',
+      render: (row) => (
+        <div className="erp-cell-stack">
+          <span className="erp-cell-stack-primary">{row.apellido_nombre}</span>
+          <span className="erp-cell-stack-secondary">DNI {row.dni} · {row.telefono} · {row.items.length} prod.</span>
+        </div>
+      ),
+    },
+    {
+      key: 'sucursal',
+      header: 'Sucursal',
+      width: 130,
+      muted: true,
+      render: (row) => row.sucursal || '—',
+    },
+    {
+      key: 'vendedor',
+      header: 'Vendedor',
+      width: 150,
+      muted: true,
+      render: (row) => row.vendedor_nombre || '—',
+    },
+    {
+      key: 'fecha',
+      header: 'Creado',
+      width: 130,
+      align: 'right',
+      muted: true,
+      render: (row) => (
+        <div className="erp-cell-stack" style={{ textAlign: 'right' }}>
+          <span>{row.created_at_text}</span>
+          {row.numero_remito_prefactura && <span className="text-[color:var(--success-soft-text)] text-[11px]">Remito: {row.numero_remito_prefactura}</span>}
+        </div>
+      ),
+    },
+  ];
+
   return (
-    <div className="mx-auto max-w-7xl space-y-6">
-      <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5 sm:p-7 shadow-2xl">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <div className="text-4xl">🧾</div>
-            <h1 className="mt-2 text-3xl font-black">{title}</h1>
-            <p className="mt-1 max-w-3xl text-slate-400">{subtitle}</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {can('sales_web.create') && <Link to="/venta/nueva" className="rounded-xl bg-blue-500 px-4 py-3 text-sm font-black text-white hover:bg-blue-400">Nueva venta</Link>}
-            {!mineOnly && <Link to="/venta/mis-solicitudes" className="rounded-xl border border-slate-700 px-4 py-3 text-sm font-bold text-slate-200 hover:bg-slate-800">Mis ventas</Link>}
-          </div>
-        </div>
-      </div>
+    <div className="erp-stack-6">
+      <ErpPageHeader
+        title={title}
+        description={subtitle}
+        actions={
+          <>
+            {!mineOnly && can('sales_web.view') && (
+              <Link to="/venta/mis-solicitudes" className={erpBtnSecondary}>
+                <User size={14} /> Mis ventas
+              </Link>
+            )}
+            {can('sales_web.create') && (
+              <Link to="/venta/nueva" className={erpBtnPrimary}>
+                <Plus size={14} /> Nueva venta
+              </Link>
+            )}
+          </>
+        }
+      />
 
-      {error && <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-red-100">{error}</div>}
+      {error && <ErpNotice tone="error">{error}</ErpNotice>}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {STATUS_ORDER.map((st) => (
-          <button key={st} onClick={() => setEstado(estado === st ? '' : st)} className={`rounded-2xl border p-4 text-left transition ${estado === st ? 'border-blue-400 bg-blue-500/15' : 'border-slate-800 bg-slate-950/60 hover:bg-slate-900'}`}>
-            <StatusBadge estado={st} />
-            <div className="mt-3 text-2xl font-black text-white">{statusCounts[st] || 0}</div>
-            <div className="text-xs text-slate-500">{st === 'Pendiente' ? 'Para tomar' : displaySalesStatus(st)}</div>
-          </button>
-        ))}
-      </div>
-
-      <form onSubmit={search} className="grid gap-3 rounded-3xl border border-slate-800 bg-slate-950/60 p-4 lg:grid-cols-[1fr_220px_220px_auto]">
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por venta, solicitud, DNI, cliente, teléfono o vendedor" className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 outline-none focus:border-blue-400" />
-        <select value={estado} onChange={(e) => setEstado(e.target.value)} className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 outline-none focus:border-blue-400">
-          <option value="">Todos los estados</option>
-          {options?.estados.map((st) => <option key={st} value={st}>{displaySalesStatus(st)}</option>)}
-        </select>
-        <select value={sucursal} onChange={(e) => setSucursal(e.target.value)} disabled={!canManageAll && !!user?.sucursal} className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 outline-none focus:border-blue-400 disabled:opacity-60">
-          <option value="">{canManageAll ? 'Todas las sucursales' : (user?.sucursal || 'Mi sucursal')}</option>
-          {options?.sucursales.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <button className="rounded-xl bg-blue-500 px-5 py-3 font-black text-white">Buscar</button>
-      </form>
-
-      {loading && <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-6 text-slate-300">Cargando ventas...</div>}
-
-      {adminView ? (
-        <div className="space-y-6">
-          {bySucursal.map(([branch, group]) => (
-            <section key={branch} className="rounded-3xl border border-slate-800 bg-slate-900/60 p-4">
-              <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-xl font-black text-white">{branch}</h2>
-                  <p className="text-sm text-slate-400">{group.length} venta/s · pendientes primero</p>
-                </div>
-                <div className="flex flex-wrap gap-2 text-xs">
-                  {STATUS_ORDER.slice(0, 4).map((st) => <span key={st} className="rounded-full border border-slate-700 px-2 py-1 text-slate-300">{displaySalesStatus(st)}: {group.filter((x) => x.estado === st).length}</span>)}
-                </div>
+      {/* KPIs por estado */}
+      <section className="erp-kpi-row is-five" aria-label="Resumen por estado">
+        {STATUS_ORDER.map((st) => {
+          const isSelected = estado === st;
+          const tone = statusTone(st);
+          return (
+            <button
+              key={st}
+              type="button"
+              onClick={() => setEstado(isSelected ? '' : st)}
+              className={`erp-kpi text-left ${isSelected ? 'is-alert' : ''}`}
+              style={isSelected ? { borderColor: 'var(--primary)', background: 'var(--primary-soft)' } : undefined}
+              aria-pressed={isSelected}
+            >
+              <div className="erp-kpi-label">
+                <ErpBadge tone={tone}>{displaySalesStatus(st)}</ErpBadge>
               </div>
-              <div className="space-y-3">{group.map((item) => <RequestCard key={item.id} item={item} />)}</div>
-            </section>
-          ))}
-        </div>
-      ) : (
-        <div className="space-y-3">{sorted.map((item) => <RequestCard key={item.id} item={item} />)}</div>
-      )}
+              <div className="erp-kpi-value">{statusCounts[st] || 0}</div>
+              <div className="erp-kpi-detail">{st === 'Pendiente' ? 'Para tomar' : st === 'Cancelado' ? 'Anuladas' : 'En esta vista'}</div>
+            </button>
+          );
+        })}
+      </section>
 
-      {!loading && sorted.length === 0 && <div className="rounded-2xl border border-dashed border-slate-700 p-8 text-center text-slate-400">No hay ventas para mostrar.</div>}
+      {/* Tabla / cards mobile + filtros */}
+      <div className="erp-card erp-card-flat" style={{ padding: 0, overflow: 'hidden' }}>
+        <form onSubmit={search}>
+          <ErpFilterBar
+            search={q}
+            onSearch={setQ}
+            searchPlaceholder="Buscar por venta, DNI, cliente, teléfono o vendedor..."
+            chips={filterChips}
+            onReset={() => { setEstado(''); setSucursal(''); setQ(''); }}
+            extra={
+              <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+                <ErpField label="">
+                  <ErpSelect value={estado} onChange={(e) => setEstado(e.target.value)} style={{ height: 32, fontSize: 12, minWidth: 140 }}>
+                    <option value="">Todos los estados</option>
+                    {options?.estados.map((st) => <option key={st} value={st}>{displaySalesStatus(st)}</option>)}
+                  </ErpSelect>
+                </ErpField>
+                <ErpField label="">
+                  <ErpSelect value={sucursal} onChange={(e) => setSucursal(e.target.value)} disabled={!canChooseAnyBranch && !!user?.sucursal} style={{ height: 32, fontSize: 12, minWidth: 140 }}>
+                    <option value="">{canChooseAnyBranch ? 'Todas las sucursales' : (user?.sucursal || 'Mi sucursal')}</option>
+                    {options?.sucursales.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </ErpSelect>
+                </ErpField>
+              </div>
+            }
+          />
+        </form>
+
+        <ErpDataTable<SalesWebRequest>
+          columns={columns}
+          rows={filtered}
+          rowKey={(row) => row.id}
+          loading={loading}
+          onRowClick={(row) => navigate(`/venta/${row.id}`)}
+          rowActions={rowActions}
+          empty={{
+            title: q || estado || sucursal ? 'Sin resultados con esos filtros' : 'No hay ventas para mostrar',
+            description: q || estado || sucursal ? 'Probá limpiar los filtros para ver todas las ventas.' : (can('sales_web.create') ? 'Cargá la primera desde el botón de arriba.' : 'No hay ventas asignadas todavía.'),
+            cta: can('sales_web.create') ? <Link to="/venta/nueva" className={erpBtnPrimary}><Plus size={14} /> Nueva venta</Link> : undefined,
+          }}
+          renderMobileCard={(row) => (
+            <div className="erp-mcard">
+              <div className="erp-mcard-head">
+                <span className="erp-mcard-title">
+                  <Receipt size={13} className="text-[color:var(--text-3)]" />
+                  <span className="erp-cell-mono">{row.numero_solicitud}</span>
+                </span>
+                <ErpBadge tone={statusTone(row.estado)}>{displaySalesStatus(row.estado)}</ErpBadge>
+              </div>
+              <div className="erp-mcard-title" style={{ fontWeight: 600 }}>{row.apellido_nombre}</div>
+              <div className="erp-mcard-sub">DNI {row.dni} · {row.telefono}</div>
+              <div className="erp-mcard-meta">
+                <span><Globe2 size={10} /> {row.sucursal || '—'}</span>
+                <span><User size={10} /> {row.vendedor_nombre || '—'}</span>
+                <span>{row.items.length} prod.</span>
+                {row.numero_remito_prefactura && <span className="text-[color:var(--success-soft-text)]"><FileText size={10} /> {row.numero_remito_prefactura}</span>}
+              </div>
+              <div className="erp-mcard-meta">
+                <span>{row.created_at_text}</span>
+              </div>
+            </div>
+          )}
+        />
+      </div>
     </div>
   );
-}
-
-function RequestCard({ item }: { item: SalesWebRequest }) {
-  return (
-    <Link to={`/venta/${item.id}`} className="block rounded-2xl border border-slate-800 bg-slate-950/70 p-4 transition hover:border-blue-400/60 hover:bg-slate-900/80">
-      <div className="grid gap-3 lg:grid-cols-[160px_1fr_170px_170px_150px] lg:items-center">
-        <div><div className="text-xs font-bold uppercase text-slate-500">Venta</div><div className="font-black text-white">{item.numero_solicitud}</div><div className="mt-1"><StatusBadge estado={item.estado} /></div></div>
-        <div><div className="font-bold text-white">{item.apellido_nombre}</div><div className="text-sm text-slate-400">DNI {item.dni} · {item.telefono}</div><div className="text-xs text-slate-500">{item.items.length} producto/s</div></div>
-        <div><div className="text-xs font-bold uppercase text-slate-500">Sucursal</div><div className="text-sm text-slate-300">{item.sucursal || '-'}</div></div>
-        <div><div className="text-xs font-bold uppercase text-slate-500">Vendedor</div><div className="text-sm text-slate-300">{item.vendedor_nombre}</div></div>
-        <div className="text-sm text-slate-300 lg:text-right"><div>{item.created_at_text}</div>{item.numero_remito_prefactura && <div className="font-bold text-green-200">Remito: {item.numero_remito_prefactura}</div>}</div>
-      </div>
-    </Link>
-  );
-}
-
-export function StatusBadge({ estado }: { estado: string }) {
-  const styles: Record<string, string> = {
-    Pendiente: 'border-amber-400/40 bg-amber-500/15 text-amber-100',
-    'En proceso': 'border-blue-400/40 bg-blue-500/15 text-blue-100',
-    Completado: 'border-green-400/40 bg-green-500/15 text-green-100',
-    'Enviado a venta web': 'border-violet-400/40 bg-violet-500/15 text-violet-100',
-    Cancelado: 'border-red-400/40 bg-red-500/15 text-red-100',
-  };
-  return <span className={`rounded-full border px-3 py-1 text-xs font-black ${styles[estado] || 'border-slate-600 bg-slate-800 text-slate-200'}`}>{displaySalesStatus(estado)}</span>;
 }

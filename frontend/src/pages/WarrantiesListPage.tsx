@@ -1,10 +1,60 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { AlertTriangle, ArrowRight, Building2, ClipboardCheck, Copy, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
-import { can, fetchWarranties, fetchWarrantyCounters, fetchWarrantyOptions, getCurrentUserFromStorage, resyncWarrantyCounters } from '../api/client';
-import { EmptyState, Notice, PageHeader, Panel, SearchField, SectionHeader, primaryButtonClass, proInputClass, secondaryButtonClass, subtleButtonClass } from '../components/ProUI';
-import type { WarrantyCounterInfo, WarrantyListResponse, WarrantyOptions, WarrantySummary } from '../types';
-import { CANONICAL_WARRANTY_STATUSES, flowToneClass, getReviewStatusMeta, getWarrantyNextStep, getWarrantyStatusMeta } from '../warrantyFlow';
+import { Link, useNavigate } from 'react-router-dom';
+import {
+  AlertTriangle,
+  Building2,
+  ClipboardCheck,
+  Copy,
+  Eye,
+  PencilLine,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+} from 'lucide-react';
+import { WarrantyDetailDrawer } from '../components/WarrantyDetailDrawer';
+import { WarrantyQuickCreateModal } from '../components/WarrantyQuickCreateModal';
+import { useMobileFab } from '../components/MobileFab';
+import { canCrossSelectBranches } from '../branchAccess';
+import {
+  can,
+  fetchWarranties,
+  fetchWarrantyCounters,
+  fetchWarrantyOptions,
+  getCurrentUserFromStorage,
+  resyncWarrantyCounters,
+} from '../api/client';
+import {
+  ErpBadge,
+  ErpCard,
+  ErpDataTable,
+  ErpField,
+  ErpFilterBar,
+  ErpInfoGrid,
+  ErpInfoRow,
+  ErpKpiCard,
+  ErpNotice,
+  ErpPageHeader,
+  ErpSelect,
+  ErpTag,
+  erpBtnGhost,
+  erpBtnPrimary,
+  erpBtnSecondary,
+  type ErpBadgeTone,
+  type ErpColumn,
+  type ErpFilterChipDef,
+  type ErpRowAction,
+} from '../components/ProUI';
+import type {
+  WarrantyCounterInfo,
+  WarrantyListResponse,
+  WarrantyOptions,
+  WarrantySummary,
+} from '../types';
+import {
+  CANONICAL_WARRANTY_STATUSES,
+  getReviewStatusMeta,
+  getWarrantyStatusMeta,
+} from '../warrantyFlow';
 
 function copyText(value: string) {
   navigator.clipboard?.writeText(value).catch(() => undefined);
@@ -13,7 +63,7 @@ function copyText(value: string) {
 function optionKey(value: string) {
   return (value || '')
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[̀-ͯ]/g, '')
     .replace(/^\s*\d+\s*[-.)]\s*/g, '')
     .replace(/\s+/g, ' ')
     .trim()
@@ -47,10 +97,39 @@ function normalizeDepositOption(value: string) {
   return clean;
 }
 
+// Mapeo de tonos del flujo (warrantyFlow) → tonos del nuevo Badge ERP
+function flowToneToBadgeTone(tone?: string): ErpBadgeTone {
+  switch (tone) {
+    case 'success':
+    case 'green':
+      return 'success';
+    case 'warning':
+    case 'amber':
+    case 'yellow':
+      return 'warning';
+    case 'danger':
+    case 'red':
+      return 'danger';
+    case 'info':
+    case 'blue':
+    case 'cyan':
+      return 'info';
+    case 'violet':
+    case 'purple':
+      return 'violet';
+    default:
+      return 'neutral';
+  }
+}
 
 export function WarrantiesListPage() {
+  const navigate = useNavigate();
   const currentUser = getCurrentUserFromStorage();
-  const isBranchOperator = !can('warranties.manage') && !can('warranties.manage_provider') && !['deposit', 'admin'].includes((currentUser?.branch_type || '').toLowerCase());
+  // El usuario opera solo en su sucursal si NO tiene permisos globales de gestión
+  // ni el permiso explícito `branches.cross_select` que le permite tocar otras
+  // sucursales. Decisión 100% por permisos (canCrossSelectBranches ya incluye
+  // los permisos de gestión globales).
+  const isBranchOperator = !canCrossSelectBranches(currentUser);
   const assignedBranch = currentUser?.branch_name || currentUser?.sucursal || '';
   const [options, setOptions] = useState<WarrantyOptions | null>(null);
   const [data, setData] = useState<WarrantyListResponse | null>(null);
@@ -58,11 +137,22 @@ export function WarrantiesListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filters, setFilters] = useState({ q: '', sucursal: isBranchOperator ? assignedBranch : '', estado: '', deposito: '', tipo_ingreso: '', fecha_desde: '', fecha_hasta: '' });
+  const [activeTab, setActiveTab] = useState<'all' | 'pendientes' | 'proveedor' | 'demoradas' | 'resueltas'>('all');
+  const [drawerId, setDrawerId] = useState<string | null>(null);
+  const [showQuickCreate, setShowQuickCreate] = useState(false);
+
+  // Operador de sucursal → carga rápida en modal (1 producto, caso 90%).
+  // Gestor / multi-sucursal → carga avanzada en /warranties/new (multi-producto).
+  const useQuickCreate = isBranchOperator;
+
+  // FAB mobile: Nueva garantía si tiene permiso.
+  useMobileFab(can('warranties.create') ? {
+    label: 'Nueva garantía',
+    icon: <Plus size={22} />,
+    ...(useQuickCreate ? { onClick: () => setShowQuickCreate(true) } : { to: '/warranties/new' }),
+  } : null, [can('warranties.create'), useQuickCreate]);
 
   const estados = useMemo(() => {
-    // Fase 25: el listado no debe volver a mezclar estados viejos de configuración
-    // ni estados legacy que puedan venir en registros antiguos. La UI filtra con
-    // el flujo canónico y el backend normaliza aliases al comparar.
     const fromBackend = (options?.estados || []).filter((estado) => CANONICAL_WARRANTY_STATUSES.includes(estado));
     return fromBackend.length ? fromBackend : CANONICAL_WARRANTY_STATUSES;
   }, [options]);
@@ -82,26 +172,51 @@ export function WarrantiesListPage() {
     return uniqueOptions(branchNames.length ? branchNames : fallback);
   }, [options]);
 
+  const items = data?.items || [];
+
+  const correctionItems = useMemo(
+    () => items.filter((i) => i.review_status === 'requiere_correccion'),
+    [items],
+  );
+
   const resumen = useMemo(() => {
     const bySucursal: Record<string, number> = {};
     const byDeposito: Record<string, number> = {};
-    const byEstado: Record<string, number> = {};
-    (data?.items || []).forEach((item) => {
+    items.forEach((item) => {
       const suc = item.sucursal || 'SIN SUCURSAL';
       const dep = (item as any).lugar_llegada || item.deposito || 'SIN DEPÓSITO';
-      const est = item.estado || 'SIN ESTADO';
       bySucursal[suc] = (bySucursal[suc] || 0) + 1;
       byDeposito[dep] = (byDeposito[dep] || 0) + 1;
-      byEstado[est] = (byEstado[est] || 0) + 1;
     });
-    const top = (obj: Record<string, number>) => Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, 6);
-    return { bySucursal: top(bySucursal), byDeposito: top(byDeposito), byEstado: top(byEstado) };
-  }, [data]);
+    const top = (obj: Record<string, number>) => Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    return { bySucursal: top(bySucursal), byDeposito: top(byDeposito) };
+  }, [items]);
 
-  const correctionItems = useMemo(
-    () => (data?.items || []).filter((i) => i.review_status === 'requiere_correccion'),
-    [data],
-  );
+  const tabCounts = useMemo(() => {
+    const counts = { all: items.length, pendientes: 0, proveedor: 0, demoradas: 0, resueltas: 0 };
+    for (const item of items) {
+      const est = (item.estado || '').toUpperCase();
+      const dias = item.dias_pendiente || 0;
+      if (est.includes('INGRES') || est.includes('REVISIÓN') || est.includes('REVISION')) counts.pendientes++;
+      if (est.includes('PROVEEDOR') || est.includes('ENVIAD')) counts.proveedor++;
+      if (dias >= 15) counts.demoradas++;
+      if (est.includes('RESUEL') || est.includes('FINALIZ')) counts.resueltas++;
+    }
+    return counts;
+  }, [items]);
+
+  const filteredItems = useMemo(() => {
+    if (activeTab === 'all') return items;
+    return items.filter((item) => {
+      const est = (item.estado || '').toUpperCase();
+      const dias = item.dias_pendiente || 0;
+      if (activeTab === 'pendientes') return est.includes('INGRES') || est.includes('REVISIÓN') || est.includes('REVISION');
+      if (activeTab === 'proveedor') return est.includes('PROVEEDOR') || est.includes('ENVIAD');
+      if (activeTab === 'demoradas') return dias >= 15;
+      if (activeTab === 'resueltas') return est.includes('RESUEL') || est.includes('FINALIZ');
+      return true;
+    });
+  }, [items, activeTab]);
 
   async function load(extra = filters) {
     setLoading(true);
@@ -140,243 +255,355 @@ export function WarrantiesListPage() {
     }
   }
 
+  const filterChips: ErpFilterChipDef[] = isBranchOperator ? [] : [
+    {
+      key: 'sucursal',
+      label: filters.sucursal ? `Sucursal: ${filters.sucursal}` : 'Sucursal',
+      active: !!filters.sucursal,
+      onClear: () => { const next = { ...filters, sucursal: '' }; setFilters(next); load(next); },
+    },
+    {
+      key: 'estado',
+      label: filters.estado ? `Estado: ${filters.estado}` : 'Estado',
+      active: !!filters.estado,
+      onClear: () => { const next = { ...filters, estado: '' }; setFilters(next); load(next); },
+    },
+    {
+      key: 'deposito',
+      label: filters.deposito ? `Lugar: ${filters.deposito}` : 'Depósito',
+      active: !!filters.deposito,
+      onClear: () => { const next = { ...filters, deposito: '' }; setFilters(next); load(next); },
+    },
+  ];
+
+  const rowActions: ErpRowAction<WarrantySummary>[] = [
+    {
+      key: 'quickview',
+      label: 'Vista rápida',
+      icon: <Eye size={14} />,
+      onClick: (row) => setDrawerId(row.id_garantia),
+    },
+    {
+      key: 'edit',
+      label: 'Editar completo',
+      icon: <PencilLine size={14} />,
+      onClick: (row) => navigate(`/warranties/${encodeURIComponent(row.id_garantia)}`),
+    },
+    {
+      key: 'copy',
+      label: 'Copiar ID',
+      icon: <Copy size={14} />,
+      onClick: (row) => copyText(row.id_garantia),
+    },
+  ];
+
+  const columns: ErpColumn<WarrantySummary>[] = [
+    {
+      key: 'id_garantia',
+      header: 'N.º',
+      width: 120,
+      render: (row) => <span className="erp-cell-mono">{row.id_garantia}</span>,
+    },
+    {
+      key: 'producto',
+      header: 'Cliente / Producto',
+      render: (row) => (
+        <div className="erp-cell-stack">
+          <span className="erp-cell-stack-primary">{row.producto_principal || 'Sin producto'}</span>
+          <span className="erp-cell-stack-secondary">
+            {row.cliente_nombre || 'Sin cliente'}{row.cantidad_items > 1 ? ` · ${row.cantidad_items} ítems` : ''}
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: 'sucursal',
+      header: 'Sucursal',
+      width: 140,
+      render: (row) => <span className="truncate">{row.sucursal || '—'}</span>,
+    },
+    {
+      key: 'lugar',
+      header: 'Lugar actual',
+      width: 160,
+      render: (row) => <span className="truncate">{row.ubicacion_actual_label || row.lugar_llegada || row.deposito || '—'}</span>,
+    },
+    {
+      key: 'ingreso',
+      header: 'Ingreso',
+      width: 110,
+      align: 'right',
+      muted: true,
+      render: (row) => row.ingreso || '—',
+    },
+    {
+      key: 'dias',
+      header: 'Días',
+      width: 80,
+      align: 'right',
+      render: (row) => {
+        const dias = row.dias_pendiente || 0;
+        if (dias <= 0) return <span className="text-[color:var(--text-3)]">—</span>;
+        if (dias >= 15) return <ErpBadge tone="solid-danger">{dias}d</ErpBadge>;
+        if (dias >= 7) return <ErpBadge tone="warning">{dias}d</ErpBadge>;
+        return <span className="tabular-nums text-[color:var(--text-2)]">{dias}d</span>;
+      },
+    },
+    {
+      key: 'estado',
+      header: 'Estado',
+      width: 160,
+      render: (row) => {
+        const meta = getWarrantyStatusMeta(row.estado);
+        return (
+          <div className="flex flex-col gap-1">
+            <ErpBadge tone={flowToneToBadgeTone(meta.tone)}>{meta.shortLabel || row.estado}</ErpBadge>
+            {row.review_status && (
+              <ErpBadge tone={flowToneToBadgeTone(getReviewStatusMeta(row.review_status).tone)}>
+                {row.review_status_label || getReviewStatusMeta(row.review_status).label}
+              </ErpBadge>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      key: 'responsable',
+      header: 'Responsable',
+      width: 140,
+      muted: true,
+      render: (row) => row.responsable || '—',
+    },
+  ];
+
   return (
-    <div className="pro-page space-y-6">
-      <PageHeader
-        eyebrow={<><ShieldCheck size={14} /> Garantías</>}
-        title={isBranchOperator ? "Garantías en mi sucursal" : "Gestión de garantías"}
+    <div className="erp-stack-6">
+      <ErpPageHeader
+        title={isBranchOperator ? 'Garantías en mi sucursal' : 'Consulta de garantías'}
         description={isBranchOperator
-          ? "Listado operativo de garantías que todavía están físicamente en tu sucursal. Al despacharse a Chiclana salen de esta vista."
-          : "Ingreso, revisión y seguimiento de garantías con trazabilidad interna."}
-        actions={<>
-          <button onClick={() => load()} className={secondaryButtonClass}><RefreshCw size={18} /> Actualizar</button>
-          {can('warranties.manage') && <button onClick={resyncCounters} className={secondaryButtonClass}><RefreshCw size={18} /> Recalcular contadores</button>}
-          {can('warranties.gestor.panel') || can('warranties.manage') ? <Link to="/warranties/gestor" className={subtleButtonClass}><Building2 size={18} /> Panel gestor</Link> : null}
-          {can('warranties.sucursal.logistics') || can('warranties.remitos.dispatch') ? <Link to="/warranties/sucursal" className={subtleButtonClass}><Building2 size={18} /> Mi sucursal</Link> : null}
-          {can('warranties.review') && <Link to="/warranties/revision" className={subtleButtonClass}><ClipboardCheck size={18} /> Revisión</Link>}
-          {can('warranties.manage_provider') && <Link to="/warranties/gestion" className={subtleButtonClass}><Building2 size={18} /> Gestión proveedor</Link>}
-          {can('warranties.create') && <Link to="/warranties/new" className={primaryButtonClass}><Plus size={18} /> Nueva garantía</Link>}
-        </>}
+          ? 'Garantías que todavía están físicamente en tu sucursal. Al despacharse a Chiclana salen de esta vista.'
+          : 'Buscá, filtrá y seguí la trazabilidad de cualquier garantía. Para operar usá Mi espacio, Panel gestor o Posventa.'}
+        actions={
+          <>
+            <button onClick={() => load()} className={erpBtnGhost}><RefreshCw size={14} /> Actualizar</button>
+            {can('warranties.create') && (
+              useQuickCreate
+                ? <button type="button" onClick={() => setShowQuickCreate(true)} className={erpBtnPrimary}><Plus size={14} /> Nueva garantía</button>
+                : <Link to="/warranties/new" className={erpBtnPrimary}><Plus size={14} /> Nueva garantía</Link>
+            )}
+          </>
+        }
       />
 
-      {error && <Notice tone="error">{error}</Notice>}
+      {error && <ErpNotice tone="error">{error}</ErpNotice>}
+
       {isBranchOperator && (
-        <Notice tone="info">
-          Estás viendo solo garantías ubicadas en <strong>{assignedBranch || 'tu sucursal'}</strong>. Cuando se genera/despacha un remito hacia Depósito Chiclana, la garantía deja de aparecer acá y se sigue desde Remitos/Gestión.
-        </Notice>
+        <ErpNotice tone="info">
+          Estás viendo solo garantías ubicadas en <strong>{assignedBranch || 'tu sucursal'}</strong>. Cuando se genera o despacha un remito hacia Depósito Chiclana, la garantía deja de aparecer acá y se sigue desde Remitos o Gestión.
+        </ErpNotice>
       )}
 
       {correctionItems.length > 0 && (
-        <div className="rounded-3xl border border-amber-500/40 bg-amber-500/10 p-4 shadow-lg shadow-amber-950/10">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
-            <div className="min-w-0 flex-1">
-              <div className="font-black text-amber-100">
-                {isBranchOperator
-                  ? `${correctionItems.length} garantía${correctionItems.length !== 1 ? 's' : ''} requiere${correctionItems.length !== 1 ? 'n' : ''} corrección`
-                  : `${correctionItems.length} garantía${correctionItems.length !== 1 ? 's' : ''} marcada${correctionItems.length !== 1 ? 's' : ''} para corrección`}
-              </div>
-              <p className="mt-1 text-sm text-amber-100/80">
-                {isBranchOperator
-                  ? 'El revisor devolvió estas garantías con observaciones. Revisá cada una y corregí los datos antes de reenviarlas.'
-                  : 'Estas garantías fueron devueltas a sus sucursales de origen para corrección.'}
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {correctionItems.slice(0, 6).map((item) => (
-                  <Link
-                    key={item.id_garantia}
-                    to={`/warranties/${encodeURIComponent(item.id_garantia)}`}
-                    className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-black text-amber-200 hover:bg-amber-500/20"
-                  >
-                    {item.id_garantia}
-                  </Link>
-                ))}
-                {correctionItems.length > 6 && (
-                  <span className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-400">
-                    +{correctionItems.length - 6} más
-                  </span>
-                )}
-              </div>
-            </div>
+        <ErpNotice
+          tone="warning"
+          title={isBranchOperator
+            ? `${correctionItems.length} garantía${correctionItems.length !== 1 ? 's' : ''} requiere${correctionItems.length !== 1 ? 'n' : ''} corrección`
+            : `${correctionItems.length} garantía${correctionItems.length !== 1 ? 's' : ''} marcada${correctionItems.length !== 1 ? 's' : ''} para corrección`}
+        >
+          <div>
+            {isBranchOperator
+              ? 'El revisor devolvió estas garantías con observaciones. Revisá cada una y corregí los datos antes de reenviarlas.'
+              : 'Estas garantías fueron devueltas a sus sucursales de origen para corrección.'}
           </div>
-        </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {correctionItems.slice(0, 8).map((item) => (
+              <Link
+                key={item.id_garantia}
+                to={`/warranties/${encodeURIComponent(item.id_garantia)}`}
+                className="erp-badge erp-badge-warning"
+              >
+                <span className="erp-badge-dot" aria-hidden="true" /> {item.id_garantia}
+              </Link>
+            ))}
+            {correctionItems.length > 8 && (
+              <span className="erp-badge erp-badge-neutral">+{correctionItems.length - 8}</span>
+            )}
+          </div>
+        </ErpNotice>
       )}
 
       {data && (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <ResumenCard title="Por sucursal" items={resumen.bySucursal} />
-          <ResumenCard title="Por lugar" items={resumen.byDeposito} />
-          <ResumenCard title="Por estado" items={resumen.byEstado} />
+        <section className="erp-kpi-row" aria-label="Resumen del listado">
+          <ErpKpiCard label="Total visibles" value={items.length} detail={`${filteredItems.length} en la vista actual`} icon={<ShieldCheck size={13} />} />
+          <ErpKpiCard label="Pendientes revisión" value={tabCounts.pendientes} variant={tabCounts.pendientes > 0 ? 'alert' : 'default'} />
+          <ErpKpiCard label="En proveedor" value={tabCounts.proveedor} />
+          <ErpKpiCard label="Demoradas (≥15d)" value={tabCounts.demoradas} variant={tabCounts.demoradas > 0 ? 'danger' : 'default'} icon={<AlertTriangle size={13} />} />
+        </section>
+      )}
+
+      {/* Resumen por sucursal y por lugar (admin/gestor) */}
+      {data && !isBranchOperator && (resumen.bySucursal.length > 0 || resumen.byDeposito.length > 0) && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <ErpCard title="Por sucursal" size="sm" subtitle="Top 5 con más garantías abiertas">
+            <ErpInfoGrid columns={2}>
+              {resumen.bySucursal.map(([name, count]) => (
+                <ErpInfoRow key={name} label={name} value={<span className="tabular-nums">{count}</span>} />
+              ))}
+              {resumen.bySucursal.length === 0 && <span className="text-[12.5px] text-[color:var(--text-3)]">Sin datos.</span>}
+            </ErpInfoGrid>
+          </ErpCard>
+          <ErpCard title="Por lugar actual" size="sm" subtitle="Top 5 ubicaciones físicas">
+            <ErpInfoGrid columns={2}>
+              {resumen.byDeposito.map(([name, count]) => (
+                <ErpInfoRow key={name} label={name} value={<span className="tabular-nums">{count}</span>} />
+              ))}
+              {resumen.byDeposito.length === 0 && <span className="text-[12.5px] text-[color:var(--text-3)]">Sin datos.</span>}
+            </ErpInfoGrid>
+          </ErpCard>
         </div>
       )}
 
-      <Panel>
-        <SectionHeader
-          title="Filtros"
-          description={isBranchOperator
-            ? "Buscá dentro de las garantías que todavía están físicamente en tu sucursal."
-            : "Refiná el listado por búsqueda, sucursal, estado o lugar actual."}
-        />
-        <form onSubmit={submit}>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6">
-            <div className={isBranchOperator ? "xl:col-span-3" : "xl:col-span-2"}>
-              <SearchField value={filters.q} onChange={(value) => setFilters({ ...filters, q: value })} placeholder="ID, SKU, serie, producto..." />
-            </div>
-            {isBranchOperator ? (
-              <div className="rounded-2xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm">
-                <div className="font-black uppercase tracking-wide text-blue-100">Sucursal asignada</div>
-                <div className="mt-1 text-slate-200">{assignedBranch || 'Sin sucursal asignada'}</div>
+      {/* Filtros explícitos en form (selects amplios, una sola vez al "Aplicar") */}
+      {!isBranchOperator && (
+        <ErpCard title="Filtros avanzados" subtitle="Refiná por sucursal, estado, lugar o tipo de ingreso">
+          <form onSubmit={submit}>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+              <ErpField label="Sucursal">
+                <ErpSelect value={filters.sucursal} onChange={(e) => setFilters({ ...filters, sucursal: e.target.value })}>
+                  <option value="">Todas</option>
+                  {sucursalOptions.map((op) => <option key={op} value={op}>{op}</option>)}
+                </ErpSelect>
+              </ErpField>
+              <ErpField label="Estado">
+                <ErpSelect value={filters.estado} onChange={(e) => setFilters({ ...filters, estado: e.target.value })}>
+                  <option value="">Todos</option>
+                  {estados.map((op) => <option key={op} value={op}>{op}</option>)}
+                </ErpSelect>
+              </ErpField>
+              <ErpField label="Depósito / lugar">
+                <ErpSelect value={filters.deposito} onChange={(e) => setFilters({ ...filters, deposito: e.target.value })}>
+                  <option value="">Todos</option>
+                  {depositoOptions.map((op) => <option key={op} value={op}>{op}</option>)}
+                </ErpSelect>
+              </ErpField>
+              <ErpField label="Tipo de ingreso">
+                <ErpSelect value={filters.tipo_ingreso} onChange={(e) => setFilters({ ...filters, tipo_ingreso: e.target.value })}>
+                  <option value="">Todos</option>
+                  {(options?.tipos_ingreso || []).map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </ErpSelect>
+              </ErpField>
+              <div className="flex items-end">
+                <button type="submit" className={`${erpBtnPrimary} w-full`}>Aplicar</button>
               </div>
-            ) : (
-              <>
-                <Select
-                  label="Sucursal"
-                  value={filters.sucursal}
-                  onChange={(v) => setFilters({ ...filters, sucursal: v })}
-                  options={sucursalOptions}
-                />
-                <Select label="Estado" value={filters.estado} onChange={(v) => setFilters({ ...filters, estado: v })} options={estados} />
-                <Select
-                  label="Depósito / lugar"
-                  value={filters.deposito}
-                  onChange={(v) => setFilters({ ...filters, deposito: v })}
-                  options={depositoOptions}
-                />
-              </>
-            )}
-            <Select
-              label="Tipo de ingreso"
-              value={filters.tipo_ingreso}
-              onChange={(v) => setFilters({ ...filters, tipo_ingreso: v })}
-              options={(options?.tipos_ingreso || []).map((t) => t.label)}
-              rawOptions={(options?.tipos_ingreso || []).map((t) => ({ value: t.value, label: t.label }))}
-            />
-            <button className={primaryButtonClass}>Aplicar</button>
-          </div>
-        </form>
-      </Panel>
-
-      {can('warranties.manage') && counters.length > 0 && (
-        <Panel compact>
-          <SectionHeader title="Contadores" description="Secuencia interna por año y sucursal." />
-          <div className="flex flex-wrap gap-2">
-            {counters.map((c) => <span key={`${c.year}-${c.sucursal}`} className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-xs font-bold text-slate-200">{c.year} · {c.sucursal}: {c.last_number}</span>)}
-          </div>
-        </Panel>
+            </div>
+          </form>
+        </ErpCard>
       )}
 
-      <div className="space-y-3">
-        {loading && <Panel compact>Cargando garantías...</Panel>}
-        {!loading && data?.items.length === 0 && <EmptyState
-          title={isBranchOperator ? "No hay garantías en tu sucursal" : "No hay garantías para mostrar"}
-          description={isBranchOperator ? "Las garantías despachadas a Chiclana ya no aparecen en este listado. Se siguen desde Remitos o Gestión." : "Ajustá los filtros o cargá una nueva garantía."}
-          action={can('warranties.create') ? <Link to="/warranties/new" className={primaryButtonClass}>Nueva garantía</Link> : undefined}
-        />}
-        {data?.items.map((item) => <WarrantyCard key={item.id_garantia} item={item} />)}
-      </div>
-    </div>
-  );
-}
-
-function ResumenCard({ title, items }: { title: string; items: [string, number][] }) {
-  return (
-    <Panel compact>
-      <div className="mb-3 text-sm font-black uppercase tracking-wide text-slate-300">{title}</div>
-      {items.length === 0 && <div className="text-sm text-slate-500">Sin datos todavía.</div>}
-      <div className="space-y-2">
-        {items.map(([name, count]) => (
-          <div key={name} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm">
-            <span className="truncate text-slate-200">{name}</span>
-            <span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-xs font-black text-blue-100">{count}</span>
+      {/* Tabla con tabs + filterbar integrados */}
+      <div className="erp-card erp-card-flat" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
+          <div className="erp-tab-bar">
+            {([
+              { key: 'all', label: 'Todas', count: tabCounts.all },
+              { key: 'pendientes', label: 'Pendientes', count: tabCounts.pendientes },
+              { key: 'proveedor', label: 'En proveedor', count: tabCounts.proveedor },
+              { key: 'demoradas', label: 'Demoradas', count: tabCounts.demoradas },
+              { key: 'resueltas', label: 'Resueltas', count: tabCounts.resueltas },
+            ] as const).map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                className={`erp-tab ${activeTab === tab.key ? 'is-active' : ''}`}
+                onClick={() => setActiveTab(tab.key)}
+              >
+                <span>{tab.label}</span>
+                <span className="erp-tab-count">{tab.count}</span>
+              </button>
+            ))}
           </div>
-        ))}
-      </div>
-    </Panel>
-  );
-}
-
-function Select({
-  label, value, options, onChange, rawOptions,
-}: {
-  label: string;
-  value: string;
-  options: string[];
-  onChange: (v: string) => void;
-  rawOptions?: { value: string; label: string }[];
-}) {
-  return (
-    <label>
-      <span className="mb-2 block text-sm font-semibold text-slate-300">{label}</span>
-      <select value={value} onChange={(e) => onChange(e.target.value)} className={proInputClass}>
-        <option value="">Todos</option>
-        {rawOptions
-          ? rawOptions.map((op) => <option key={op.value} value={op.value}>{op.label}</option>)
-          : options.map((op) => <option key={op} value={op}>{op}</option>)}
-      </select>
-    </label>
-  );
-}
-
-function WarrantyCard({ item }: { item: WarrantySummary }) {
-  const isCorrection = item.review_status === 'requiere_correccion';
-  return (
-    <div className={`rounded-3xl border p-4 shadow-xl transition sm:p-5 ${
-      isCorrection
-        ? 'border-amber-500/40 bg-amber-500/5 hover:border-amber-400/60'
-        : 'border-slate-800 bg-slate-950/65 hover:border-blue-500/40'
-    }`}>
-      {/* Correction notice */}
-      {isCorrection && (
-        <div className="mb-3 flex items-start gap-2 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-          <div>
-            <div className="font-bold text-amber-200">Requiere corrección</div>
-            {item.review_note
-              ? <div className="mt-0.5 text-amber-100/90">{item.review_note}</div>
-              : <div className="mt-0.5 text-amber-100/60 text-xs">Sin nota del revisor.</div>}
+          <div className="text-[12px] text-[color:var(--text-3)] tabular-nums">
+            {filteredItems.length} de {items.length}
           </div>
         </div>
-      )}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <Link to={`/warranties/${encodeURIComponent(item.id_garantia)}`} className="font-mono text-lg font-black text-blue-100 hover:text-blue-300">{item.id_garantia}</Link>
-            <button onClick={() => copyText(item.id_garantia)} className="rounded-lg border border-slate-700 p-1.5 text-slate-300 hover:bg-slate-900" title="Copiar ID"><Copy size={15} /></button>
-            <span className={`rounded-full border px-3 py-1 text-xs font-black ${flowToneClass(getWarrantyStatusMeta(item.estado).tone)}`}>{getWarrantyStatusMeta(item.estado).shortLabel}</span>
-            {item.review_status && (
-              <span className={`rounded-full border px-3 py-1 text-xs font-bold ${flowToneClass(getReviewStatusMeta(item.review_status).tone)}`}>
-                {item.review_status_label || getReviewStatusMeta(item.review_status).label}
-              </span>
-            )}
-            {item.tipo_ingreso_label && (
-              <span className="rounded-full border border-violet-500/40 bg-violet-500/10 px-3 py-1 text-xs font-bold text-violet-200">
-                {item.tipo_ingreso_label}
-              </span>
-            )}
-            {item.ubicacion_actual_label && (
-              <span className="rounded-full border border-slate-600 bg-slate-800/60 px-3 py-1 text-xs font-semibold text-slate-300">
-                📍 {item.ubicacion_actual_label}
-              </span>
-            )}
-          </div>
-          <div className="mt-2 text-lg font-bold text-white">{item.producto_principal || 'Sin producto'}</div>
-          {item.cantidad_items > 1 && (
-            <div className="mt-1 text-sm text-slate-400">{item.cantidad_items} productos bajo el mismo ID</div>
-          )}
-          <div className="mt-3 rounded-2xl border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-300">
-            <span className="font-black text-slate-100">Próximo paso: </span>{getWarrantyNextStep(item)}
-          </div>
-          <div className="mt-3 grid gap-2 text-sm text-slate-300 sm:grid-cols-2 lg:grid-cols-4">
-            <div><span className="text-slate-500">Ingreso:</span> {item.ingreso || '-'}</div>
-            <div><span className="text-slate-500">Responsable:</span> {item.responsable || '-'}</div>
-            <div><span className="text-slate-500">Sucursal:</span> {item.sucursal || '-'}</div>
-            <div><span className="text-slate-500">Lugar donde llega:</span> {item.lugar_llegada || item.deposito || '-'}</div>
-          </div>
-        </div>
-        <Link to={`/warranties/${encodeURIComponent(item.id_garantia)}`} className={secondaryButtonClass}>
-          Ver detalle <ArrowRight size={18} />
-        </Link>
+
+        <ErpFilterBar
+          search={filters.q}
+          onSearch={(value) => setFilters({ ...filters, q: value })}
+          searchPlaceholder="ID, SKU, serie, producto..."
+          chips={filterChips}
+          onReset={() => {
+            const cleared = { q: '', sucursal: isBranchOperator ? assignedBranch : '', estado: '', deposito: '', tipo_ingreso: '', fecha_desde: '', fecha_hasta: '' };
+            setFilters(cleared);
+            load(cleared);
+            setActiveTab('all');
+          }}
+          extra={
+            <button type="button" className="erp-btn erp-btn-secondary erp-btn-sm" onClick={() => load()}>
+              Buscar
+            </button>
+          }
+        />
+
+        <ErpDataTable<WarrantySummary>
+          columns={columns}
+          rows={filteredItems}
+          rowKey={(row) => row.id_garantia}
+          loading={loading}
+          onRowClick={(row) => setDrawerId(row.id_garantia)}
+          rowActions={rowActions}
+          rowClassName={(row) => row.review_status === 'requiere_correccion' ? 'erp-row-correction' : undefined}
+          empty={{
+            title: isBranchOperator ? 'No hay garantías en tu sucursal' : 'No hay garantías para mostrar',
+            description: isBranchOperator
+              ? 'Las garantías despachadas a Chiclana ya no aparecen en este listado. Se siguen desde Remitos o Gestión.'
+              : 'Ajustá los filtros o cargá una nueva garantía.',
+            cta: can('warranties.create') ? <Link to="/warranties/new" className={erpBtnPrimary}><Plus size={14} /> Nueva garantía</Link> : undefined,
+          }}
+          renderMobileCard={(row) => {
+            const meta = getWarrantyStatusMeta(row.estado);
+            const dias = row.dias_pendiente || 0;
+            return (
+              <div className="erp-mcard">
+                <div className="erp-mcard-head">
+                  <span className="erp-mcard-title">
+                    <span className="erp-cell-mono">{row.id_garantia}</span>
+                  </span>
+                  <ErpBadge tone={flowToneToBadgeTone(meta.tone)}>{meta.shortLabel || row.estado}</ErpBadge>
+                </div>
+                <div className="erp-mcard-title" style={{ fontWeight: 600 }}>{row.producto_principal || 'Sin producto'}</div>
+                <div className="erp-mcard-sub">
+                  {row.cliente_nombre || 'Sin cliente'}{row.cantidad_items > 1 ? ` · ${row.cantidad_items} ítems` : ''}
+                </div>
+                <div className="erp-mcard-meta">
+                  <span>📍 {row.sucursal || '—'}</span>
+                  <span>Ingreso: {row.ingreso || '—'}</span>
+                  {dias >= 15 ? <ErpBadge tone="solid-danger">{dias}d</ErpBadge>
+                   : dias >= 7 ? <ErpBadge tone="warning">{dias}d</ErpBadge>
+                   : dias > 0 ? <span>{dias}d</span> : null}
+                </div>
+              </div>
+            );
+          }}
+        />
       </div>
+
+      <WarrantyDetailDrawer
+        open={drawerId !== null}
+        warrantyId={drawerId}
+        onClose={() => setDrawerId(null)}
+        onChanged={() => load()}
+      />
+
+      <WarrantyQuickCreateModal
+        open={showQuickCreate}
+        onClose={() => setShowQuickCreate(false)}
+        onCreated={() => load()}
+        options={options}
+        defaultSucursal={assignedBranch}
+        centralDeposit={(options?.warranty_central_deposit?.name || 'Depósito Chiclana')}
+        existingWarranties={items}
+      />
     </div>
   );
 }

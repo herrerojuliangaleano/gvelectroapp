@@ -2,10 +2,75 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─────────────────────────────────────────────────────────────────────────
+   Tokens de diseño · Fase 1 (dark first)
+   Los nombres siguen la guía de rediseño. Los valores son la versión dark.
+   En una fase futura se conmutan a light mode cambiando solo estos valores.
+   ───────────────────────────────────────────────────────────────────────── */
 :root {
   color-scheme: dark;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #050914;
+  font-feature-settings: "cv11", "ss01", "tnum";
+
+  /* Superficies */
+  --bg: #0B1220;
+  --surface: #111827;
+  --surface-2: #0F172A;
+  --surface-hover: #1B2538;
+  --surface-elevated: #1A2336;
+
+  /* Texto y bordes */
+  --text: #F1F5F9;
+  --text-2: #94A3B8;
+  --text-3: #64748B;
+  --border: #1F2A3D;
+  --border-strong: #334155;
+  --divider: #1A2336;
+
+  /* Acción primaria — Indigo */
+  --primary: #6366F1;
+  --primary-hover: #818CF8;
+  --primary-soft: rgba(99, 102, 241, 0.18);
+  --primary-soft-text: #C7D2FE;
+  --focus-ring: rgba(99, 102, 241, 0.45);
+
+  /* Semánticos */
+  --success: #22C55E;
+  --success-soft: rgba(34, 197, 94, 0.18);
+  --success-soft-text: #BBF7D0;
+
+  --warning: #F59E0B;
+  --warning-soft: rgba(245, 158, 11, 0.18);
+  --warning-soft-text: #FDE68A;
+
+  --danger: #EF4444;
+  --danger-soft: rgba(239, 68, 68, 0.18);
+  --danger-soft-text: #FECACA;
+
+  --info: #38BDF8;
+  --info-soft: rgba(56, 189, 248, 0.18);
+  --info-soft-text: #BAE6FD;
+
+  --violet: #A78BFA;
+  --violet-soft: rgba(167, 139, 250, 0.18);
+  --violet-soft-text: #DDD6FE;
+
+  --neutral-soft: rgba(148, 163, 184, 0.15);
+  --neutral-soft-text: #CBD5E1;
+
+  /* Layout */
+  --sidebar-width: 248px;
+  --sidebar-collapsed: 64px;
+  --topbar-height: 56px;
+  --content-pad-x: 24px;
+  --content-pad-y: 24px;
+
+  /* Sombras */
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --sh-2: 0 4px 12px rgba(0, 0, 0, 0.32);
+  --sh-pop: 0 16px 40px rgba(0, 0, 0, 0.45);
+
+  background: var(--bg);
 }
 
 html {
@@ -14,8 +79,8 @@ html {
 
 body {
   margin: 0;
-  background: #08111f;
-  color: #e5eefb;
+  background: var(--bg);
+  color: var(--text);
   text-rendering: geometricPrecision;
 }
 
@@ -827,4 +892,2407 @@ select.pro-input,
   .mobile-bottom-nav {
     display: none;
   }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Fase 1 — Shell ERP (dark)
+   Clases nuevas con prefijo `erp-*`. Conviven con `pro-*` sin pisarlas.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.erp-shell {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────────────── */
+.erp-sidebar {
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: var(--sidebar-width);
+  background: #0B1220;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
+  overflow: hidden;
+}
+
+.erp-sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  min-height: var(--topbar-height);
+}
+
+.erp-sidebar-brand-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+  flex: none;
+}
+
+.erp-sidebar-brand-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.erp-sidebar-brand-name {
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.erp-sidebar-brand-sub {
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.erp-sidebar-status {
+  margin: 12px 14px 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+
+.erp-sidebar-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--text-3);
+}
+
+.erp-sidebar-status-ok .erp-sidebar-status-dot { background: var(--success); }
+.erp-sidebar-status-warn .erp-sidebar-status-dot { background: var(--warning); }
+.erp-sidebar-status-err .erp-sidebar-status-dot { background: var(--danger); }
+.erp-sidebar-status-ok { color: var(--success-soft-text); border-color: rgba(34, 197, 94, 0.28); }
+.erp-sidebar-status-warn { color: var(--warning-soft-text); border-color: rgba(245, 158, 11, 0.32); }
+.erp-sidebar-status-err { color: var(--danger-soft-text); border-color: rgba(239, 68, 68, 0.32); }
+
+.erp-sidebar-nav {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 14px 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.erp-sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.erp-sidebar-section-title {
+  padding: 0 10px 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-3);
+}
+
+.erp-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  height: 32px;
+  border-radius: 6px;
+  color: #CBD5E1;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+  text-decoration: none;
+  user-select: none;
+}
+
+.erp-sidebar-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+}
+
+.erp-sidebar-item.is-active {
+  background: var(--primary-soft);
+  color: #fff;
+}
+
+.erp-sidebar-item.is-active .erp-sidebar-icon {
+  color: #A5B4FC;
+}
+
+.erp-sidebar-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-3);
+}
+
+.erp-sidebar-item:hover .erp-sidebar-icon { color: #E2E8F0; }
+
+.erp-sidebar-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.erp-sidebar-count {
+  flex: none;
+  min-width: 20px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.15);
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.erp-sidebar-item.is-active .erp-sidebar-count {
+  background: rgba(165, 180, 252, 0.22);
+  color: #DDD6FE;
+}
+
+.erp-sidebar-chevron {
+  flex: none;
+  color: var(--text-3);
+  transition: transform 160ms ease;
+}
+
+.erp-sidebar-chevron.is-open {
+  transform: rotate(90deg);
+}
+
+.erp-sidebar-subnav {
+  padding: 2px 0 4px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.erp-sidebar-subnav .erp-sidebar-item {
+  height: 30px;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding-left: 8px;
+}
+
+.erp-sidebar-footer {
+  border-top: 1px solid var(--border);
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.erp-sidebar-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--primary-soft);
+  color: var(--primary-soft-text);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex: none;
+}
+
+.erp-sidebar-user {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.erp-sidebar-user-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #E2E8F0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.erp-sidebar-user-meta {
+  font-size: 11px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.erp-sidebar-logout {
+  flex: none;
+  padding: 6px;
+  border-radius: 6px;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.erp-sidebar-logout:hover {
+  color: var(--danger-soft-text);
+  border-color: rgba(239, 68, 68, 0.4);
+  background: var(--danger-soft);
+}
+
+/* ── Topbar (desktop only — hidden on mobile via media query) ────────── */
+.erp-topbar {
+  display: none;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  height: var(--topbar-height);
+  align-items: center;
+  gap: 12px;
+  padding: 0 20px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+}
+
+@media (min-width: 1024px) {
+  .erp-topbar { display: flex; }
+}
+
+.erp-topbar-search {
+  position: relative;
+  flex: 1 1 380px;
+  max-width: 480px;
+}
+
+.erp-topbar-search input {
+  width: 100%;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0 12px 0 34px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.erp-topbar-search input::placeholder { color: var(--text-3); }
+
+.erp-topbar-search input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.erp-topbar-search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-3);
+  pointer-events: none;
+}
+
+.erp-topbar-kbd {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--text-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 5px;
+  pointer-events: none;
+}
+
+.erp-topbar-spacer { flex: 1 1 auto; }
+
+.erp-topbar-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.erp-topbar-pill:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.erp-topbar-icon-btn {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.erp-topbar-icon-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.erp-topbar-icon-btn .erp-topbar-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--danger);
+  box-shadow: 0 0 0 2px var(--surface-2);
+}
+
+.erp-topbar-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 700;
+  display: inline-grid;
+  place-items: center;
+  box-shadow: 0 0 0 2px var(--surface-2);
+}
+
+.erp-topbar-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary-soft-text);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+/* ── Layout principal ────────────────────────────────────────────────── */
+.erp-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+@media (min-width: 1024px) {
+  .erp-main {
+    margin-left: var(--sidebar-width);
+  }
+}
+
+.erp-content {
+  flex: 1 1 auto;
+  padding: var(--content-pad-y) var(--content-pad-x) 48px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (min-width: 1280px) {
+  .erp-content {
+    padding: 28px 28px 56px;
+  }
+}
+
+/* ── Breadcrumbs ─────────────────────────────────────────────────────── */
+.erp-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-3);
+  margin-bottom: 8px;
+}
+
+.erp-breadcrumbs a,
+.erp-breadcrumbs span {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-3);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.erp-breadcrumbs a:hover { color: var(--text); }
+
+.erp-breadcrumbs .erp-breadcrumbs-current {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.erp-breadcrumbs .erp-breadcrumbs-sep {
+  color: var(--text-3);
+  opacity: 0.65;
+  margin: 0 2px;
+}
+
+/* ── PageHeader ERP ─────────────────────────────────────────────────── */
+.erp-page-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+@media (min-width: 1024px) {
+  .erp-page-header {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+  }
+}
+
+.erp-page-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--text);
+  line-height: 1.2;
+  margin: 0;
+}
+
+.erp-page-description {
+  margin-top: 4px;
+  max-width: 640px;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.erp-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+/* ── Botones ERP ─────────────────────────────────────────────────────── */
+.erp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  white-space: nowrap;
+}
+
+.erp-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.erp-btn-primary {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+.erp-btn-primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+
+.erp-btn-secondary {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.erp-btn-secondary:hover { background: var(--surface-hover); border-color: #475569; }
+
+.erp-btn-ghost {
+  background: transparent;
+  color: var(--text-2);
+  border-color: var(--border);
+}
+
+.erp-btn-ghost:hover { background: var(--surface-hover); color: var(--text); }
+
+.erp-btn-danger {
+  background: transparent;
+  color: var(--danger-soft-text);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.erp-btn-danger:hover { background: var(--danger-soft); }
+
+.erp-btn-sm { height: 28px; padding: 0 10px; font-size: 12px; }
+
+/* ── Card ERP ────────────────────────────────────────────────────────── */
+.erp-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: var(--sh-1);
+}
+
+.erp-card-lg { padding: 18px; }
+
+.erp-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.erp-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.erp-card-subtitle {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+/* ── KPI ERP ─────────────────────────────────────────────────────────── */
+.erp-kpi-row {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (min-width: 768px) { .erp-kpi-row { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (min-width: 1280px) { .erp-kpi-row.is-five { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+
+.erp-kpi {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: var(--sh-1);
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.erp-kpi-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-2);
+}
+
+.erp-kpi-value {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+
+.erp-kpi-detail {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-2);
+  line-height: 1.4;
+}
+
+.erp-kpi.is-alert {
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.08), var(--surface) 60%);
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.erp-kpi.is-alert .erp-kpi-label { color: var(--warning-soft-text); }
+
+.erp-kpi.is-danger {
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.1), var(--surface) 60%);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.erp-kpi.is-danger .erp-kpi-label { color: var(--danger-soft-text); }
+
+.erp-kpi.is-success {
+  background: linear-gradient(180deg, rgba(34, 197, 94, 0.08), var(--surface) 60%);
+  border-color: rgba(34, 197, 94, 0.32);
+}
+
+.erp-kpi.is-success .erp-kpi-label { color: var(--success-soft-text); }
+
+.erp-kpi-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.erp-kpi-delta-up { color: var(--success); }
+.erp-kpi-delta-down { color: var(--danger); }
+
+/* ── Badges ERP ──────────────────────────────────────────────────────── */
+.erp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  border: 1px solid transparent;
+}
+
+.erp-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.85;
+}
+
+.erp-badge-neutral { background: var(--neutral-soft); color: var(--neutral-soft-text); }
+.erp-badge-info    { background: var(--info-soft); color: var(--info-soft-text); }
+.erp-badge-success { background: var(--success-soft); color: var(--success-soft-text); }
+.erp-badge-warning { background: var(--warning-soft); color: var(--warning-soft-text); }
+.erp-badge-danger  { background: var(--danger-soft); color: var(--danger-soft-text); }
+.erp-badge-violet  { background: var(--violet-soft); color: var(--violet-soft-text); }
+.erp-badge-primary { background: var(--primary-soft); color: var(--primary-soft-text); }
+
+.erp-badge-solid-danger {
+  background: var(--danger);
+  color: #fff;
+  border-color: var(--danger);
+}
+
+/* ── Sync status badge ───────────────────────────────────────────────── */
+.erp-sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.erp-sync-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--text-3);
+}
+
+.erp-sync.is-ok    { color: var(--success-soft-text); border-color: rgba(34, 197, 94, 0.32); }
+.erp-sync.is-ok .erp-sync-dot { background: var(--success); }
+.erp-sync.is-sync  { color: var(--info-soft-text); border-color: rgba(56, 189, 248, 0.32); }
+.erp-sync.is-sync .erp-sync-dot { background: var(--info); animation: erp-pulse 1.4s ease-in-out infinite; }
+.erp-sync.is-err   { color: var(--danger-soft-text); border-color: rgba(239, 68, 68, 0.32); }
+.erp-sync.is-err .erp-sync-dot { background: var(--danger); }
+
+@keyframes erp-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(1.4); }
+}
+
+/* ── Hover de filas (para tablas migradas más adelante) ─────────────── */
+.erp-row-hover:hover { background: var(--surface-hover); }
+
+/* ── Foco accesible global para los nuevos componentes ──────────────── */
+.erp-btn:focus-visible,
+.erp-sidebar-item:focus-visible,
+.erp-topbar-icon-btn:focus-visible,
+.erp-topbar-pill:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Fase 2 — Primitivos visuales (dark)
+   Inputs, labels, formularios, estados, notices, tabs, info rows.
+   Conviven con `pro-*` sin pisar.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* ── Inputs / selects / textareas ────────────────────────────────────── */
+.erp-input {
+  width: 100%;
+  height: 36px;
+  border-radius: 7px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0 12px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+  font-family: inherit;
+}
+
+.erp-input::placeholder { color: var(--text-3); }
+
+.erp-input:hover:not(:disabled):not(:focus) {
+  border-color: var(--border-strong);
+}
+
+.erp-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  background: var(--surface);
+}
+
+.erp-input:disabled {
+  background: var(--bg);
+  color: var(--text-3);
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.erp-input.is-error,
+.erp-input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.erp-input.is-error:focus,
+.erp-input[aria-invalid="true"]:focus {
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.28);
+}
+
+textarea.erp-input {
+  height: auto;
+  min-height: 80px;
+  padding: 10px 12px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+select.erp-input {
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-3) 50%), linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
+  background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 30px;
+  cursor: pointer;
+}
+
+input[type="file"].erp-input {
+  padding: 6px 10px;
+  font-size: 12.5px;
+  height: auto;
+  min-height: 36px;
+}
+
+/* ── Form field (label + input + hint/error) ─────────────────────────── */
+.erp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.erp-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  line-height: 1.3;
+}
+
+.erp-field-required {
+  color: var(--danger);
+  margin-left: 2px;
+}
+
+.erp-field-hint {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-3);
+  line-height: 1.45;
+}
+
+.erp-field-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--danger-soft-text);
+  line-height: 1.4;
+}
+
+.erp-form-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 768px) {
+  .erp-form-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .erp-form-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .erp-form-grid .erp-field-wide { grid-column: span 2; }
+  .erp-form-grid-3 .erp-field-wide { grid-column: span 3; }
+}
+
+/* ── Section dentro de un form (numerada o no) ───────────────────────── */
+.erp-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.erp-section + .erp-section { margin-top: 8px; }
+
+.erp-section-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.erp-section-num {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary-soft-text);
+  font-size: 11.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.erp-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.erp-section-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.45;
+}
+
+.erp-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 8px;
+  border-top: 1px solid var(--divider);
+}
+
+.erp-form-actions-left { justify-content: flex-start; }
+
+/* ── Notice (banner contextual) ──────────────────────────────────────── */
+.erp-notice {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  border: 1px solid;
+}
+
+.erp-notice-icon {
+  flex: none;
+  margin-top: 1px;
+}
+
+.erp-notice-body { min-width: 0; flex: 1 1 auto; }
+
+.erp-notice-title {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.erp-notice-info {
+  background: var(--info-soft);
+  border-color: rgba(56, 189, 248, 0.32);
+  color: var(--info-soft-text);
+}
+
+.erp-notice-success {
+  background: var(--success-soft);
+  border-color: rgba(34, 197, 94, 0.32);
+  color: var(--success-soft-text);
+}
+
+.erp-notice-warning {
+  background: var(--warning-soft);
+  border-color: rgba(245, 158, 11, 0.36);
+  color: var(--warning-soft-text);
+}
+
+.erp-notice-error {
+  background: var(--danger-soft);
+  border-color: rgba(239, 68, 68, 0.36);
+  color: var(--danger-soft-text);
+}
+
+/* ── Estados de pantalla ─────────────────────────────────────────────── */
+.erp-empty-state,
+.erp-loading-state,
+.erp-error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 32px 20px;
+  border-radius: 10px;
+  border: 1px dashed var(--border-strong);
+  background: var(--surface);
+  gap: 8px;
+}
+
+.erp-empty-icon,
+.erp-loading-icon,
+.erp-error-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  margin-bottom: 4px;
+}
+
+.erp-empty-icon {
+  background: var(--surface-2);
+  color: var(--text-3);
+  border: 1px solid var(--border);
+}
+
+.erp-loading-icon {
+  background: var(--primary-soft);
+  color: var(--primary-soft-text);
+}
+
+.erp-error-icon {
+  background: var(--danger-soft);
+  color: var(--danger-soft-text);
+}
+
+.erp-empty-title,
+.erp-loading-title,
+.erp-error-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.erp-empty-description,
+.erp-loading-description,
+.erp-error-description {
+  margin: 0;
+  max-width: 320px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  line-height: 1.55;
+}
+
+.erp-error-state {
+  border-color: rgba(239, 68, 68, 0.36);
+  border-style: solid;
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.06), var(--surface) 70%);
+}
+
+.erp-state-cta { margin-top: 10px; }
+
+.erp-spin { animation: erp-spin 900ms linear infinite; }
+
+@keyframes erp-spin { to { transform: rotate(360deg); } }
+
+/* ── Tab bar ─────────────────────────────────────────────────────────── */
+.erp-tab-bar {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.erp-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 6px;
+  background: transparent;
+  border: 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.erp-tab:hover { background: var(--surface-hover); color: var(--text); }
+
+.erp-tab.is-active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--sh-1);
+}
+
+.erp-tab-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--neutral-soft);
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.erp-tab.is-active .erp-tab-count {
+  background: var(--primary-soft);
+  color: var(--primary-soft-text);
+}
+
+/* ── Info row (label/value display) ──────────────────────────────────── */
+.erp-info-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.erp-info-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+.erp-info-value {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.erp-info-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 640px) {
+  .erp-info-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .erp-info-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .erp-info-grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+/* ── Stack helpers ───────────────────────────────────────────────────── */
+.erp-stack-2 > * + * { margin-top: 8px; }
+.erp-stack-3 > * + * { margin-top: 12px; }
+.erp-stack-4 > * + * { margin-top: 16px; }
+.erp-stack-6 > * + * { margin-top: 24px; }
+
+/* ── Tag (pill informativa, NO badge de estado) ──────────────────────── */
+.erp-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.erp-tag-primary {
+  background: var(--primary-soft);
+  border-color: rgba(99, 102, 241, 0.28);
+  color: var(--primary-soft-text);
+}
+
+.erp-tag-success {
+  background: var(--success-soft);
+  border-color: rgba(34, 197, 94, 0.28);
+  color: var(--success-soft-text);
+}
+
+/* ── Divider ─────────────────────────────────────────────────────────── */
+.erp-divider {
+  height: 1px;
+  background: var(--divider);
+  border: 0;
+  margin: 0;
+}
+
+/* ── Card variantes (compactas para listas / con padding amplio) ─────── */
+.erp-card-sm { padding: 12px; border-radius: 8px; }
+.erp-card-flat { box-shadow: none; }
+
+/* ── Spinner pequeño ─────────────────────────────────────────────────── */
+.erp-inline-spinner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Mobile UX — header sobrio, FAB, drawer con swipe, bottom nav refinado
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* ── Header mobile estilo ERP ─────────────────────────────────────────── */
+.erp-mobile-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  min-height: 56px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.erp-mobile-header-grip {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  flex: none;
+}
+
+.erp-mobile-header-grip:active {
+  background: var(--surface-hover);
+}
+
+.erp-mobile-header-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+  line-height: 1.15;
+}
+
+.erp-mobile-header-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.erp-mobile-header-sub {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.erp-mobile-header-bell {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  flex: none;
+}
+
+.erp-mobile-header-bell:active {
+  background: var(--surface-hover);
+}
+
+.erp-mobile-header-bell-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 700;
+  display: inline-grid;
+  place-items: center;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+/* ── FAB (Floating Action Button) ─────────────────────────────────────── */
+.erp-mobile-fab {
+  position: fixed;
+  right: 16px;
+  bottom: calc(72px + env(safe-area-inset-bottom));
+  z-index: 35;
+  display: inline-grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: #fff;
+  border: 0;
+  box-shadow: 0 8px 24px rgba(79, 70, 229, 0.4), 0 2px 6px rgba(0, 0, 0, 0.25);
+  transition: transform 120ms ease, background 120ms ease;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.erp-mobile-fab:hover,
+.erp-mobile-fab:focus-visible {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+  outline: none;
+  box-shadow: 0 10px 28px rgba(79, 70, 229, 0.5), 0 3px 8px rgba(0, 0, 0, 0.3);
+}
+
+.erp-mobile-fab:active {
+  transform: scale(0.96);
+}
+
+@media (min-width: 1024px) {
+  .erp-mobile-fab { display: none; }
+}
+
+/* Cuando el drawer está abierto, ocultamos el FAB. */
+.erp-shell.is-drawer-open .erp-mobile-fab { display: none; }
+
+/* ── Sidebar drawer mobile con swipe ──────────────────────────────────── */
+@media (max-width: 1023px) {
+  .erp-sidebar {
+    width: min(290px, 86vw);
+    transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    /* Mejora la sensación de slide */
+    will-change: transform;
+  }
+  .erp-sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(2, 6, 23, 0.62);
+    backdrop-filter: blur(2px);
+    z-index: 49;
+    animation: erp-fade-in 160ms ease;
+  }
+}
+
+/* ── Bottom nav refinado al estilo ERP ───────────────────────────────── */
+.mobile-bottom-nav-inner {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.25), 0 -2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.mobile-bottom-item {
+  color: var(--text-2);
+}
+
+.mobile-bottom-item-active {
+  background: var(--primary-soft);
+  color: var(--primary-soft-text);
+  box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.28);
+}
+
+.mobile-bottom-badge {
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+/* ── Date dividers ("HOY" / "AYER") ──────────────────────────────────── */
+.erp-date-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 2px 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-3);
+}
+
+.erp-date-divider::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--divider);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Responsive — mobile first
+   Ajustes para que las páginas ERP funcionen bien en pantallas < 768 px.
+   ───────────────────────────────────────────────────────────────────────── */
+
+@media (max-width: 767px) {
+  /* Reducir padding general del content */
+  .erp-content {
+    padding: 12px 12px 96px; /* 96px abajo: espacio para bottom nav + FAB */
+  }
+
+  /* PageHeader: stack vertical, acciones en línea con wrap */
+  .erp-page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .erp-page-title {
+    font-size: 20px;
+    line-height: 1.2;
+  }
+  .erp-page-description {
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
+  .erp-page-actions {
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .erp-page-actions > * {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /* KPI cards en mobile: 2 columnas, padding más chico, valor más chico */
+  .erp-kpi-row,
+  .erp-kpi-row.is-five {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .erp-kpi {
+    padding: 12px;
+    min-height: auto;
+  }
+  .erp-kpi-label {
+    font-size: 10.5px;
+  }
+  .erp-kpi-value {
+    font-size: 22px;
+  }
+  .erp-kpi-detail {
+    font-size: 11px;
+  }
+
+  /* Cards: padding más chico, radio reducido */
+  .erp-card {
+    padding: 12px;
+    border-radius: 8px;
+  }
+  .erp-card-lg { padding: 14px; }
+  .erp-card-header {
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  /* Form grids: una sola columna */
+  .erp-form-grid-2,
+  .erp-form-grid-3,
+  .erp-form-grid-4 {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .erp-form-grid .erp-field-wide,
+  .erp-form-grid-3 .erp-field-wide {
+    grid-column: auto !important;
+  }
+
+  /* Info grid: una sola columna en mobile compacto */
+  .erp-info-grid-2,
+  .erp-info-grid-3,
+  .erp-info-grid-4 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* FilterBar: stack vertical, full width */
+  .erp-filterbar {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 10px;
+    gap: 8px;
+  }
+  .erp-filterbar-search {
+    max-width: 100%;
+    width: 100%;
+  }
+  .erp-filterbar-spacer {
+    display: none;
+  }
+  .erp-filterbar-reset {
+    text-align: right;
+    padding: 4px 0;
+  }
+
+  /* Tabs: scroll horizontal, ya estilizados; aumentar touch target */
+  .erp-tab-bar {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .erp-tab-bar::-webkit-scrollbar {
+    display: none;
+  }
+  .erp-tab {
+    scroll-snap-align: start;
+    height: 32px;
+    padding: 0 14px;
+    font-size: 13px;
+  }
+
+  /* Drawer FULL-screen en mobile (mejor que 540 px con padding lateral) */
+  .erp-drawer {
+    max-width: 100%;
+    border-left: 0;
+  }
+  .erp-drawer-header {
+    padding: 12px 14px;
+  }
+  .erp-drawer-body {
+    padding: 14px;
+  }
+  .erp-drawer-footer {
+    padding: 10px 14px;
+    /* respeta safe-area-inset en iOS */
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+  .erp-drawer-actions {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  /* Modales: ajuste de márgenes en mobile */
+  .erp-modal {
+    width: calc(100% - 16px);
+    max-height: calc(100vh - 32px);
+  }
+  .erp-modal-header,
+  .erp-modal-body,
+  .erp-modal-footer {
+    padding: 12px 14px;
+  }
+
+  /* Notice: padding más chico */
+  .erp-notice {
+    padding: 10px 12px;
+    font-size: 12.5px;
+  }
+
+  /* Estados loading/empty/error: padding razonable */
+  .erp-empty-state,
+  .erp-loading-state,
+  .erp-error-state {
+    padding: 24px 16px;
+  }
+
+  /* Form section header: stack */
+  .erp-section-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .erp-form-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+  .erp-form-actions > * {
+    width: 100%;
+  }
+
+  /* Botones secundarios full-width cuando van solos en mobile */
+  .erp-btn {
+    min-height: 36px;
+  }
+
+  /* Tabla "responsive": ocultamos cuando hay un mobile-card */
+  .erp-table-wrap.has-mobile-cards .erp-table-scroller {
+    display: none;
+  }
+  .erp-table-wrap:not(.has-mobile-cards) .erp-table {
+    min-width: 540px; /* permite scroll-x sin romper layout */
+  }
+
+  /* Bulkbar de tabla en mobile */
+  .erp-table-bulkbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  /* Stacks más compactos verticalmente en mobile */
+  .erp-stack-6 > * + * { margin-top: 16px; }
+  .erp-stack-4 > * + * { margin-top: 12px; }
+
+  /* Sidebar items un poco más altos para touch (mejora tap target) */
+  .erp-sidebar-item {
+    height: 38px;
+    padding: 8px 12px;
+    font-size: 13.5px;
+  }
+  .erp-sidebar-subnav .erp-sidebar-item {
+    height: 34px;
+    font-size: 13px;
+  }
+
+  /* Inputs un poco más altos para mejor target */
+  .erp-input {
+    height: 40px;
+    font-size: 14px;
+  }
+  textarea.erp-input { min-height: 90px; }
+
+  /* ErpButton más alto cuando va en form-actions */
+  .erp-form-actions .erp-btn,
+  .erp-form-actions .erp-btn-primary,
+  .erp-form-actions .erp-btn-secondary {
+    height: 40px;
+    font-size: 14px;
+  }
+
+  /* Banner global: padding más chico */
+  .erp-global-banner {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
+  /* Drawer overlay no debería quedar oculto detrás del bottom nav */
+  .erp-drawer { z-index: 90; }
+  .erp-overlay { z-index: 89; }
+}
+
+/* En desktop, ocultar las cards mobile generadas por renderMobileCard */
+@media (min-width: 768px) {
+  .erp-table-mobile-cards {
+    display: none;
+  }
+}
+
+/* En mobile, mostrar las cards mobile */
+@media (max-width: 767px) {
+  .erp-table-mobile-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    background: var(--surface);
+  }
+}
+
+/* ── Card-style row para vista mobile ────────────────────────────────── */
+.erp-mcard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.erp-mcard:active {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.erp-mcard-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.erp-mcard-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.erp-mcard-sub {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.4;
+}
+
+.erp-mcard-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+
+.erp-mcard-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* ── Quick contact actions (Llamar / Email / WhatsApp) ───────────────── */
+.erp-contact-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.erp-contact-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: none;
+  flex: 1 1 auto;
+  justify-content: center;
+  min-width: 100px;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.erp-contact-btn:hover,
+.erp-contact-btn:active {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.erp-contact-btn-call    { color: var(--info-soft-text); border-color: rgba(56, 189, 248, 0.32); }
+.erp-contact-btn-email   { color: var(--primary-soft-text); border-color: rgba(99, 102, 241, 0.32); }
+.erp-contact-btn-whatsapp { color: var(--success-soft-text); border-color: rgba(34, 197, 94, 0.32); }
+
+/* ── Form footer sticky (mobile) oculta el bottom nav y el FAB ───────── */
+.erp-mobile-form-footer {
+  padding-bottom: calc(12px + env(safe-area-inset-bottom)) !important;
+}
+
+/* Cuando hay un footer de formulario sticky, el bottom nav y el FAB estorban. */
+.erp-shell:has([data-mobile-form-footer]) .mobile-bottom-nav,
+.erp-shell:has([data-mobile-form-footer]) .erp-mobile-fab {
+  display: none;
+}
+
+/* ── Banner global (offline / sync error) ────────────────────────────── */
+.erp-global-banner {
+  position: sticky;
+  top: 0;
+  z-index: 38;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--warning);
+  background: var(--warning-soft);
+  color: var(--warning-soft-text);
+}
+
+.erp-global-banner.is-error {
+  background: var(--danger-soft);
+  color: var(--danger-soft-text);
+  border-bottom-color: var(--danger);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Fase 4 — DataTable, FilterBar, RowMenu
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* ── DataTable ──────────────────────────────────────────────────────── */
+.erp-table-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--sh-1);
+}
+
+.erp-table-scroller {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.erp-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  min-width: 720px;
+}
+
+.erp-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.erp-table thead th.is-numeric { text-align: right; }
+.erp-table thead th.is-center { text-align: center; }
+.erp-table thead th.is-action { width: 1%; padding-right: 14px; }
+.erp-table thead th.is-check { width: 36px; padding: 0 4px 0 14px; }
+
+.erp-table tbody td {
+  padding: 11px 14px;
+  vertical-align: middle;
+  border-top: 1px solid var(--divider);
+  color: var(--text);
+}
+
+.erp-table tbody td.is-numeric { text-align: right; }
+.erp-table tbody td.is-center { text-align: center; }
+.erp-table tbody td.is-muted { color: var(--text-2); }
+.erp-table tbody td.is-check { padding: 0 4px 0 14px; }
+
+.erp-table tbody tr {
+  transition: background 100ms ease;
+}
+
+.erp-table tbody tr.is-clickable { cursor: pointer; }
+.erp-table tbody tr.is-clickable:hover td,
+.erp-table tbody tr.erp-row-hover:hover td {
+  background: var(--surface-hover);
+}
+
+.erp-table tbody tr.is-selected td {
+  background: var(--primary-soft);
+}
+
+.erp-table tbody tr.is-selected:hover td {
+  background: rgba(99, 102, 241, 0.24);
+}
+
+/* Densidad compacta (filas 36 px) */
+.erp-table-compact tbody td { padding: 7px 14px; }
+.erp-table-compact thead th { padding: 8px 14px; }
+
+/* Multi-line cell (ej. cliente/producto en 2 líneas) */
+.erp-cell-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.erp-cell-stack-primary {
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.erp-cell-stack-secondary {
+  font-size: 11.5px;
+  color: var(--text-2);
+  line-height: 1.3;
+}
+
+.erp-cell-mono {
+  font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text);
+}
+
+/* Footer / paginación */
+.erp-table-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+/* Bulk actions bar (cuando hay selección múltiple) */
+.erp-table-bulkbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--primary-soft);
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--primary-soft-text);
+  font-weight: 600;
+}
+
+/* Estados dentro de tabla */
+.erp-table-state {
+  padding: 36px 24px;
+  text-align: center;
+}
+
+/* Checkbox accesible (sin custom paint complicado) */
+.erp-checkbox {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+/* ── FilterBar ──────────────────────────────────────────────────────── */
+.erp-filterbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 14px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.erp-filterbar-search {
+  position: relative;
+  min-width: 220px;
+  flex: 1 1 220px;
+  max-width: 360px;
+}
+
+.erp-filterbar-search input {
+  width: 100%;
+  height: 32px;
+  padding: 0 12px 0 32px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  font-size: 12.5px;
+  outline: none;
+}
+
+.erp-filterbar-search input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.erp-filterbar-search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-3);
+  pointer-events: none;
+}
+
+.erp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.erp-chip:hover { background: var(--surface-hover); color: var(--text); border-color: var(--border-strong); }
+
+.erp-chip.is-active {
+  background: var(--primary-soft);
+  border-color: rgba(99, 102, 241, 0.4);
+  color: var(--primary-soft-text);
+}
+
+.erp-chip-clear {
+  margin-left: 4px;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+
+.erp-chip-clear:hover { opacity: 1; }
+
+.erp-filterbar-spacer { flex: 1 1 auto; }
+
+.erp-filterbar-reset {
+  background: transparent;
+  border: 0;
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0 6px;
+}
+
+.erp-filterbar-reset:hover { color: var(--text); }
+
+/* ── Row menu (popover ⋯) ───────────────────────────────────────────── */
+.erp-rowmenu-trigger {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.erp-rowmenu-trigger:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.erp-rowmenu-trigger.is-open {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.erp-rowmenu {
+  position: absolute;
+  min-width: 200px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: var(--sh-pop);
+  padding: 4px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.erp-rowmenu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 5px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  text-decoration: none;
+}
+
+.erp-rowmenu-item:hover { background: var(--surface-hover); }
+
+.erp-rowmenu-item.is-danger { color: var(--danger-soft-text); }
+.erp-rowmenu-item.is-danger:hover { background: var(--danger-soft); }
+
+.erp-rowmenu-divider {
+  height: 1px;
+  background: var(--divider);
+  margin: 2px 4px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Fase 5 — Drawer, Modal, ConfirmDialog, Timeline
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* ── Overlay compartido ─────────────────────────────────────────────── */
+.erp-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.62);
+  backdrop-filter: blur(2px);
+  z-index: 80;
+  animation: erp-fade-in 140ms ease;
+}
+
+@keyframes erp-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ── Drawer ─────────────────────────────────────────────────────────── */
+.erp-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  max-width: 540px;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--sh-pop);
+  z-index: 81;
+  display: flex;
+  flex-direction: column;
+  animation: erp-slide-in-right 180ms ease;
+}
+
+@keyframes erp-slide-in-right {
+  from { transform: translateX(20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.erp-drawer-header {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.erp-drawer-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+  line-height: 1.3;
+}
+
+.erp-drawer-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.erp-drawer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.erp-drawer-close {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.erp-drawer-close:hover { background: var(--surface-hover); color: var(--text); }
+
+.erp-drawer-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 16px 18px 24px;
+}
+
+.erp-drawer-footer {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+@media (max-width: 640px) {
+  .erp-drawer { max-width: 100%; }
+}
+
+/* ── Modal ───────────────────────────────────────────────────────────── */
+.erp-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: calc(100% - 32px);
+  max-width: 560px;
+  max-height: calc(100vh - 64px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--sh-pop);
+  z-index: 81;
+  display: flex;
+  flex-direction: column;
+  animation: erp-modal-in 160ms ease;
+}
+
+@keyframes erp-modal-in {
+  from { transform: translate(-50%, calc(-50% + 8px)); opacity: 0; }
+  to { transform: translate(-50%, -50%); opacity: 1; }
+}
+
+.erp-modal-sm { max-width: 440px; }
+.erp-modal-lg { max-width: 760px; }
+
+.erp-modal-header {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.erp-modal-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 16px 18px;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.55;
+}
+
+.erp-modal-footer {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+
+.erp-modal-icon-danger {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: var(--danger-soft);
+  color: var(--danger-soft-text);
+  flex: none;
+}
+
+.erp-modal-icon-warning {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: var(--warning-soft);
+  color: var(--warning-soft-text);
+  flex: none;
+}
+
+.erp-modal-icon-info {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: var(--info-soft);
+  color: var(--info-soft-text);
+  flex: none;
+}
+
+/* ── Timeline ────────────────────────────────────────────────────────── */
+.erp-timeline {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.erp-timeline::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  background: var(--divider);
+}
+
+.erp-timeline-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 10px;
+  padding-bottom: 14px;
+}
+
+.erp-timeline-item:last-child { padding-bottom: 0; }
+
+.erp-timeline-dot {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 2px solid var(--border-strong);
+  z-index: 1;
+}
+
+.erp-timeline-dot.is-ok {
+  background: var(--success);
+  border-color: var(--success);
+}
+
+.erp-timeline-dot.is-warn {
+  background: var(--warning);
+  border-color: var(--warning);
+}
+
+.erp-timeline-dot.is-err {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.erp-timeline-dot.is-now {
+  background: var(--primary);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px var(--primary-soft);
+}
+
+.erp-timeline-content {
+  min-width: 0;
+}
+
+.erp-timeline-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.erp-timeline-meta {
+  margin-top: 1px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.erp-timeline-note {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.5;
 }

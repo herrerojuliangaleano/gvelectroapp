@@ -1,33 +1,80 @@
 import { useEffect, useState } from 'react';
+import { Cpu, Globe, HardDrive, Info } from 'lucide-react';
 import { fetchSystemAbout } from '../api/client';
+import { ErpCard, ErpErrorState, ErpInfoGrid, ErpInfoRow, ErpLoadingState, ErpPageHeader } from '../components/ProUI';
 import type { SystemAbout } from '../types';
 
 export function AboutSystemPage() {
   const [about, setAbout] = useState<SystemAbout | null>(null);
   const [error, setError] = useState('');
-  useEffect(() => { fetchSystemAbout().then(setAbout).catch((err) => setError(err.message)); }, []);
+  const [loading, setLoading] = useState(true);
+
+  function load() {
+    setLoading(true);
+    setError('');
+    fetchSystemAbout()
+      .then((value) => { setAbout(value); setLoading(false); })
+      .catch((err) => { setError(err.message); setLoading(false); });
+  }
+
+  useEffect(load, []);
+
   return (
-    <div className="mx-auto max-w-5xl">
-      <div className="mb-6"><h1 className="text-2xl font-black sm:text-3xl">Acerca del sistema</h1><p className="mt-2 text-sm text-slate-400">Versión, entorno, notas y novedades.</p></div>
-      {error && <div className="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-red-200">{error}</div>}
-      {about && <>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <Card label="Sistema" value={about.app_name} />
-          <Card label="Versión" value={about.version} />
-          <Card label="Entorno" value={about.environment} />
-          <Card label="Python" value={about.python} />
-        </div>
-        <div className="mt-5 rounded-3xl border border-slate-800 bg-slate-950/60 p-5">
-          <h2 className="mb-3 text-lg font-black">Rutas y tecnología</h2>
-          <div className="grid gap-3 text-sm lg:grid-cols-2"><Info label="Backend" value={about.backend} /><Info label="Frontend" value={about.frontend} /><Info label="Storage" value={about.storage_dir} /><Info label="Base local" value={about.database_path} /></div>
-        </div>
-        <div className="mt-5 rounded-3xl border border-slate-800 bg-slate-950/60 p-5">
-          <h2 className="mb-3 text-lg font-black">Novedades</h2>
-          <div className="space-y-4">{about.changelog.map((entry) => <div key={entry.version} className="rounded-2xl bg-slate-900/70 p-4"><div className="font-black text-white">v{entry.version} · {entry.title}</div><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-400">{entry.items.map((item) => <li key={item}>{item}</li>)}</ul></div>)}</div>
-        </div>
-      </>}
+    <div className="erp-stack-6">
+      <ErpPageHeader
+        title="Acerca del sistema"
+        description="Versión, entorno, dependencias y novedades."
+      />
+
+      {loading && <ErpLoadingState />}
+      {!loading && error && <ErpErrorState description={error} retry={load} />}
+
+      {about && (
+        <>
+          <ErpCard title="Identificación" subtitle="Datos generales del backend en ejecución">
+            <ErpInfoGrid columns={4}>
+              <ErpInfoRow label="Sistema" value={about.app_name} />
+              <ErpInfoRow label="Versión" value={about.version} />
+              <ErpInfoRow label="Entorno" value={about.environment} />
+              <ErpInfoRow label="Python" value={about.python} />
+            </ErpInfoGrid>
+          </ErpCard>
+
+          <ErpCard
+            title="Rutas y tecnología"
+            subtitle="Ubicaciones de servicios y archivos clave"
+            actions={<Globe size={14} aria-hidden="true" />}
+          >
+            <ErpInfoGrid columns={2}>
+              <ErpInfoRow label={<span className="inline-flex items-center gap-1.5"><Globe size={11} />Backend</span>} value={about.backend} />
+              <ErpInfoRow label={<span className="inline-flex items-center gap-1.5"><Cpu size={11} />Frontend</span>} value={about.frontend} />
+              <ErpInfoRow label={<span className="inline-flex items-center gap-1.5"><HardDrive size={11} />Storage</span>} value={about.storage_dir} />
+              <ErpInfoRow label={<span className="inline-flex items-center gap-1.5"><HardDrive size={11} />Base local</span>} value={about.database_path} />
+            </ErpInfoGrid>
+          </ErpCard>
+
+          <ErpCard title="Novedades" subtitle="Cambios incluidos en cada versión publicada">
+            <div className="erp-stack-3">
+              {about.changelog.map((entry) => (
+                <div key={entry.version} className="rounded-md border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3">
+                  <div className="flex items-center gap-2 text-[13px] font-semibold text-[color:var(--text)]">
+                    <span className="erp-tag erp-tag-primary">v{entry.version}</span>
+                    <span>{entry.title}</span>
+                  </div>
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-[12.5px] leading-[1.55] text-[color:var(--text-2)]">
+                    {entry.items.map((item) => <li key={item}>{item}</li>)}
+                  </ul>
+                </div>
+              ))}
+              {about.changelog.length === 0 && (
+                <div className="flex items-center gap-2 text-[12.5px] text-[color:var(--text-3)]">
+                  <Info size={13} /> Sin cambios publicados todavía.
+                </div>
+              )}
+            </div>
+          </ErpCard>
+        </>
+      )}
     </div>
   );
 }
-function Card({ label, value }: { label: string; value: string }) { return <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-5"><div className="text-xs font-bold uppercase text-slate-500">{label}</div><div className="mt-2 text-lg font-black text-white">{value}</div></div>; }
-function Info({ label, value }: { label: string; value: string }) { return <div className="rounded-2xl bg-slate-900/70 p-3"><div className="text-xs font-bold uppercase text-slate-500">{label}</div><div className="mt-1 break-all text-slate-200">{value}</div></div>; }

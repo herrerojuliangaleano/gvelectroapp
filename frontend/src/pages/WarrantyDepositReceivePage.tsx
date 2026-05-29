@@ -1,10 +1,12 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowRight,
   CheckCircle2,
   Clock,
   Download,
   PackageCheck,
+  Plus,
   Printer,
   RefreshCw,
   Truck,
@@ -16,11 +18,32 @@ import {
   fetchAvailableWarrantiesForDepositTransfer,
   fetchDepositTransferOptions,
   fetchRemitos,
+  fetchWarrantyOptions,
   generateDepositTransferRemito,
+  getCurrentUserFromStorage,
 } from '../api/client';
+import {
+  ErpBadge,
+  ErpButton,
+  ErpCard,
+  ErpField,
+  ErpInput,
+  ErpKpiCard,
+  ErpLoadingState,
+  ErpNotice,
+  ErpPageHeader,
+  ErpSelect,
+  ErpTag,
+  erpBtnGhost,
+  erpBtnPrimary,
+} from '../components/ProUI';
+import { canCrossSelectBranches } from '../branchAccess';
+import { WarrantyQuickCreateModal } from '../components/WarrantyQuickCreateModal';
 import type {
   AvailableWarrantyForRemito,
+  WarrantyOptions,
   WarrantyRemitoInfo,
+  WarrantySummary,
 } from '../types';
 
 const canReceive       = () => can('warranties.remitos.receive');
@@ -37,8 +60,6 @@ function daysSince(dateStr: string | null | undefined): number | null {
 async function printRemitoPdf(remitoCode: string): Promise<void> {
   const blob = await downloadRemitoPdf(remitoCode);
   const url  = URL.createObjectURL(blob);
-  // Abrir en nueva pestaña y disparar print() cuando cargue el PDF.
-  // El iframe oculto es bloqueado por Chrome en PDFs; la ventana externa funciona siempre.
   const win = window.open(url, '_blank');
   if (win) {
     win.addEventListener('load', () => {
@@ -48,7 +69,6 @@ async function printRemitoPdf(remitoCode: string): Promise<void> {
       }, 400);
     });
   } else {
-    // Fallback si el popup fue bloqueado: descargar
     const a = document.createElement('a');
     a.href = url; a.download = `${remitoCode}.pdf`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
@@ -59,6 +79,13 @@ async function printRemitoPdf(remitoCode: string): Promise<void> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function WarrantyDepositReceivePage() {
+  const currentUser = getCurrentUserFromStorage();
+  const hasCrossSelect = canCrossSelectBranches(currentUser);
+
+  // ── Alta de garantía (cliente que llega directo al depósito) ──────────────
+  const [showCreate, setShowCreate] = useState(false);
+  const [warrantyOptions, setWarrantyOptions] = useState<WarrantyOptions | null>(null);
+
   // ── Remitos en tránsito ───────────────────────────────────────────────────
   const [transitRemitos, setTransitRemitos] = useState<WarrantyRemitoInfo[]>([]);
   const [transitLoading, setTransitLoading] = useState(false);
@@ -69,26 +96,38 @@ export function WarrantyDepositReceivePage() {
   const [quickLugar,   setQuickLugar]   = useState('');
   const [quickLoading, setQuickLoading] = useState(false);
   const [quickError,   setQuickError]   = useState('');
-
-  // ── Resultados de la sesión ───────────────────────────────────────────────
   const [recentConfirmed, setRecentConfirmed] = useState<string[]>([]);
 
   // ── Movimiento depósito → depósito ────────────────────────────────────────
-  const [transferOrigen,   setTransferOrigen]   = useState('');
-  const [transferDestinos, setTransferDestinos] = useState<Array<{ id: string; name: string; code: string; company_id: string }>>([]);
-  const [transferDestino,  setTransferDestino]  = useState('');
-  const [transferNota,     setTransferNota]     = useState('');
+  const [transferOrigen,    setTransferOrigen]    = useState('');
+  const [transferOrigenes,  setTransferOrigenes]  = useState<Array<{ id: string; name: string; code: string; company_id: string }>>([]);
+  const [transferDestinos,  setTransferDestinos]  = useState<Array<{ id: string; name: string; code: string; company_id: string }>>([]);
+  const [transferDestino,   setTransferDestino]   = useState('');
+  const [transferNota,      setTransferNota]      = useState('');
   const [transferAvailable, setTransferAvailable] = useState<AvailableWarrantyForRemito[]>([]);
   const [transferSelected,  setTransferSelected]  = useState<Set<string>>(new Set());
-  const [transferLoading,  setTransferLoading]  = useState(false);
-  const [transferError,    setTransferError]    = useState('');
-  const [transferResult,   setTransferResult]   = useState<{ count: number; remitos: WarrantyRemitoInfo[] } | null>(null);
+  const [transferLoading,   setTransferLoading]   = useState(false);
+  const [transferError,     setTransferError]     = useState('');
+  const [transferResult,    setTransferResult]    = useState<{ count: number; remitos: WarrantyRemitoInfo[] } | null>(null);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
     loadTransitRemitos();
-    if (canDepositTransfer()) loadDepositTransfer();
+    if (canDepositTransfer()) loadDepositTransferOptions();
+    if (can('warranties.create')) {
+      fetchWarrantyOptions().then(setWarrantyOptions).catch(() => undefined);
+    }
   }, []);
+
+  // Al cambiar el origen, recargar garantías disponibles para ESE origen
+  useEffect(() => {
+    if (!canDepositTransfer()) return;
+    if (!transferOrigen) {
+      setTransferAvailable([]);
+      return;
+    }
+    loadAvailableForOrigen(transferOrigen);
+  }, [transferOrigen]);
 
   // ── Carga ─────────────────────────────────────────────────────────────────
 
@@ -105,21 +144,34 @@ export function WarrantyDepositReceivePage() {
     }
   }
 
-  async function loadDepositTransfer() {
+  async function loadDepositTransferOptions() {
     setTransferLoading(true);
     setTransferError('');
     try {
-      const [opts, available] = await Promise.all([
-        fetchDepositTransferOptions(),
-        fetchAvailableWarrantiesForDepositTransfer(),
-      ]);
-      setTransferOrigen(opts.origen_deposito || available.origen_deposito || '');
+      const opts = await fetchDepositTransferOptions();
+      const posibles = opts.origenes_posibles ?? [];
+      setTransferOrigenes(posibles);
       setTransferDestinos(opts.destinos || []);
+      const defaultOrigen = opts.origen_deposito || (posibles.length === 1 ? posibles[0].name : '');
+      setTransferOrigen(defaultOrigen);
       setTransferDestino((cur) => cur || opts.destinos?.[0]?.name || '');
+    } catch (e: unknown) {
+      setTransferError((e as Error).message || 'No se pudo cargar movimiento entre depósitos.');
+    } finally {
+      setTransferLoading(false);
+    }
+  }
+
+  async function loadAvailableForOrigen(origen: string) {
+    setTransferLoading(true);
+    setTransferError('');
+    try {
+      const available = await fetchAvailableWarrantiesForDepositTransfer(origen);
       setTransferAvailable(available.items || []);
       setTransferSelected(new Set());
     } catch (e: unknown) {
-      setTransferError((e as Error).message || 'No se pudo cargar movimiento entre depósitos.');
+      setTransferAvailable([]);
+      setTransferError((e as Error).message || 'No se pudieron cargar las garantías del depósito');
     } finally {
       setTransferLoading(false);
     }
@@ -151,7 +203,11 @@ export function WarrantyDepositReceivePage() {
 
   async function handleDepositTransfer(e: FormEvent) {
     e.preventDefault();
+    if (!transferOrigen.trim()) { setTransferError('Seleccioná el depósito de origen.'); return; }
     if (!transferDestino.trim()) { setTransferError('Seleccioná depósito destino.'); return; }
+    if (transferDestino.trim().toLowerCase() === transferOrigen.trim().toLowerCase()) {
+      setTransferError('El destino debe ser distinto del origen.'); return;
+    }
     if (transferSelected.size === 0) { setTransferError('Seleccioná al menos una garantía para mover.'); return; }
     setTransferLoading(true);
     setTransferError('');
@@ -161,10 +217,11 @@ export function WarrantyDepositReceivePage() {
         destino_deposito: transferDestino.trim(),
         warranty_codes: Array.from(transferSelected),
         nota: transferNota.trim() || undefined,
+        origen_deposito: transferOrigen.trim(),
       });
       setTransferResult({ count: res.count, remitos: res.remitos });
       setTransferNota('');
-      await loadDepositTransfer();
+      await loadAvailableForOrigen(transferOrigen);
     } catch (e: unknown) {
       setTransferError((e as Error).message || 'No se pudo generar el movimiento.');
     } finally {
@@ -179,7 +236,6 @@ export function WarrantyDepositReceivePage() {
       const a    = document.createElement('a');
       a.href = url; a.download = `${remitoCode}.pdf`;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      // Revocar con delay para que el browser tenga tiempo de iniciar la descarga
       setTimeout(() => URL.revokeObjectURL(url), 2000);
     } catch (e: unknown) {
       alert((e as Error).message || 'Error al descargar PDF');
@@ -189,7 +245,7 @@ export function WarrantyDepositReceivePage() {
   function toggleTransferCode(code: string) {
     setTransferSelected((prev) => {
       const next = new Set(prev);
-      next.has(code) ? next.delete(code) : next.add(code);
+      if (next.has(code)) next.delete(code); else next.add(code);
       return next;
     });
   }
@@ -208,387 +264,354 @@ export function WarrantyDepositReceivePage() {
     return d !== null && d >= 2;
   }).length;
 
-  // Resumen agrupado por sucursal de origen
-  const byBranch = transitRemitos.reduce<Record<string, { count: number; maxDays: number; hasLate: boolean }>>((acc, r) => {
-    const key = r.origen_sucursal || 'Sin sucursal';
-    if (!acc[key]) acc[key] = { count: 0, maxDays: 0, hasLate: false };
-    acc[key].count++;
-    const days = daysSince(r.fecha_despacho || r.created_at) ?? 0;
-    if (days > acc[key].maxDays) acc[key].maxDays = days;
-    if (days >= 2) acc[key].hasLate = true;
+  const byBranch = useMemo(() => {
+    const acc: Record<string, { count: number; maxDays: number; hasLate: boolean }> = {};
+    for (const r of transitRemitos) {
+      const key = r.origen_sucursal || 'Sin sucursal';
+      if (!acc[key]) acc[key] = { count: 0, maxDays: 0, hasLate: false };
+      acc[key].count++;
+      const days = daysSince(r.fecha_despacho || r.created_at) ?? 0;
+      if (days > acc[key].maxDays) acc[key].maxDays = days;
+      if (days >= 2) acc[key].hasLate = true;
+    }
     return acc;
-  }, {});
+  }, [transitRemitos]);
+
+  const destinosFiltrados = useMemo(
+    () => transferDestinos.filter((d) => d.name.trim().toLowerCase() !== transferOrigen.trim().toLowerCase()),
+    [transferDestinos, transferOrigen],
+  );
+
+  const noPermissions = !canReceive() && !canDepositTransfer();
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
-    <div className="mx-auto max-w-4xl space-y-6 p-4">
-
-      {/* ── Header ──────────────────────────────────────────────────────── */}
-      <div className="overflow-hidden rounded-3xl border border-emerald-500/20 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950/30 p-5 shadow-2xl shadow-emerald-950/20">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-start gap-4">
-            <div className="rounded-2xl bg-emerald-500/15 p-3 ring-1 ring-emerald-400/30">
-              <PackageCheck className="h-8 w-8 text-emerald-300" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-black text-white">Recepción en depósito</h1>
-              <p className="mt-1 text-sm text-slate-300">
-                Confirmá la llegada de remitos entrantes y gestioná movimientos entre depósitos.
-              </p>
-            </div>
-          </div>
-
-          {/* KPIs */}
-          <div className="flex shrink-0 gap-3">
-            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-center">
-              <div className="text-2xl font-black text-amber-200">{transitRemitos.length}</div>
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-300/70">En tránsito</div>
-            </div>
-            {lateCount > 0 && (
-              <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-center">
-                <div className="text-2xl font-black text-red-300">{lateCount}</div>
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-red-400/70">Demorados</div>
-              </div>
+    <div className="erp-stack-6">
+      <ErpPageHeader
+        title="Recepción en depósito"
+        description="Confirmá la llegada de remitos entrantes, cargá garantías de clientes que llegan al depósito y gestioná movimientos entre depósitos."
+        actions={
+          <>
+            {can('warranties.create') && (
+              <button type="button" onClick={() => setShowCreate(true)} className={erpBtnPrimary}>
+                <Plus size={14} /> Nueva garantía
+              </button>
             )}
-            {recentConfirmed.length > 0 && (
-              <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-center">
-                <div className="text-2xl font-black text-emerald-200">{recentConfirmed.length}</div>
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-300/70">Confirmados</div>
-              </div>
-            )}
-          </div>
-        </div>
+            <button type="button" onClick={loadTransitRemitos} disabled={transitLoading} className={erpBtnGhost}>
+              <RefreshCw size={14} className={transitLoading ? 'erp-spin' : ''} /> Actualizar
+            </button>
+          </>
+        }
+      />
 
-        {/* Confirmaciones recientes */}
-        {recentConfirmed.length > 0 && (
-          <div className="mt-4 space-y-1.5">
-            {recentConfirmed.map((msg, i) => (
-              <div key={i} className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100">
-                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />{msg}
-              </div>
-            ))}
-          </div>
+      {/* KPIs */}
+      <section className="erp-kpi-row" aria-label="Resumen de recepción">
+        <ErpKpiCard
+          label="En tránsito"
+          value={transitRemitos.length}
+          detail={transitRemitos.length > 0 ? 'Esperando confirmación de llegada' : 'Sin remitos en camino'}
+          variant={transitRemitos.length > 0 ? 'alert' : 'default'}
+          icon={<Truck size={13} />}
+        />
+        <ErpKpiCard
+          label="Demorados (≥2d)"
+          value={lateCount}
+          detail={lateCount > 0 ? 'Coordinar con la sucursal origen' : 'Sin atrasos'}
+          variant={lateCount > 0 ? 'danger' : 'default'}
+          icon={<AlertTriangle size={13} />}
+        />
+        <ErpKpiCard
+          label="Confirmados (sesión)"
+          value={recentConfirmed.length}
+          detail={recentConfirmed.length > 0 ? 'Recibidos durante esta sesión' : 'Sin confirmaciones aún'}
+          variant={recentConfirmed.length > 0 ? 'success' : 'default'}
+          icon={<CheckCircle2 size={13} />}
+        />
+        {canDepositTransfer() && (
+          <ErpKpiCard
+            label="Depósitos accesibles"
+            value={transferOrigenes.length}
+            detail={hasCrossSelect ? 'Acceso multi-sucursal' : transferOrigenes.length === 1 ? 'Único depósito asignado' : transferOrigenes.length > 1 ? 'Multi-asignación' : 'Sin depósitos asignados'}
+            variant={transferOrigenes.length === 0 ? 'danger' : 'default'}
+          />
         )}
-      </div>
+      </section>
+
+      {noPermissions && (
+        <ErpCard>
+          <div className="erp-empty-state" style={{ border: 0, background: 'transparent', padding: 0 }}>
+            <div className="erp-empty-icon"><PackageCheck size={20} /></div>
+            <h4 className="erp-empty-title">Sin operaciones disponibles</h4>
+            <p className="erp-empty-description">
+              Tu usuario no tiene los permisos <strong>warranties.remitos.receive</strong> ni <strong>warranties.remitos.deposit_transfer</strong>. Pedile a un administrador que te los asigne si necesitás operar.
+            </p>
+          </div>
+        </ErpCard>
+      )}
+
+      {/* Confirmaciones recientes */}
+      {recentConfirmed.length > 0 && (
+        <div className="erp-stack-2">
+          {recentConfirmed.map((msg, i) => (
+            <ErpNotice key={i} tone="success">{msg}</ErpNotice>
+          ))}
+        </div>
+      )}
 
       {/* ── Confirmar por código ─────────────────────────────────────────── */}
       {canReceive() && (
-        <section className="rounded-3xl border border-emerald-500/30 bg-slate-950 p-5 shadow-xl shadow-emerald-950/10">
-          <div className="mb-4">
-            <h2 className="flex items-center gap-2 text-lg font-black text-emerald-200">
-              <PackageCheck className="h-5 w-5" />
-              Confirmar llegada por código
-            </h2>
-            <p className="mt-1 text-sm text-slate-400">
-              Ingresá el código del PDF impreso para registrar la recepción.
-            </p>
-          </div>
-          <form onSubmit={handleQuickConfirm} className="space-y-3">
+        <ErpCard
+          title={<span className="inline-flex items-center gap-2"><PackageCheck size={14} /> Confirmar llegada por código</span>}
+          subtitle="Ingresá el código del PDF impreso para registrar la recepción del remito."
+        >
+          <form onSubmit={handleQuickConfirm} className="erp-stack-3">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-[2fr_1fr_auto]">
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-semibold text-slate-400">Código del remito</label>
-                <input
-                  className="rounded-2xl border border-emerald-500/40 bg-slate-900 px-4 py-3 font-mono text-base font-bold text-white placeholder:font-normal placeholder:text-slate-500 focus:border-emerald-400 focus:outline-none"
-                  placeholder="Ej. GV-R-2026-0001"
+              <ErpField label="Código del remito" required>
+                <ErpInput
                   value={quickCode}
                   onChange={(e) => setQuickCode(e.target.value.toUpperCase())}
+                  placeholder="Ej. GV-R-2026-0001"
+                  style={{ fontFamily: 'ui-monospace, monospace', fontWeight: 600 }}
                 />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-semibold text-slate-400">Ubicación interna (opcional)</label>
-                <input
-                  className="rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-white placeholder:text-slate-500 focus:border-emerald-400 focus:outline-none"
-                  placeholder="Ej. Estante A3"
+              </ErpField>
+              <ErpField label="Ubicación interna (opcional)">
+                <ErpInput
                   value={quickLugar}
                   onChange={(e) => setQuickLugar(e.target.value)}
+                  placeholder="Ej. Estante A3"
                 />
-              </div>
-              <button
-                type="submit"
-                disabled={quickLoading || !quickCode.trim()}
-                className="self-end rounded-2xl bg-emerald-600 px-6 py-3 text-base font-black text-white hover:bg-emerald-500 disabled:opacity-50"
-              >
-                {quickLoading ? <RefreshCw className="h-5 w-5 animate-spin" /> : 'Confirmar'}
-              </button>
+              </ErpField>
+              <ErpField label="">
+                <ErpButton
+                  type="submit"
+                  variant="primary"
+                  disabled={!quickCode.trim()}
+                  loading={quickLoading}
+                  leftIcon={<CheckCircle2 size={14} />}
+                >
+                  Confirmar
+                </ErpButton>
+              </ErpField>
             </div>
-            {quickError && (
-              <div className="flex items-center gap-2 rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-                <AlertTriangle className="h-4 w-4 shrink-0" />{quickError}
-              </div>
-            )}
+            {quickError && <ErpNotice tone="error">{quickError}</ErpNotice>}
           </form>
-        </section>
+        </ErpCard>
       )}
 
       {/* ── Remitos en tránsito ──────────────────────────────────────────── */}
-      <section className="rounded-3xl border border-amber-500/20 bg-slate-950 p-5 shadow-xl shadow-amber-950/10">
-        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="flex items-center gap-2 text-lg font-black text-amber-200">
-              <Truck className="h-5 w-5" />
-              Remitos en tránsito
-            </h2>
-            <p className="mt-1 text-sm text-slate-400">
-              Remitos despachados que están en camino hacia tu depósito.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={loadTransitRemitos}
-            disabled={transitLoading}
-            className="rounded-2xl border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-bold text-slate-100 hover:bg-slate-700 disabled:opacity-50"
-          >
-            <RefreshCw className={`mr-2 inline h-4 w-4 ${transitLoading ? 'animate-spin' : ''}`} />Actualizar
-          </button>
-        </div>
-
+      <ErpCard
+        title={<span className="inline-flex items-center gap-2"><Truck size={14} /> Remitos en tránsito</span>}
+        subtitle="Remitos despachados que están en camino hacia tu depósito."
+      >
         {lateCount > 0 && (
-          <div className="mb-4 flex items-start gap-2 rounded-2xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
-            <span>
-              <strong>{lateCount} remito{lateCount !== 1 ? 's' : ''}</strong> lleva{lateCount === 1 ? '' : 'n'} más de 2 días en tránsito sin confirmarse.
-            </span>
+          <div className="mb-3">
+            <ErpNotice tone="error" title={`${lateCount} remito${lateCount !== 1 ? 's' : ''} demorado${lateCount !== 1 ? 's' : ''}`}>
+              Lleva{lateCount === 1 ? '' : 'n'} más de 2 días en tránsito sin confirmación. Coordiná con la sucursal de origen.
+            </ErpNotice>
           </div>
         )}
 
-        {transitLoading && (
-          <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-4 text-sm text-slate-400">
-            <RefreshCw className="mr-2 inline h-4 w-4 animate-spin" />Cargando remitos en tránsito...
-          </div>
-        )}
+        {transitLoading && transitRemitos.length === 0 && <ErpLoadingState />}
 
-        {!transitLoading && transitError && (
-          <div className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
-            <AlertTriangle className="h-4 w-4 shrink-0" />{transitError}
-          </div>
-        )}
+        {!transitLoading && transitError && <ErpNotice tone="error">{transitError}</ErpNotice>}
 
         {!transitLoading && !transitError && transitRemitos.length === 0 && (
-          <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-8 text-center text-sm text-slate-400">
-            <CheckCircle2 className="mx-auto mb-2 h-6 w-6 text-emerald-500/50" />
-            No hay remitos en tránsito hacia tu depósito.
+          <div className="rounded-md border border-[color:var(--border)] bg-[color:var(--surface-2)] py-6 text-center">
+            <CheckCircle2 className="mx-auto mb-2" size={20} style={{ color: 'var(--success-soft-text)' }} />
+            <div className="text-[12.5px] text-[color:var(--text-2)]">No hay remitos en tránsito hacia tu depósito.</div>
           </div>
         )}
 
         {!transitLoading && transitRemitos.length > 0 && (
-          <div className="space-y-2">
+          <div className="erp-stack-2">
             {Object.entries(byBranch)
-              .sort((a, b) => b[1].maxDays - a[1].maxDays) // más demorados primero
+              .sort((a, b) => b[1].maxDays - a[1].maxDays)
               .map(([branch, info]) => (
                 <div
                   key={branch}
-                  className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${
-                    info.hasLate
-                      ? 'border-red-500/30 bg-red-500/5'
-                      : 'border-slate-700 bg-slate-900/70'
-                  }`}
+                  className="flex items-center justify-between gap-3 rounded-md border p-3"
+                  style={info.hasLate
+                    ? { borderColor: 'rgba(239,68,68,0.32)', background: 'var(--danger-soft)' }
+                    : { borderColor: 'var(--border)', background: 'var(--surface-2)' }
+                  }
                 >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <Truck className={`h-4 w-4 shrink-0 ${info.hasLate ? 'text-red-400' : 'text-amber-400'}`} />
-                    <span className="font-semibold text-white truncate">{branch}</span>
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <Truck size={14} className={info.hasLate ? 'text-[color:var(--danger-soft-text)]' : 'text-[color:var(--warning-soft-text)]'} />
+                    <span className="truncate font-semibold text-[13px] text-[color:var(--text)]">{branch}</span>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className={`rounded-full px-3 py-1 text-xs font-black ${
-                      info.hasLate
-                        ? 'bg-red-500/20 text-red-200'
-                        : 'bg-amber-500/20 text-amber-200'
-                    }`}>
-                      {info.count} remito{info.count !== 1 ? 's' : ''} en tránsito
-                    </span>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <ErpBadge tone={info.hasLate ? 'danger' : 'warning'}>
+                      {info.count} en tránsito
+                    </ErpBadge>
                     {info.maxDays >= 2 ? (
-                      <span className="flex items-center gap-1 rounded-full bg-red-500/20 px-2 py-0.5 text-[10px] font-bold text-red-300">
-                        <AlertTriangle className="h-3 w-3" />{info.maxDays}d
-                      </span>
+                      <ErpBadge tone="solid-danger">
+                        {info.maxDays}d
+                      </ErpBadge>
                     ) : info.maxDays > 0 ? (
-                      <span className="flex items-center gap-1 rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] text-amber-300">
-                        <Clock className="h-3 w-3" />{info.maxDays}d
+                      <span className="inline-flex items-center gap-1 text-[11px] text-[color:var(--text-2)] tabular-nums">
+                        <Clock size={10} />{info.maxDays}d
                       </span>
                     ) : null}
                   </div>
                 </div>
               ))}
-            <p className="pt-1 text-center text-xs text-slate-500">
-              Usá el código impreso en el remito para confirmar la llegada ↑
+            <p className="mt-1 text-center text-[11.5px] text-[color:var(--text-3)]">
+              Usá el código impreso en el remito para confirmar la llegada arriba ↑
             </p>
           </div>
         )}
-      </section>
+      </ErpCard>
 
       {/* ── Movimiento depósito → depósito ───────────────────────────────── */}
       {canDepositTransfer() && (
-        <section className="rounded-3xl border border-cyan-500/30 bg-slate-950 p-5 shadow-xl shadow-cyan-950/10">
-          <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <h2 className="flex items-center gap-2 text-lg font-black text-cyan-200">
-                <Truck className="h-5 w-5" />
-                Movimiento depósito → depósito
-              </h2>
-              <p className="mt-1 text-sm text-slate-400">
-                Mové garantías desde tu depósito hacia otro depósito de guarda.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={loadDepositTransfer}
-              disabled={transferLoading}
-              className="rounded-2xl border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-bold text-slate-100 hover:bg-slate-700 disabled:opacity-50"
-            >
-              <RefreshCw className={`mr-2 inline h-4 w-4 ${transferLoading ? 'animate-spin' : ''}`} />Actualizar
+        <ErpCard
+          title={<span className="inline-flex items-center gap-2"><Truck size={14} /> Movimiento depósito → depósito</span>}
+          subtitle="Mové garantías que están físicamente en un depósito hacia otro depósito de guarda."
+          actions={
+            <button type="button" onClick={loadDepositTransferOptions} disabled={transferLoading} className={erpBtnGhost}>
+              <RefreshCw size={14} className={transferLoading ? 'erp-spin' : ''} /> Actualizar
             </button>
-          </div>
-
-          <form onSubmit={handleDepositTransfer} className="space-y-4">
+          }
+        >
+          <form onSubmit={handleDepositTransfer} className="erp-stack-3">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <div className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-3 text-sm text-cyan-100">
-                <div className="text-xs font-semibold uppercase tracking-wide text-cyan-200/70">Tu depósito</div>
-                <div className="mt-1 font-black">{transferOrigen || 'Depósito no asignado'}</div>
-              </div>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs font-semibold text-slate-400">Depósito destino</span>
-                <select
-                  className="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm text-white focus:border-cyan-500 focus:outline-none"
-                  value={transferDestino}
-                  onChange={(e) => setTransferDestino(e.target.value)}
-                >
-                  <option value="">— Seleccioná depósito destino —</option>
-                  {transferDestinos.map((d) => (
-                    <option key={d.id || d.name} value={d.name}>{d.name}</option>
-                  ))}
-                </select>
-              </label>
+              <ErpField label="Depósito de origen" required hint={hasCrossSelect ? 'Tenés acceso multi-sucursal: podés operar cualquier depósito.' : transferOrigenes.length > 1 ? `Tenés ${transferOrigenes.length} depósitos asignados.` : undefined}>
+                {transferOrigenes.length > 1 || (hasCrossSelect && transferOrigenes.length > 0) ? (
+                  <ErpSelect value={transferOrigen} onChange={(e) => setTransferOrigen(e.target.value)}>
+                    <option value="">— Elegí depósito de origen —</option>
+                    {transferOrigenes.map((d) => <option key={d.id || d.name} value={d.name}>{d.name}</option>)}
+                  </ErpSelect>
+                ) : transferOrigen ? (
+                  <div className="erp-info-row" style={{ borderColor: 'var(--primary)', background: 'var(--primary-soft)' }}>
+                    <span className="erp-info-label">Asignado</span>
+                    <span className="erp-info-value">{transferOrigen}</span>
+                  </div>
+                ) : (
+                  <ErpInput value="" disabled placeholder="Sin depósito disponible" />
+                )}
+              </ErpField>
+              <ErpField label="Depósito destino" required>
+                <ErpSelect value={transferDestino} onChange={(e) => setTransferDestino(e.target.value)} disabled={!transferOrigen}>
+                  <option value="">— Elegí depósito destino —</option>
+                  {destinosFiltrados.map((d) => <option key={d.id || d.name} value={d.name}>{d.name}</option>)}
+                </ErpSelect>
+              </ErpField>
             </div>
 
-            {transferLoading && (
-              <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-4 text-sm text-slate-400">
-                <RefreshCw className="mr-2 inline h-4 w-4 animate-spin" />Cargando garantías en depósito...
-              </div>
+            {!transferOrigen && transferOrigenes.length === 0 && (
+              <ErpNotice tone="error" title="Tu usuario no tiene depósitos asignados">
+                Asigná tu usuario a una sucursal tipo <strong>depósito</strong> en <strong>Empresas y sucursales</strong>, o pedile a un admin que te dé <strong>branches.cross_select</strong>.
+              </ErpNotice>
             )}
 
-            {!transferLoading && transferAvailable.length > 0 && (
-              <div className="overflow-hidden rounded-2xl border border-slate-700 bg-slate-900/70">
-                <div className="flex flex-col gap-2 border-b border-slate-700 px-4 py-3 sm:flex-row sm:items-center">
-                  <label className="flex cursor-pointer items-center gap-3">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-cyan-500"
-                      checked={transferSelected.size === transferAvailable.length}
-                      onChange={toggleTransferAll}
-                    />
-                    <span className="text-sm font-bold text-white">
-                      {transferSelected.size > 0
-                        ? `${transferSelected.size} de ${transferAvailable.length} seleccionadas`
-                        : `${transferAvailable.length} garantías disponibles`}
-                    </span>
-                  </label>
-                </div>
-                <div className="max-h-72 overflow-y-auto divide-y divide-slate-800">
-                  {transferAvailable.map((w) => (
-                    <label
-                      key={w.warranty_code}
-                      className={`flex cursor-pointer items-start gap-3 px-4 py-3 hover:bg-slate-800/70 ${transferSelected.has(w.warranty_code) ? 'bg-cyan-950/30' : ''}`}
-                    >
-                      <input
-                        type="checkbox"
-                        className="mt-1 h-4 w-4 accent-cyan-500"
-                        checked={transferSelected.has(w.warranty_code)}
-                        onChange={() => toggleTransferCode(w.warranty_code)}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-xs font-black text-white">{w.warranty_code}</span>
-                          {w.estado && (
-                            <span className="rounded-full bg-slate-700/60 px-2 py-0.5 text-[10px] text-slate-300">{w.estado}</span>
-                          )}
-                        </div>
-                        <div className="mt-1 text-sm text-slate-300">{w.producto || 'Producto sin nombre'}</div>
-                        <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
-                          {w.sku && <span>SKU: {w.sku}</span>}
-                          {w.serie && <span>Serie: {w.serie}</span>}
-                        </div>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </div>
+            {transferOrigen && (
+              <>
+                {transferLoading && transferAvailable.length === 0 ? (
+                  <ErpLoadingState title={`Cargando garantías de ${transferOrigen}`} />
+                ) : transferAvailable.length === 0 ? (
+                  <ErpNotice tone="info">No hay garantías disponibles para mover desde <strong>{transferOrigen}</strong>.</ErpNotice>
+                ) : (
+                  <div className="erp-card erp-card-flat" style={{ padding: 0, overflow: 'hidden' }}>
+                    <div className="flex flex-col gap-2 border-b border-[color:var(--border)] px-3 py-2 sm:flex-row sm:items-center">
+                      <label className="flex cursor-pointer items-center gap-2">
+                        <input type="checkbox" className="erp-checkbox" checked={transferSelected.size === transferAvailable.length} onChange={toggleTransferAll} />
+                        <span className="text-[12.5px] font-semibold">
+                          {transferSelected.size > 0
+                            ? `${transferSelected.size} de ${transferAvailable.length} seleccionadas`
+                            : `${transferAvailable.length} disponibles`}
+                        </span>
+                      </label>
+                      <span className="text-[11.5px] text-[color:var(--text-3)] sm:ml-auto">Origen: <strong>{transferOrigen}</strong></span>
+                    </div>
+                    <div className="max-h-80 overflow-y-auto">
+                      {transferAvailable.map((w) => (
+                        <label
+                          key={w.warranty_code}
+                          className={`flex cursor-pointer items-start gap-3 border-b border-[color:var(--divider)] px-3 py-2.5 transition-colors last:border-b-0 ${transferSelected.has(w.warranty_code) ? 'bg-[color:var(--primary-soft)]' : 'hover:bg-[color:var(--surface-hover)]'}`}
+                        >
+                          <input type="checkbox" className="erp-checkbox mt-1" checked={transferSelected.has(w.warranty_code)} onChange={() => toggleTransferCode(w.warranty_code)} />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="erp-cell-mono text-[12.5px] font-semibold">{w.warranty_code}</span>
+                              {w.estado && <ErpBadge tone="neutral" withDot={false}>{w.estado}</ErpBadge>}
+                              {w.marca && <span className="text-[10.5px] uppercase tracking-wide text-[color:var(--text-3)]">{w.marca}</span>}
+                            </div>
+                            <div className="mt-0.5 text-[12.5px] text-[color:var(--text)] truncate">{w.producto || 'Producto sin nombre'}</div>
+                            <div className="mt-0.5 flex flex-wrap gap-x-3 text-[11px] text-[color:var(--text-3)]">
+                              {w.sku && <span>SKU: {w.sku}</span>}
+                              {w.serie && <span>Serie: {w.serie}</span>}
+                            </div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
 
-            {!transferLoading && transferAvailable.length === 0 && (
-              <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-4 text-sm text-slate-400">
-                No hay garantías disponibles para mover desde tu depósito.
-              </div>
-            )}
+            <ErpField label="Nota (opcional)">
+              <ErpInput value={transferNota} onChange={(e) => setTransferNota(e.target.value)} placeholder="Ej: traslado a guarda / estantería" />
+            </ErpField>
 
-            <label className="flex flex-col gap-1">
-              <span className="text-xs font-semibold text-slate-400">Nota (opcional)</span>
-              <input
-                className="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm text-white placeholder:text-slate-500 focus:border-cyan-500 focus:outline-none"
-                placeholder="Ej: traslado a guarda / estantería"
-                value={transferNota}
-                onChange={(e) => setTransferNota(e.target.value)}
-              />
-            </label>
-
-            {transferError && (
-              <div className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
-                <AlertTriangle className="h-4 w-4 shrink-0" />{transferError}
-              </div>
-            )}
+            {transferError && <ErpNotice tone="error">{transferError}</ErpNotice>}
 
             {transferResult && (
-              <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-100">
-                <div className="mb-3 font-bold">
-                  <CheckCircle2 className="mr-2 inline h-4 w-4" />
-                  Movimiento generado: {transferResult.count} remito{transferResult.count !== 1 ? 's' : ''}
-                </div>
-                <div className="space-y-2">
+              <ErpNotice tone="success" title={`${transferResult.count} remito${transferResult.count === 1 ? '' : 's'} generado${transferResult.count === 1 ? '' : 's'}`}>
+                <div className="mt-1 erp-stack-2">
                   {transferResult.remitos.map((r) => (
-                    <div
-                      key={r.remito_code}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-500/20 bg-slate-950 px-3 py-2"
-                    >
-                      <div>
-                        <span className="font-mono text-sm font-black text-white">{r.remito_code}</span>
-                        <span className="ml-3 text-xs text-slate-400">
-                          {r.origen_sucursal} → {r.destino_deposito}
-                        </span>
+                    <div key={r.remito_code} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[color:var(--border)] bg-[color:var(--surface-2)] px-2.5 py-2">
+                      <div className="min-w-0">
+                        <span className="font-mono text-[12.5px] font-semibold text-[color:var(--text)]">{r.remito_code}</span>
+                        <span className="ml-2 text-[11.5px] text-[color:var(--text-2)]">{r.origen_sucursal} <ArrowRight size={10} className="inline align-middle" /> {r.destino_deposito}</span>
                       </div>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleDownloadPdf(r.remito_code)}
-                          className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500"
-                        >
-                          <Download className="h-3.5 w-3.5" /> PDF
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => printRemitoPdf(r.remito_code)}
-                          className="flex items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700"
-                        >
-                          <Printer className="h-3.5 w-3.5" /> Imprimir
-                        </button>
+                      <div className="flex gap-1.5">
+                        <ErpButton size="sm" variant="secondary" leftIcon={<Download size={12} />} onClick={() => handleDownloadPdf(r.remito_code)}>PDF</ErpButton>
+                        <ErpButton size="sm" variant="primary" leftIcon={<Printer size={12} />} onClick={() => printRemitoPdf(r.remito_code)}>Imprimir</ErpButton>
                       </div>
                     </div>
                   ))}
                 </div>
-              </div>
+              </ErpNotice>
             )}
 
-            <button
-              type="submit"
-              disabled={transferLoading || !transferDestino.trim() || transferSelected.size === 0}
-              className="rounded-2xl bg-cyan-600 px-5 py-3 text-sm font-black text-white hover:bg-cyan-500 disabled:opacity-50"
-            >
-              {transferLoading
-                ? <RefreshCw className="mr-2 inline h-4 w-4 animate-spin" />
-                : <Truck className="mr-2 inline h-4 w-4" />}
-              {transferSelected.size > 0
-                ? `Generar movimiento (${transferSelected.size})`
-                : 'Generar movimiento interno'}
-            </button>
+            <div className="erp-form-actions">
+              <ErpButton
+                type="submit"
+                variant="primary"
+                disabled={!transferOrigen || !transferDestino.trim() || transferSelected.size === 0}
+                loading={transferLoading}
+                leftIcon={<Truck size={14} />}
+              >
+                {transferSelected.size > 0 ? `Generar movimiento (${transferSelected.size})` : 'Generar movimiento interno'}
+              </ErpButton>
+            </div>
           </form>
-        </section>
+        </ErpCard>
       )}
+
+      {/* Scope indicator */}
+      {!noPermissions && (
+        <div className="flex flex-wrap items-center gap-2 text-[11.5px] text-[color:var(--text-3)]">
+          <ErpTag>Tu scope:</ErpTag>
+          {transferOrigenes.length > 0 ? (
+            transferOrigenes.slice(0, 6).map((d) => <ErpTag key={d.id || d.name}>{d.name}</ErpTag>)
+          ) : (
+            <span>Sin depósitos accesibles</span>
+          )}
+          {transferOrigenes.length > 6 && <ErpTag>+{transferOrigenes.length - 6}</ErpTag>}
+          {hasCrossSelect && <ErpTag tone="primary">branches.cross_select</ErpTag>}
+        </div>
+      )}
+
+      <WarrantyQuickCreateModal
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        onCreated={() => { loadTransitRemitos(); }}
+        options={warrantyOptions}
+        defaultSucursal={currentUser?.branch_name || currentUser?.sucursal || ''}
+        centralDeposit={warrantyOptions?.warranty_central_deposit?.name || currentUser?.branch_name || ''}
+      />
     </div>
   );
 }

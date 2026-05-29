@@ -34,9 +34,10 @@ echo Instalando/actualizando dependencias...
 if not exist "storage\private" mkdir "storage\private"
 
 echo.
-echo Backend en: http://127.0.0.1:8080
-echo Health:     http://127.0.0.1:8080/api/health
+echo Backend en: http://127.0.0.1:8000
+echo Health:     http://127.0.0.1:8000/api/health
+echo Frontend:   http://localhost:5173  (npm run dev en otra terminal)
 echo.
-.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8080
+.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 pause

@@ -1,6 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Bell, BellRing, Check, RefreshCw } from 'lucide-react';
 import { fetchNotifications, fetchNotificationSummary, markAllNotificationsRead, markNotificationRead } from '../api/client';
+import {
+  ErpBadge,
+  ErpButton,
+  ErpCard,
+  ErpEmptyState,
+  ErpField,
+  ErpKpiCard,
+  ErpLoadingState,
+  ErpNotice,
+  ErpPageHeader,
+  ErpSelect,
+  ErpTabBar,
+  type ErpBadgeTone,
+  type ErpTabDef,
+} from '../components/ProUI';
 import type { NotificationInfo, NotificationSummary } from '../types';
 
 const priorityLabels: Record<string, string> = {
@@ -10,11 +26,11 @@ const priorityLabels: Record<string, string> = {
   critical: 'Crítica',
 };
 
-const priorityClasses: Record<string, string> = {
-  low: 'border-slate-700 bg-slate-800/50 text-slate-200',
-  normal: 'border-blue-500/30 bg-blue-500/10 text-blue-100',
-  high: 'border-amber-500/40 bg-amber-500/10 text-amber-100',
-  critical: 'border-red-500/50 bg-red-500/10 text-red-100',
+const priorityTone: Record<string, ErpBadgeTone> = {
+  low: 'neutral',
+  normal: 'info',
+  high: 'warning',
+  critical: 'solid-danger',
 };
 
 function notificationLink(item: NotificationInfo): string | null {
@@ -92,102 +108,156 @@ export function NotificationsPage() {
     load();
   }
 
+  const tabs: ErpTabDef[] = [
+    { key: 'unread', label: 'Pendientes', count: summary?.unread_total },
+    { key: 'all', label: 'Todas' },
+    { key: 'read', label: 'Leídas' },
+  ];
+
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
-      <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5 shadow-2xl shadow-black/20 sm:p-7">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <div className="text-4xl">🔔</div>
-            <h1 className="mt-2 text-3xl font-black">Centro de notificaciones</h1>
-            <p className="mt-1 max-w-3xl text-slate-400">
-              Bandeja unificada para ventas, precios/costos, garantías, remitos, proveedor y sistema. Esta fase prepara la base para push nativo en Android.
-            </p>
-          </div>
-          <div className="grid grid-cols-2 gap-2 sm:w-[340px]">
-            <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-3">
-              <div className="text-xs font-bold uppercase text-blue-200/80">No leídas</div>
-              <div className="mt-1 text-2xl font-black text-white">{summary?.unread_total ?? '—'}</div>
-            </div>
-            <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3">
-              <div className="text-xs font-bold uppercase text-amber-200/80">Alta prioridad</div>
-              <div className="mt-1 text-2xl font-black text-white">{summary?.unread_high_priority ?? '—'}</div>
-            </div>
-          </div>
-        </div>
+    <div className="erp-stack-6">
+      <ErpPageHeader
+        title="Centro de notificaciones"
+        description="Bandeja unificada para ventas, precios y costos, garantías, remitos, proveedor y sistema."
+        actions={
+          <>
+            <ErpButton variant="secondary" leftIcon={<RefreshCw size={14} />} onClick={load}>Actualizar</ErpButton>
+            <ErpButton variant="primary" leftIcon={<Check size={14} />} onClick={readAll}>Marcar visibles como leídas</ErpButton>
+          </>
+        }
+      />
 
-        <div className="mt-5 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex flex-wrap gap-2">
-            <button onClick={() => setReadStatus('unread')} className={`rounded-xl px-4 py-2 text-sm font-bold ${readStatus === 'unread' ? 'bg-blue-500 text-white' : 'border border-slate-700 text-slate-300 hover:bg-slate-800'}`}>Pendientes</button>
-            <button onClick={() => setReadStatus('all')} className={`rounded-xl px-4 py-2 text-sm font-bold ${readStatus === 'all' ? 'bg-blue-500 text-white' : 'border border-slate-700 text-slate-300 hover:bg-slate-800'}`}>Todas</button>
-            <button onClick={() => setReadStatus('read')} className={`rounded-xl px-4 py-2 text-sm font-bold ${readStatus === 'read' ? 'bg-blue-500 text-white' : 'border border-slate-700 text-slate-300 hover:bg-slate-800'}`}>Leídas</button>
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <select value={moduleFilter} onChange={(event) => setModuleFilter(event.target.value)} className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-semibold text-slate-100">
-              <option value="">Todos los módulos</option>
-              {Object.entries(moduleOptions).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-            </select>
-            <select value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value)} className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-semibold text-slate-100">
-              <option value="">Todas las prioridades</option>
-              <option value="critical">Crítica</option>
-              <option value="high">Alta</option>
-              <option value="normal">Normal</option>
-              <option value="low">Baja</option>
-            </select>
-          </div>
-        </div>
+      <section className="erp-kpi-row" aria-label="Resumen de notificaciones">
+        <ErpKpiCard
+          label="No leídas"
+          value={summary?.unread_total ?? '—'}
+          detail="Total pendientes de revisar"
+          variant={(summary?.unread_total ?? 0) > 0 ? 'alert' : 'default'}
+          icon={<Bell size={13} />}
+        />
+        <ErpKpiCard
+          label="Alta prioridad"
+          value={summary?.unread_high_priority ?? '—'}
+          detail="Críticas + altas sin leer"
+          variant={(summary?.unread_high_priority ?? 0) > 0 ? 'danger' : 'default'}
+          icon={<BellRing size={13} />}
+        />
+        <ErpKpiCard
+          label="Permiso del navegador"
+          value={permission === 'granted' ? 'Activado' : permission === 'denied' ? 'Bloqueado' : 'Pendiente'}
+          detail={permission === 'granted' ? 'Vas a recibir avisos del navegador' : 'Activá para recibir avisos cuando la app no esté visible'}
+          variant={permission === 'granted' ? 'success' : permission === 'denied' ? 'danger' : 'default'}
+        />
+        <ErpKpiCard
+          label="Módulos con avisos"
+          value={Object.keys(summary?.unread_by_module || {}).length}
+          detail="Categorías con eventos sin leer"
+        />
+      </section>
 
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <button onClick={enableBrowserNotifications} className="rounded-xl border border-blue-500/40 bg-blue-500/10 px-4 py-3 text-sm font-bold text-blue-100">Activar avisos del navegador</button>
-          <button onClick={readAll} className="rounded-xl border border-slate-700 px-4 py-3 text-sm font-bold hover:bg-slate-800">Marcar visibles como leídas</button>
-          <button onClick={load} className="rounded-xl border border-slate-700 px-4 py-3 text-sm font-bold hover:bg-slate-800">Actualizar</button>
-          <span className="text-xs text-slate-500">Permiso Chrome: {permission}</span>
-        </div>
-      </div>
-
-      {summary && Object.keys(summary.unread_by_module).length > 0 && (
-        <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-4">
-          {Object.entries(summary.unread_by_module).map(([moduleKey, count]) => (
-            <button key={moduleKey} onClick={() => setModuleFilter(moduleKey)} className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 text-left hover:bg-slate-800/80">
-              <div className="text-xs font-bold uppercase text-slate-500">{summary.modules[moduleKey] || moduleKey}</div>
-              <div className="mt-1 text-2xl font-black text-white">{count}</div>
-            </button>
-          ))}
-        </div>
+      {permission !== 'granted' && permission !== 'denied' && permission !== 'unsupported' && (
+        <ErpNotice
+          tone="info"
+          title="Activá los avisos del navegador"
+          actions={<ErpButton variant="primary" size="sm" onClick={enableBrowserNotifications}>Activar ahora</ErpButton>}
+        >
+          Te avisa cuando llegan notificaciones nuevas aunque la pestaña esté en segundo plano.
+        </ErpNotice>
       )}
 
-      {error && <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4 text-red-100">{error}</div>}
-      {loading && <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 text-slate-300">Cargando notificaciones...</div>}
+      <ErpCard
+        title="Filtros"
+        subtitle="Acotá la lista por estado, módulo o prioridad"
+      >
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+          <ErpTabBar tabs={tabs} active={readStatus} onChange={(key) => setReadStatus(key as 'unread' | 'all' | 'read')} />
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:w-[480px]">
+            <ErpField label="Módulo">
+              <ErpSelect value={moduleFilter} onChange={(e) => setModuleFilter(e.target.value)}>
+                <option value="">Todos los módulos</option>
+                {Object.entries(moduleOptions).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+              </ErpSelect>
+            </ErpField>
+            <ErpField label="Prioridad">
+              <ErpSelect value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
+                <option value="">Todas las prioridades</option>
+                <option value="critical">Crítica</option>
+                <option value="high">Alta</option>
+                <option value="normal">Normal</option>
+                <option value="low">Baja</option>
+              </ErpSelect>
+            </ErpField>
+          </div>
+        </div>
+      </ErpCard>
 
-      <div className="space-y-3">
-        {items.map((item) => {
-          const href = notificationLink(item);
-          const priority = item.priority || 'normal';
-          return (
-            <div key={item.id} className={`rounded-2xl border p-4 ${priorityClasses[priority] || priorityClasses.normal}`}>
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-full border border-white/10 bg-black/20 px-2 py-1 text-[11px] font-black uppercase tracking-wide">{item.module_label || item.module || 'General'}</span>
-                    <span className="rounded-full border border-white/10 bg-black/20 px-2 py-1 text-[11px] font-black uppercase tracking-wide">{priorityLabels[priority] || priority}</span>
-                    {item.branch_name && <span className="rounded-full border border-white/10 bg-black/20 px-2 py-1 text-[11px] font-bold text-slate-200">{item.branch_name}</span>}
+      {summary && Object.keys(summary.unread_by_module).length > 0 && (
+        <ErpCard title="Sin leer por módulo" subtitle="Click para filtrar la bandeja">
+          <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+            {Object.entries(summary.unread_by_module).map(([moduleKey, count]) => (
+              <button
+                key={moduleKey}
+                type="button"
+                onClick={() => setModuleFilter(moduleKey)}
+                className={`erp-info-row text-left transition-colors ${moduleFilter === moduleKey ? 'border-[color:var(--primary)]' : ''}`}
+              >
+                <span className="erp-info-label">{summary.modules[moduleKey] || moduleKey}</span>
+                <span className="erp-info-value text-[22px] font-bold tabular-nums leading-none">{count}</span>
+              </button>
+            ))}
+          </div>
+        </ErpCard>
+      )}
+
+      {error && <ErpNotice tone="error">{error}</ErpNotice>}
+
+      {loading && items.length === 0 && <ErpLoadingState />}
+
+      {!loading && items.length === 0 && (
+        <ErpEmptyState
+          icon={<Bell size={20} />}
+          title="No hay notificaciones"
+          description="No encontramos avisos que coincidan con los filtros seleccionados."
+        />
+      )}
+
+      {items.length > 0 && (
+        <div className="erp-stack-2">
+          {items.map((item) => {
+            const href = notificationLink(item);
+            const priority = item.priority || 'normal';
+            return (
+              <ErpCard key={item.id} size="sm">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0 erp-stack-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <ErpBadge tone="primary" withDot={false}>{item.module_label || item.module || 'General'}</ErpBadge>
+                      <ErpBadge tone={priorityTone[priority] || 'info'}>{priorityLabels[priority] || priority}</ErpBadge>
+                      {item.branch_name && <ErpBadge tone="neutral" withDot={false}>{item.branch_name}</ErpBadge>}
+                    </div>
+                    <div className="text-[13.5px] font-semibold text-[color:var(--text)]">{item.title}</div>
+                    <div className="text-[12.5px] leading-[1.5] text-[color:var(--text-2)]">{item.message}</div>
+                    <div className="text-[11.5px] text-[color:var(--text-3)] tabular-nums">
+                      {new Date(item.created_at).toLocaleString('es-AR')}
+                      {item.event_type && <span> · {item.event_type}</span>}
+                    </div>
                   </div>
-                  <div className="mt-2 font-black text-white">{item.title}</div>
-                  <div className="mt-1 text-sm text-slate-200/90">{item.message}</div>
-                  <div className="mt-2 text-xs text-slate-400">
-                    {new Date(item.created_at).toLocaleString('es-AR')}
-                    {item.event_type && <span> · {item.event_type}</span>}
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    {href && (
+                      <Link to={href} className="erp-btn erp-btn-secondary erp-btn-sm">Abrir</Link>
+                    )}
+                    {!item.read && (
+                      <ErpButton size="sm" variant="ghost" leftIcon={<Check size={13} />} onClick={() => read(item.id)}>
+                        Marcar leída
+                      </ErpButton>
+                    )}
                   </div>
                 </div>
-                <div className="flex shrink-0 flex-wrap gap-2">
-                  {href && <Link to={href} className="rounded-lg border border-slate-600 bg-slate-950/40 px-3 py-2 text-xs font-bold hover:bg-slate-900">Abrir</Link>}
-                  {!item.read && <button onClick={() => read(item.id)} className="rounded-lg border border-green-500/40 px-3 py-2 text-xs font-bold text-green-100 hover:bg-green-500/10">Marcar leída</button>}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-        {items.length === 0 && !loading && <div className="rounded-2xl border border-dashed border-slate-700 p-8 text-center text-slate-400">No hay notificaciones para los filtros seleccionados.</div>}
-      </div>
+              </ErpCard>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

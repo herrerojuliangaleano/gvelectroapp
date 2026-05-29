@@ -1,7 +1,14 @@
 import type { CurrentUser } from './types';
 import { can } from './api/client';
 
-const PRIVILEGED_ROLES = new Set(['SUPERADMIN', 'GERENTE', 'ADMINISTRADOR', 'ADMIN', 'GESTOR', 'GESTOR_GARANTIAS', 'JEFE_POSVENTA']);
+// ─────────────────────────────────────────────────────────────────────────────
+// CRITERIO DE DECISIÓN
+//   - "Identidad operativa" (qué pantalla redirige, dónde vive un usuario) = rol.
+//     Roles DEPOSITO y CADETE_DEPOSITO definen flujos físicos específicos.
+//   - "Capacidad" (¿qué acciones puede hacer?) = SIEMPRE permiso (can('...')).
+//     No mirar rol. Si un admin le da el permiso a otro usuario, debe poder hacerlo
+//     sin importar su rol.
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function roleKeys(user: CurrentUser | null | undefined): string[] {
   if (!user) return [];
@@ -10,35 +17,97 @@ export function roleKeys(user: CurrentUser | null | undefined): string[] {
 }
 
 /**
- * Encargado de Depósito (rol DEPOSITO).
- * Solo ve /warranties/deposito: recibe remitos y mueve entre depósitos.
- * Queda excluido de todas las pantallas de gestión/listados.
+ * Encargado de Depósito.
+ * Identidad operativa: trabaja físicamente en un depósito y solo confirma
+ * remitos/movimientos. Se identifica por:
+ *   - branch_type='deposit' (fuente principal, decidida por el admin al asignar
+ *     la sucursal), o
+ *   - rol DEPOSITO (compat fallback).
+ *
+ * Si el mismo usuario suma permisos de gestión global o `branches.cross_select`,
+ * deja de ser "plain" y pasa a ver el resto de la app con los permisos que tenga.
  */
 export function isPlainDepositOperator(user: CurrentUser | null | undefined): boolean {
-  const roles = roleKeys(user);
-  return roles.includes('DEPOSITO') && !roles.some((r) => PRIVILEGED_ROLES.has(r));
+  if (!user) return false;
+  const branchType = String(user.branch_type || '').toLowerCase();
+  const isInDeposit = branchType === 'deposit' || roleKeys(user).includes('DEPOSITO');
+  if (!isInDeposit) return false;
+  // Capacidades que sacan del modo "plain":
+  if (
+    can('warranties.manage') || can('warranties.manage_provider') || can('warranties.export') ||
+    can('warranties.review') || can('warranties.gestor.panel') || can('warranties.dashboard') ||
+    can('branches.cross_select')
+  ) return false;
+  // Si puede crear garantías, es más bien "cadete" — se decide por isCadeteDeposito.
+  if (can('warranties.create')) return false;
+  return true;
 }
 
 /**
- * Cadete de Depósito (rol CADETE_DEPOSITO).
- * Ve su lista de garantías (como vendedor) + puede confirmar llegada de remitos.
- * NO es "plain deposit operator" — no se lo redirige ni se lo bloquea del listado.
+ * Cadete de Depósito. Trabaja físicamente en un depósito **y** además carga
+ * garantías de clientes que las llevan al depósito. Se identifica por:
+ *   - estar en una sucursal de depósito (`branch_type='deposit'` o rol DEPOSITO/
+ *     CADETE_DEPOSITO), **y**
+ *   - tener permiso `warranties.create`.
+ *
+ * Si el usuario tiene `branches.cross_select` o permisos de gestión global,
+ * deja de clasificar como cadete y opera con sus permisos plenos.
  */
 export function isCadeteDeposito(user: CurrentUser | null | undefined): boolean {
+  if (!user) return false;
   const roles = roleKeys(user);
-  return roles.includes('CADETE_DEPOSITO') && !roles.some((r) => PRIVILEGED_ROLES.has(r));
-}
-
-export function isWarrantyPrivilegedUser(user: CurrentUser | null | undefined): boolean {
-  const roles = roleKeys(user);
-  return roles.some((r) => PRIVILEGED_ROLES.has(r)) || can('warranties.manage_provider') || can('warranties.export') || can('warranties.review');
-}
-
-export function isBranchWarrantyOperator(user: CurrentUser | null | undefined): boolean {
-  if (!user || isPlainDepositOperator(user) || isWarrantyPrivilegedUser(user)) return false;
   const branchType = String(user.branch_type || '').toLowerCase();
-  const roles = roleKeys(user);
-  return branchType === 'physical' || roles.includes('VENDEDOR') || roles.includes('VENDEDOR_WEB') || roles.includes('VENTA_WEB');
+  const isInDeposit = branchType === 'deposit' || roles.includes('DEPOSITO') || roles.includes('CADETE_DEPOSITO');
+  if (!isInDeposit) return false;
+  if (
+    can('warranties.manage') || can('warranties.manage_provider') || can('warranties.export') ||
+    can('warranties.review') || can('warranties.gestor.panel') || can('warranties.dashboard') ||
+    can('branches.cross_select')
+  ) return false;
+  // Para ser "cadete" hace falta poder crear garantías. Sin ese permiso, es
+  // un encargado puro (isPlainDepositOperator).
+  if (!can('warranties.create')) return false;
+  return true;
+}
+
+/**
+ * Indica si el usuario tiene **capacidad** de gestión global de garantías.
+ * Se decide 100% por permisos. Si un admin habilita `warranties.review` a un
+ * vendedor, este vendedor pasa a ser "privileged" para este propósito.
+ */
+export function isWarrantyPrivilegedUser(user: CurrentUser | null | undefined): boolean {
+  if (!user) return false;
+  return (
+    can('warranties.manage') ||
+    can('warranties.manage_provider') ||
+    can('warranties.export') ||
+    can('warranties.review') ||
+    can('warranties.gestor.panel') ||
+    can('warranties.dashboard')
+  );
+}
+
+/**
+ * Operador de sucursal: usuario que NO tiene permisos privilegiados de gestión
+ * global y trabaja en una sucursal física. Sirve para que las pantallas filtren
+ * la vista a su sucursal asignada.
+ *
+ * Decisión por permisos. Como fallback se acepta branch_type='physical', que es
+ * una clasificación operativa real (la sucursal física donde está ese usuario),
+ * pero NO se mira el rol.
+ */
+export function isBranchWarrantyOperator(user: CurrentUser | null | undefined): boolean {
+  if (!user) return false;
+  if (isPlainDepositOperator(user)) return false;
+  if (isWarrantyPrivilegedUser(user)) return false;
+  // Capacidad de operar sucursal: permiso o branch_type físico.
+  const branchType = String(user.branch_type || '').toLowerCase();
+  return (
+    can('warranties.sucursal.logistics') ||
+    can('warranties.create') ||
+    can('warranties.view') ||
+    branchType === 'physical'
+  );
 }
 
 export function canSeeWarrantyList(user: CurrentUser | null | undefined): boolean {
@@ -81,17 +150,17 @@ export function canUseRemitosHub(user: CurrentUser | null | undefined): boolean 
 
 /**
  * Acceso a la página /warranties/deposito (WarrantyDepositReceivePage).
- * - Encargado de Depósito (DEPOSITO): recibe remitos + mueve entre depósitos.
- * - Cadete de Depósito (CADETE_DEPOSITO): solo confirma llegada de remitos.
+ *
+ * Decisión 100% por permisos. Si el admin asigna `warranties.remitos.receive` o
+ * `warranties.remitos.deposit_transfer` a cualquier rol (incluido Jefe de Posventa,
+ * Gestor, Gerente, etc.), ese usuario puede operar la recepción en depósito.
+ *
+ * Antes esta función solo dejaba pasar a usuarios con identidad operativa
+ * DEPOSITO/CADETE_DEPOSITO, lo que era una restricción artificial.
  */
 export function canSeeDepositReceivePage(user: CurrentUser | null | undefined): boolean {
-  if (isPlainDepositOperator(user)) {
-    return can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer');
-  }
-  if (isCadeteDeposito(user)) {
-    return can('warranties.remitos.receive');
-  }
-  return false;
+  if (!user) return false;
+  return can('warranties.remitos.receive') || can('warranties.remitos.deposit_transfer');
 }
 
 export function canSeeGestorPanel(user: CurrentUser | null | undefined): boolean {

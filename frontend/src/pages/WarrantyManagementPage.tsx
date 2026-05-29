@@ -1,8 +1,8 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, ArrowRight, Building2, CheckCircle2, ChevronDown, ChevronUp, Clock,
-  FileCheck2, Filter, History, MessageSquareReply, PackageCheck,
+  AlertTriangle, ArrowRight, Building2, CheckCircle2, ChevronDown, ChevronUp, Clock, Eye,
+  FileCheck2, Filter, History, LayoutGrid, List, MessageSquareReply, PackageCheck,
   RefreshCw, Search, Send, ShieldCheck, Truck,
 } from 'lucide-react';
 import {
@@ -15,11 +15,35 @@ import {
   registerWarrantyClaim,
   resendWarrantyProviderMail,
   registerWarrantyProviderResponse,
-  registerWarrantyProviderPickupRequest,
+  resolveWarrantyProviderCorrection,
   sendWarrantyToProvider,
 } from '../api/client';
+import {
+  ErpBadge,
+  ErpButton,
+  ErpDataTable,
+  ErpField,
+  ErpInput,
+  ErpNotice,
+  ErpSelect,
+  type ErpBadgeTone,
+  type ErpColumn,
+  type ErpRowAction,
+} from '../components/ProUI';
+import { WarrantyDetailDrawer } from '../components/WarrantyDetailDrawer';
 import type { AuditEvent, WarrantyListResponse, WarrantyOptions, WarrantySummary } from '../types';
 import { CANONICAL_WARRANTY_STATUSES, computeLogisticsAlerts, flowToneClass, getWarrantyNextStep, getWarrantyStatusMeta, historyEventLabel } from '../warrantyFlow';
+
+function flowToneToBadgeTone(tone?: string): ErpBadgeTone {
+  switch (tone) {
+    case 'success': case 'green': return 'success';
+    case 'warning': case 'amber': case 'yellow': return 'warning';
+    case 'danger': case 'red': return 'danger';
+    case 'info': case 'blue': case 'cyan': return 'info';
+    case 'violet': case 'purple': return 'violet';
+    default: return 'neutral';
+  }
+}
 
 const PROVIDER_STATUSES = CANONICAL_WARRANTY_STATUSES.filter((status) => status !== '1 - INGRESO');
 const FINAL_STATUSES = ['10 - FINALIZADO'];
@@ -34,6 +58,9 @@ interface ActionState {
   provider_name: string;
   provider_case_id: string;
   response_note: string;
+  // Qué pidió el proveedor (retiro | revision | correccion) + detalle de corrección.
+  response_type: string;
+  correction_note: string;
   claim_note: string;
   resend_note: string;
   status: string;
@@ -59,6 +86,8 @@ function emptyAction(item?: WarrantySummary): ActionState {
     provider_name: item?.provider_name || '',
     provider_case_id: item?.id_de_caso || '',
     response_note: '',
+    response_type: '',
+    correction_note: '',
     claim_note: '',
     resend_note: '',
     status: item?.estado || '6 - RESPONDIDO POR PROVEEDOR',
@@ -106,7 +135,7 @@ const ACTION_PILL_INACTIVE: Record<string, string> = {
 };
 
 
-export function WarrantyManagementPage() {
+export function WarrantyManagementPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [options, setOptions] = useState<WarrantyOptions | null>(null);
   const [data, setData] = useState<WarrantyListResponse | null>(null);
   const [filters, setFilters] = useState({ q: '', marca: '', proveedor: '', sucursal: '', deposito: '', estado: '', demora_min: '' });
@@ -117,6 +146,22 @@ export function WarrantyManagementPage() {
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<'para_enviar' | 'con_proveedor' | 'respondidas' | 'para_cerrar' | 'todos'>('con_proveedor');
   const [showFilters, setShowFilters] = useState(false);
+  // ── Fase 8: vista tabla + bulk actions ─────────────────────────────────
+  const [viewMode, setViewMode] = useState<'cards' | 'table'>(() => {
+    try { return (localStorage.getItem('warranty_mgmt_view') as 'cards' | 'table') || 'table'; } catch { return 'table'; }
+  });
+  const [groupBy, setGroupBy] = useState<'none' | 'provider' | 'brand' | 'shipment'>('none');
+  const [selected, setSelected] = useState<Set<string | number>>(new Set());
+  const [bulkAction, setBulkAction] = useState<'' | 'confirm' | 'resend' | 'response' | 'claim' | 'status'>('');
+  const [bulkPayload, setBulkPayload] = useState({ shipment_code: '', note: '', status: '' });
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkResult, setBulkResult] = useState<{ ok: number; failed: number } | null>(null);
+  const [drawerId, setDrawerId] = useState<string | null>(null);
+
+  function persistViewMode(next: 'cards' | 'table') {
+    setViewMode(next);
+    try { localStorage.setItem('warranty_mgmt_view', next); } catch { /* noop */ }
+  }
 
   const stats = useMemo(() => {
     const items = data?.items || [];
@@ -198,7 +243,7 @@ export function WarrantyManagementPage() {
     setActions((prev) => ({ ...prev, [id]: { ...(prev[id] || emptyAction()), ...patch } }));
   }
 
-  async function doAction(id: string, type: 'send' | 'response' | 'claim' | 'resend' | 'status' | 'confirm' | 'pickup', override: Partial<ActionState> = {}) {
+  async function doAction(id: string, type: 'send' | 'response' | 'correction' | 'claim' | 'resend' | 'status' | 'confirm', override: Partial<ActionState> = {}) {
     const state = { ...(actions[id] || emptyAction()), ...override };
     setSavingId(`${id}:${type}`);
     setMessage('');
@@ -223,19 +268,25 @@ export function WarrantyManagementPage() {
         setMessage('Garantía enviada al proveedor.');
       }
       if (type === 'response') {
+        if (state.response_type === 'correccion' && !state.correction_note.trim()) {
+          setError('Indicá qué pidió corregir el proveedor.');
+          setSavingId('');
+          return;
+        }
         await registerWarrantyProviderResponse(id, {
           provider_case_id: state.provider_case_id.trim() || undefined,
           note: state.response_note.trim() || undefined,
           estado: state.status || '6 - RESPONDIDO POR PROVEEDOR',
+          response_type: state.response_type || undefined,
+          correction_note: state.response_type === 'correccion' ? (state.correction_note.trim() || undefined) : undefined,
         });
         setMessage('Respuesta del proveedor registrada.');
       }
-      if (type === 'pickup') {
-        await registerWarrantyProviderPickupRequest(id, {
-          provider_case_id: state.provider_case_id.trim() || undefined,
+      if (type === 'correction') {
+        await resolveWarrantyProviderCorrection(id, {
           note: state.response_note.trim() || undefined,
         });
-        setMessage('Retiro solicitado por proveedor registrado.');
+        setMessage('Corrección aplicada. Se reenvió al proveedor y volvió a "esperando respuesta".');
       }
       if (type === 'claim') {
         await registerWarrantyClaim(id, { note: state.claim_note.trim() });
@@ -285,19 +336,219 @@ export function WarrantyManagementPage() {
     }
   }
 
+  // ── Bulk actions: aplica una misma acción a todas las garantías seleccionadas
+  async function runBulk() {
+    if (!bulkAction || selected.size === 0) return;
+    setBulkRunning(true);
+    setError('');
+    setMessage('');
+    setBulkResult(null);
+
+    let ok = 0;
+    let failed = 0;
+    const ids = Array.from(selected) as string[];
+
+    for (const id of ids) {
+      try {
+        if (bulkAction === 'confirm') {
+          // Cada garantía tiene su propio shipment_code. Si no se ingresa uno explícito,
+          // usamos el que viene del item (caso típico: lote ENV-XXX).
+          const item = (data?.items || []).find((it) => it.id_garantia === id);
+          const code = bulkPayload.shipment_code.trim() || item?.shipment_code?.trim() || '';
+          if (!code) { failed++; continue; }
+          await confirmWarrantyShipment(id, {
+            shipment_code: code,
+            provider_name: item?.provider_name || undefined,
+          });
+        } else if (bulkAction === 'resend') {
+          await resendWarrantyProviderMail(id, { note: bulkPayload.note.trim() || undefined });
+        } else if (bulkAction === 'response') {
+          await registerWarrantyProviderResponse(id, {
+            note: bulkPayload.note.trim() || undefined,
+            estado: '6 - RESPONDIDO POR PROVEEDOR',
+          });
+        } else if (bulkAction === 'claim') {
+          await registerWarrantyClaim(id, { note: bulkPayload.note.trim() || 'Reclamo masivo' });
+        } else if (bulkAction === 'status') {
+          if (!bulkPayload.status) { failed++; continue; }
+          await changeWarrantyStatus(id, {
+            estado: bulkPayload.status,
+            note: bulkPayload.note.trim() || undefined,
+          });
+        }
+        ok++;
+      } catch {
+        failed++;
+      }
+    }
+
+    setBulkResult({ ok, failed });
+    setBulkRunning(false);
+    setSelected(new Set());
+    setBulkAction('');
+    setBulkPayload({ shipment_code: '', note: '', status: '' });
+    if (ok > 0) {
+      setMessage(`${ok} garantía${ok === 1 ? '' : 's'} actualizada${ok === 1 ? '' : 's'}${failed > 0 ? ` (${failed} con error)` : ''}.`);
+    } else if (failed > 0) {
+      setError(`No se pudieron actualizar las ${failed} garantía${failed === 1 ? '' : 's'} seleccionada${failed === 1 ? '' : 's'}.`);
+    }
+    await load(filters);
+  }
+
+  // ── Lo que se puede hacer bulk según la mayoría de las garantías seleccionadas
+  const bulkAvailable = useMemo(() => {
+    if (selected.size === 0) return { confirm: false, resend: false, response: false, claim: false, status: false };
+    const items = (data?.items || []).filter((it) => selected.has(it.id_garantia));
+    const allPendingConfirm = items.every((it) => Boolean(it.shipment_code) && !it.fecha_envio_proveedor);
+    const allEnviadas = items.every((it) => it.estado === '4 - ENVIADO AL PROVEEDOR');
+    const allEnProveedor = items.every((it) => ['4 - ENVIADO AL PROVEEDOR', '5 - EN EL PROVEEDOR'].includes(it.estado));
+    return {
+      confirm: allPendingConfirm && can('warranties.manage_provider'),
+      resend: allEnviadas && can('warranties.register_claim'),
+      response: allEnProveedor && can('warranties.register_provider_response'),
+      claim: allEnProveedor && can('warranties.register_claim'),
+      status: items.length > 0 && can('warranties.change_status'),
+    };
+  }, [selected, data]);
+
+  // ── Columnas para vista tabla
+  const tableColumns: ErpColumn<WarrantySummary>[] = [
+    {
+      key: 'id',
+      header: 'N.º',
+      width: 120,
+      render: (row) => (
+        <div className="erp-cell-stack">
+          <span className="erp-cell-mono">{row.id_garantia}</span>
+          {row.shipment_code && (
+            <span className="erp-cell-stack-secondary font-mono">Lote: {row.shipment_code}</span>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'producto',
+      header: 'Cliente / Producto',
+      render: (row) => (
+        <div className="erp-cell-stack">
+          <span className="erp-cell-stack-primary">{row.producto_principal || 'Sin producto'}</span>
+          <span className="erp-cell-stack-secondary">
+            {row.cliente_nombre || 'Sin cliente'}{row.marca ? ` · ${row.marca}` : ''}
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: 'proveedor',
+      header: 'Proveedor',
+      width: 160,
+      muted: true,
+      render: (row) => (
+        <div className="erp-cell-stack">
+          <span className="truncate">{row.provider_name || '—'}</span>
+          {row.id_de_caso && <span className="erp-cell-stack-secondary">Caso {row.id_de_caso}</span>}
+        </div>
+      ),
+    },
+    {
+      key: 'estado',
+      header: 'Estado',
+      width: 180,
+      render: (row) => {
+        const meta = getWarrantyStatusMeta(row.estado);
+        return <ErpBadge tone={flowToneToBadgeTone(meta.tone)}>{meta.shortLabel || row.estado}</ErpBadge>;
+      },
+    },
+    {
+      key: 'dias',
+      header: 'Días s/r',
+      width: 90,
+      align: 'right',
+      render: (row) => {
+        const d = Number(row.dias_sin_respuesta || 0);
+        if (d <= 0) return <span className="text-[color:var(--text-3)]">—</span>;
+        if (d >= 15) return <ErpBadge tone="solid-danger">{d}d</ErpBadge>;
+        if (d >= 7) return <ErpBadge tone="warning">{d}d</ErpBadge>;
+        return <span className="tabular-nums text-[color:var(--text-2)]">{d}d</span>;
+      },
+    },
+    {
+      key: 'sucursal',
+      header: 'Sucursal',
+      width: 130,
+      muted: true,
+      render: (row) => row.sucursal || '—',
+    },
+  ];
+
+  const rowActions: ErpRowAction<WarrantySummary>[] = [
+    {
+      key: 'view',
+      label: 'Vista rápida',
+      icon: <Eye size={14} />,
+      onClick: (row) => setDrawerId(row.id_garantia),
+    },
+    {
+      key: 'edit',
+      label: 'Editar completo',
+      icon: <ArrowRight size={14} />,
+      onClick: (row) => { window.location.href = `/warranties/${encodeURIComponent(row.id_garantia)}`; },
+    },
+  ];
+
+  // ── Agrupación opcional en vista tabla
+  const grouped = useMemo(() => {
+    if (groupBy === 'none') return [{ label: '', items: activeItems }];
+    const map = new Map<string, WarrantySummary[]>();
+    for (const item of activeItems) {
+      const key = groupBy === 'provider' ? (item.provider_name || 'Sin proveedor')
+        : groupBy === 'brand' ? (item.marca || 'Sin marca')
+        : groupBy === 'shipment' ? (item.shipment_code || 'Sin lote')
+        : 'Todos';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(item);
+    }
+    return Array.from(map.entries())
+      .sort((a, b) => b[1].length - a[1].length)
+      .map(([label, items]) => ({ label, items }));
+  }, [activeItems, groupBy]);
+
   return (
-    <div className="mx-auto max-w-7xl space-y-6">
+    <div className={embedded ? 'space-y-6' : 'mx-auto max-w-7xl space-y-6'}>
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1 text-xs font-black uppercase tracking-wide text-blue-100">
-            <Building2 size={14} /> Gestión con proveedor
+        {!embedded && (
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1 text-xs font-black uppercase tracking-wide text-blue-100">
+              <Building2 size={14} /> Gestión con proveedor
+            </div>
+            <h1 className="mt-3 text-3xl font-black sm:text-4xl">Garantías en gestión</h1>
+            <p className="mt-2 text-slate-400">Seguimiento operativo por marca, proveedor y demora.</p>
           </div>
-          <h1 className="mt-3 text-3xl font-black sm:text-4xl">Garantías en gestión</h1>
-          <p className="mt-2 text-slate-400">Seguimiento operativo por marca, proveedor y demora.</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Toggle de vista */}
+          <div className="inline-flex items-center rounded-xl border border-slate-700 bg-slate-900/60 p-1" role="tablist" aria-label="Vista">
+            <button
+              type="button"
+              onClick={() => persistViewMode('table')}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${viewMode === 'table' ? 'bg-blue-500 text-white' : 'text-slate-300 hover:bg-slate-800'}`}
+              aria-pressed={viewMode === 'table'}
+              title="Vista de tabla con bulk actions"
+            >
+              <List size={14} /> Tabla
+            </button>
+            <button
+              type="button"
+              onClick={() => persistViewMode('cards')}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${viewMode === 'cards' ? 'bg-blue-500 text-white' : 'text-slate-300 hover:bg-slate-800'}`}
+              aria-pressed={viewMode === 'cards'}
+              title="Vista detallada con formularios por garantía"
+            >
+              <LayoutGrid size={14} /> Cards
+            </button>
+          </div>
           <button
             onClick={() => setShowFilters((v) => !v)}
             className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 font-bold transition-all ${
@@ -407,18 +658,203 @@ export function WarrantyManagementPage() {
         </div>
       )}
 
-      <div className="space-y-4">
-        {activeItems.map((item) => (
-          <ManagementCard
-            key={item.id_garantia}
-            item={item}
-            state={actions[item.id_garantia] || emptyAction(item)}
-            savingId={savingId}
-            update={(patch) => updateAction(item.id_garantia, patch)}
-            run={(type, override) => doAction(item.id_garantia, type, override)}
-          />
-        ))}
-      </div>
+      {/* Vista de cards (la actual con formularios desplegables) */}
+      {viewMode === 'cards' && (
+        <div className="space-y-4">
+          {activeItems.map((item) => (
+            <ManagementCard
+              key={item.id_garantia}
+              item={item}
+              state={actions[item.id_garantia] || emptyAction(item)}
+              savingId={savingId}
+              update={(patch) => updateAction(item.id_garantia, patch)}
+              run={(type, override) => doAction(item.id_garantia, type, override)}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Vista de tabla con selección múltiple y bulk actions */}
+      {viewMode === 'table' && (
+        <div className="space-y-4">
+          {/* Toolbar: agrupación + reset selección */}
+          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold uppercase tracking-wide text-slate-400">Agrupar por</span>
+              <ErpSelect value={groupBy} onChange={(e) => setGroupBy(e.target.value as typeof groupBy)} style={{ height: 30, fontSize: 12, minWidth: 140 }}>
+                <option value="none">Sin agrupar</option>
+                <option value="provider">Proveedor</option>
+                <option value="brand">Marca</option>
+                <option value="shipment">Lote ENV</option>
+              </ErpSelect>
+            </div>
+            <span className="text-[11.5px] text-slate-500">·</span>
+            <span className="text-xs text-slate-400">
+              {selected.size > 0
+                ? <><strong className="text-blue-300">{selected.size}</strong> seleccionada{selected.size === 1 ? '' : 's'} · </>
+                : null}
+              <strong className="text-slate-300">{activeItems.length}</strong> en vista
+            </span>
+            {selected.size > 0 && (
+              <button
+                type="button"
+                onClick={() => { setSelected(new Set()); setBulkAction(''); }}
+                className="ml-auto text-xs font-bold text-slate-400 hover:text-slate-200"
+              >
+                Limpiar selección
+              </button>
+            )}
+          </div>
+
+          {/* Panel de bulk actions */}
+          {selected.size > 0 && (
+            <div className="rounded-2xl border border-blue-500/40 bg-blue-500/5 p-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-black uppercase tracking-wide text-blue-200">
+                <Send size={14} /> Acción masiva sobre {selected.size} garantía{selected.size === 1 ? '' : 's'}
+              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-[260px_1fr_auto] md:items-end">
+                <ErpField label="Acción">
+                  <ErpSelect value={bulkAction} onChange={(e) => { setBulkAction(e.target.value as typeof bulkAction); setBulkPayload({ shipment_code: '', note: '', status: '' }); }}>
+                    <option value="">— Elegí una acción —</option>
+                    {bulkAvailable.confirm && <option value="confirm">Confirmar envío al proveedor (mail enviado)</option>}
+                    {bulkAvailable.resend && <option value="resend">Mail reenviado (reinicia contador)</option>}
+                    {bulkAvailable.response && <option value="response">Marcar respuesta recibida</option>}
+                    {bulkAvailable.claim && <option value="claim">Registrar reclamo</option>}
+                    {bulkAvailable.status && <option value="status">Cambiar estado</option>}
+                  </ErpSelect>
+                </ErpField>
+
+                {bulkAction === 'confirm' && (
+                  <ErpField label="Código de lote (opcional)" hint="Si se deja vacío, se usa el código de cada garantía. Útil cuando todas comparten el mismo lote ENV.">
+                    <ErpInput
+                      value={bulkPayload.shipment_code}
+                      onChange={(e) => setBulkPayload({ ...bulkPayload, shipment_code: e.target.value.toUpperCase() })}
+                      placeholder="ENV-..."
+                      style={{ fontFamily: 'ui-monospace, monospace' }}
+                    />
+                  </ErpField>
+                )}
+
+                {(bulkAction === 'resend' || bulkAction === 'response' || bulkAction === 'claim') && (
+                  <ErpField label="Nota (opcional)">
+                    <ErpInput
+                      value={bulkPayload.note}
+                      onChange={(e) => setBulkPayload({ ...bulkPayload, note: e.target.value })}
+                      placeholder={bulkAction === 'resend' ? 'Ej. Reenviado por falta de respuesta' : bulkAction === 'response' ? 'Ej. Respondieron por mail con caso #' : 'Ej. Reclamo masivo'}
+                    />
+                  </ErpField>
+                )}
+
+                {bulkAction === 'status' && (
+                  <ErpField label="Nuevo estado" required>
+                    <ErpSelect value={bulkPayload.status} onChange={(e) => setBulkPayload({ ...bulkPayload, status: e.target.value })}>
+                      <option value="">— Elegí estado —</option>
+                      {PROVIDER_STATUSES.map((st) => <option key={st} value={st}>{getWarrantyStatusMeta(st).shortLabel || st}</option>)}
+                    </ErpSelect>
+                  </ErpField>
+                )}
+
+                <ErpButton
+                  variant="primary"
+                  disabled={!bulkAction || bulkRunning || (bulkAction === 'status' && !bulkPayload.status)}
+                  loading={bulkRunning}
+                  onClick={runBulk}
+                  leftIcon={<Send size={13} />}
+                >
+                  {bulkRunning ? `Aplicando ${selected.size}…` : `Aplicar a ${selected.size}`}
+                </ErpButton>
+              </div>
+
+              {bulkAction === 'confirm' && (
+                <div className="mt-2 text-[12px] text-slate-400">
+                  Tip: si todas las garantías seleccionadas pertenecen a un mismo lote ENV-XXX (típico al exportar varias juntas), dejá el campo vacío. El sistema usa el código de cada garantía.
+                </div>
+              )}
+
+              {bulkResult && (
+                <div className="mt-3">
+                  <ErpNotice tone={bulkResult.failed > 0 ? 'warning' : 'success'} title={`${bulkResult.ok} actualizada${bulkResult.ok === 1 ? '' : 's'}${bulkResult.failed > 0 ? `, ${bulkResult.failed} con error` : ''}`}>
+                    {bulkResult.failed > 0 ? 'Revisá las que fallaron en la lista — pueden estar en un estado que no acepta esta acción.' : 'Operación completada correctamente.'}
+                  </ErpNotice>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Tabla agrupada */}
+          {grouped.map((group) => (
+            <div key={group.label || '_all'}>
+              {group.label && (
+                <div className="mb-2 flex items-center gap-2 px-1">
+                  <h3 className="text-[13px] font-semibold text-slate-200">{group.label}</h3>
+                  <ErpBadge tone="neutral" withDot={false}>{group.items.length}</ErpBadge>
+                </div>
+              )}
+              <ErpDataTable<WarrantySummary>
+                columns={tableColumns}
+                rows={group.items}
+                rowKey={(row) => row.id_garantia}
+                loading={loading && group.items.length === 0}
+                selectable
+                selected={selected}
+                onSelectionChange={setSelected}
+                onRowClick={(row) => setDrawerId(row.id_garantia)}
+                rowActions={rowActions}
+                empty={{
+                  title: activeTab === 'todos' ? 'No hay garantías con esos filtros' : `No hay garantías en "${tabGroups[activeTab].label}"`,
+                  description: 'Ajustá los filtros o cambiá de tab.',
+                }}
+                renderMobileCard={(row) => {
+                  const meta = getWarrantyStatusMeta(row.estado);
+                  const diasSinResp = Number(row.dias_sin_respuesta || 0);
+                  const isSelected = selected.has(row.id_garantia);
+                  return (
+                    <div className="erp-mcard" style={isSelected ? { borderColor: 'var(--primary)', background: 'var(--primary-soft)' } : undefined}>
+                      <div className="erp-mcard-head">
+                        <span className="erp-mcard-title">
+                          <input
+                            type="checkbox"
+                            className="erp-checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              const next = new Set(selected);
+                              if (e.target.checked) next.add(row.id_garantia); else next.delete(row.id_garantia);
+                              setSelected(next);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label={`Seleccionar ${row.id_garantia}`}
+                          />
+                          <span className="erp-cell-mono">{row.id_garantia}</span>
+                        </span>
+                        <ErpBadge tone={flowToneToBadgeTone(meta.tone)}>{meta.shortLabel || row.estado}</ErpBadge>
+                      </div>
+                      <div className="erp-mcard-title" style={{ fontWeight: 600 }}>{row.producto_principal || 'Sin producto'}</div>
+                      <div className="erp-mcard-sub">
+                        {row.cliente_nombre || 'Sin cliente'}{row.marca ? ` · ${row.marca}` : ''}
+                      </div>
+                      <div className="erp-mcard-meta">
+                        {row.provider_name && <span>{row.provider_name}</span>}
+                        {row.shipment_code && <span>Lote: <span className="font-mono">{row.shipment_code}</span></span>}
+                        {diasSinResp >= 15 ? <ErpBadge tone="solid-danger">{diasSinResp}d s/r</ErpBadge>
+                         : diasSinResp >= 7 ? <ErpBadge tone="warning">{diasSinResp}d s/r</ErpBadge>
+                         : null}
+                      </div>
+                    </div>
+                  );
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
+      <WarrantyDetailDrawer
+        open={drawerId !== null}
+        warrantyId={drawerId}
+        onClose={() => setDrawerId(null)}
+        onChanged={() => load(filters)}
+      />
     </div>
   );
 }
@@ -547,10 +983,12 @@ function hasInternalTransportBlocked(item: WarrantySummary) {
   return item.origen_ingreso === 'sucursal' && !internalTransportReady(item);
 }
 
+// Flujo real: 4 ENVIADO (esperando) → 6 RESPONDIÓ → 5 EN EL PROVEEDOR (físico) → 7 RESUELTO → 10 FINALIZADO.
+// Alineado con MANUAL_STATUS_TRANSITIONS de warrantyFlow.ts.
 function nextProviderStatuses(item: WarrantySummary) {
-  if (item.estado === '4 - ENVIADO AL PROVEEDOR') return ['5 - EN EL PROVEEDOR'];
-  if (item.estado === '5 - EN EL PROVEEDOR') return ['6 - RESPONDIDO POR PROVEEDOR', '7 - RESUELTO', '8 - RECHAZADO', '9 - ANULADA'];
-  if (item.estado === '6 - RESPONDIDO POR PROVEEDOR') return ['7 - RESUELTO', '8 - RECHAZADO', '9 - ANULADA'];
+  if (item.estado === '4 - ENVIADO AL PROVEEDOR') return ['6 - RESPONDIDO POR PROVEEDOR', '8 - RECHAZADO', '9 - ANULADA'];
+  if (item.estado === '6 - RESPONDIDO POR PROVEEDOR') return ['5 - EN EL PROVEEDOR', '7 - RESUELTO', '8 - RECHAZADO', '9 - ANULADA'];
+  if (item.estado === '5 - EN EL PROVEEDOR') return ['7 - RESUELTO', '8 - RECHAZADO', '9 - ANULADA'];
   if (item.estado === '7 - RESUELTO') return ['10 - FINALIZADO'];
   return [];
 }
@@ -564,7 +1002,7 @@ function ManagementCard({
   state: ActionState;
   savingId: string;
   update: (patch: Partial<ActionState>) => void;
-  run: (type: 'send' | 'response' | 'claim' | 'resend' | 'status' | 'confirm' | 'pickup', override?: Partial<ActionState>) => void;
+  run: (type: 'send' | 'response' | 'correction' | 'claim' | 'resend' | 'status' | 'confirm', override?: Partial<ActionState>) => void;
 }) {
   // ── Phase 2: dynamic action forms ──────────────────────────────────
   // Auto-abre la acción más relevante según el estado actual de la garantía
@@ -601,7 +1039,6 @@ function ManagementCard({
   const effectiveStatus = statusOptions.includes(state.status) ? state.status : (nextStatuses[0] || item.estado);
   const canTrackProvider = hasProvider && !isApprovedPending && !isPendingConfirm && !isClosed && !isResolvedOpen;
   const canRegisterProviderResponse = canTrackProvider && ['4 - ENVIADO AL PROVEEDOR', '5 - EN EL PROVEEDOR', '6 - RESPONDIDO POR PROVEEDOR'].includes(item.estado);
-  const canRegisterPickup = canTrackProvider && ['4 - ENVIADO AL PROVEEDOR', '6 - RESPONDIDO POR PROVEEDOR'].includes(item.estado) && item.estado_retiro_proveedor !== 'retirado';
   const canRegisterClaim = canTrackProvider && ['4 - ENVIADO AL PROVEEDOR', '5 - EN EL PROVEEDOR', '6 - RESPONDIDO POR PROVEEDOR'].includes(item.estado);
   const canResendMail = canRegisterClaim && item.estado === '4 - ENVIADO AL PROVEEDOR';
   const canChangeStage = !isClosed && nextStatuses.length > 0;
@@ -623,8 +1060,8 @@ function ManagementCard({
   if (!isPendingConfirm && !isApprovedPending && !isClosed && !isResolvedOpen) {
     if (canResponse && canRegisterProviderResponse)
       actionItems.push({ id: 'response', label: 'Respuesta proveedor', tone: 'green' });
-    if (canResponse && canRegisterPickup)
-      actionItems.push({ id: 'pickup', label: 'Solicitar retiro', tone: 'red' });
+    if (canResponse && item.provider_response_type === 'correccion')
+      actionItems.push({ id: 'correction', label: 'Corrección aplicada', tone: 'amber' });
     if (canClaim && canResendMail)
       actionItems.push({ id: 'resend', label: 'Mail reenviado', tone: 'blue' });
     if (canClaim && canRegisterClaim)
@@ -673,6 +1110,15 @@ function ManagementCard({
           <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${flowToneClass(statusMeta.tone)}`}>
             {statusMeta.shortLabel}
           </span>
+          {item.provider_response_type_label && (
+            <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${
+              item.provider_response_type === 'correccion'
+                ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+                : 'border-blue-500/40 bg-blue-500/10 text-blue-200'
+            }`}>
+              {item.provider_response_type_label}
+            </span>
+          )}
           {isApprovedPending && (
             <span className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2.5 py-1 text-xs font-black text-violet-200">
               ✓ Revisada — pendiente de exportación
@@ -930,6 +1376,25 @@ function ManagementCard({
               <div className="mb-2 flex items-center gap-2 text-sm font-black text-emerald-200">
                 <MessageSquareReply size={16} /> Registrar respuesta del proveedor
               </div>
+              <select
+                value={state.response_type}
+                onChange={(e) => update(e.target.value === 'correccion' ? { response_type: e.target.value } : { response_type: e.target.value, correction_note: '' })}
+                className="mb-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-emerald-400"
+              >
+                <option value="">¿Qué pidió el proveedor? (opcional)</option>
+                <option value="retiro">Solicitó retiro</option>
+                <option value="revision">Solicitó revisión</option>
+                <option value="correccion">Pidió corrección</option>
+              </select>
+              {state.response_type === 'correccion' && (
+                <textarea
+                  value={state.correction_note}
+                  onChange={(e) => update({ correction_note: e.target.value })}
+                  rows={2}
+                  placeholder="¿Qué hay que corregir? (obligatorio)"
+                  className="mb-2 w-full rounded-xl border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-sm outline-none focus:border-amber-400"
+                />
+              )}
               <div className="grid gap-2 sm:grid-cols-2">
                 <select
                   value={effectiveStatus}
@@ -953,7 +1418,7 @@ function ManagementCard({
                 className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-emerald-400"
               />
               <button
-                disabled={savingId === `${item.id_garantia}:response`}
+                disabled={savingId === `${item.id_garantia}:response` || (state.response_type === 'correccion' && !state.correction_note.trim())}
                 onClick={() => run('response', { status: effectiveStatus === item.estado ? '6 - RESPONDIDO POR PROVEEDOR' : effectiveStatus })}
                 className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-3 py-2 text-sm font-black text-white hover:bg-emerald-400 disabled:opacity-50"
               >
@@ -962,36 +1427,29 @@ function ManagementCard({
             </div>
           )}
 
-          {/* PICKUP form */}
-          {activeAction === 'pickup' && canResponse && canRegisterPickup && (
-            <div className="rounded-2xl border border-red-500/30 bg-red-500/5 p-3">
-              <div className="mb-2 flex items-center gap-2 text-sm font-black text-red-200">
-                <Truck size={16} /> Solicitar retiro del proveedor
+          {/* CORRECTION RESOLVE form */}
+          {activeAction === 'correction' && canResponse && item.provider_response_type === 'correccion' && (
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3">
+              <div className="mb-2 flex items-center gap-2 text-sm font-black text-amber-200">
+                <CheckCircle2 size={16} /> Corrección pedida por el proveedor
               </div>
-              <input
-                value={state.provider_case_id}
-                onChange={(e) => update({ provider_case_id: e.target.value })}
-                placeholder="ID de caso (opcional)"
-                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-red-400"
-              />
+              {item.provider_correction_note && (
+                <p className="mb-2 rounded-xl bg-amber-950/40 px-3 py-2 text-xs text-amber-200">{item.provider_correction_note}</p>
+              )}
+              <p className="mb-2 text-xs text-slate-400">Corregí los datos y confirmá acá. Se reenvía al proveedor y la garantía vuelve a “Enviado · esperando respuesta”.</p>
               <textarea
                 value={state.response_note}
                 onChange={(e) => update({ response_note: e.target.value })}
                 rows={2}
-                placeholder="Observación (ej: el proveedor avisa que retira el martes)"
-                className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-red-400"
+                placeholder="Qué se corrigió y cómo se reenvió (opcional)"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-amber-400"
               />
-              {!logisticsReady && (
-                <p className="mt-2 rounded-xl bg-red-950/40 px-3 py-2 text-xs text-red-300">
-                  ⚠ La garantía todavía no está en Depósito Chiclana. Registralo igual para marcarla como urgente.
-                </p>
-              )}
               <button
-                disabled={savingId === `${item.id_garantia}:pickup`}
-                onClick={() => run('pickup')}
-                className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-red-500 px-3 py-2 text-sm font-black text-white hover:bg-red-400 disabled:opacity-50"
+                disabled={savingId === `${item.id_garantia}:correction`}
+                onClick={() => run('correction')}
+                className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 px-3 py-2 text-sm font-black text-white hover:bg-amber-400 disabled:opacity-50"
               >
-                {savingId === `${item.id_garantia}:pickup` ? 'Registrando...' : 'Registrar solicitud de retiro'}
+                {savingId === `${item.id_garantia}:correction` ? 'Registrando...' : 'Corrección aplicada → reenviar'}
               </button>
             </div>
           )}

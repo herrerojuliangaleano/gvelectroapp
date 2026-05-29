@@ -156,6 +156,14 @@ export interface UserBranchAssignment {
   is_primary?: boolean;
 }
 
+export interface EmployeeLinkedUser {
+  username: string;
+  display_name?: string;
+  role?: string;
+  roles?: string[];
+  is_active?: boolean;
+}
+
 export interface EmployeeInfo {
   id?: string;
   username?: string;
@@ -166,16 +174,94 @@ export interface EmployeeInfo {
   phone?: string | null;
   personal_email?: string | null;
   position?: string | null;
+  department?: string | null;
+  address?: string | null;
+  birthdate?: string | null;
+  gender?: string | null;
+  civil_status?: string | null;
+  contract_type?: string | null;
+  hire_date?: string | null;
+  manager_employee_id?: string | null;
   company_id?: string | null;
   company_name?: string | null;
   branch_id?: string | null;
   branch_name?: string | null;
   branch_type?: string | null;
+  work_branch_id?: string | null;
+  work_branch_name?: string | null;
   photo_url?: string | null;
   photo_status?: string | null;
+  photo_uploaded_at?: string | null;
   status?: string | null;
+  has_user?: boolean;
+  user?: EmployeeLinkedUser | null;
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+export interface EmployeeListResponse {
+  items: EmployeeInfo[];
+  total: number;
+}
+
+export interface EmployeeCreatePayload {
+  dni?: string;
+  first_name?: string;
+  last_name?: string;
+  display_name?: string;
+  phone?: string;
+  personal_email?: string;
+  position?: string;
+  department?: string;
+  address?: string;
+  birthdate?: string;
+  gender?: string;
+  civil_status?: string;
+  contract_type?: string;
+  hire_date?: string;
+  manager_employee_id?: string;
+  company_id?: string;
+  branch_id?: string;
+  work_branch_id?: string;
+  status?: string;
+}
+
+export interface EmployeeStatusChangePayload {
+  status: string; // alta | licencia | baja
+  motivo?: string;
+  categoria?: string;
+  fecha_desde?: string;
+  fecha_hasta?: string;
+  observaciones?: string;
+}
+
+export interface EmployeeStatusHistoryItem {
+  id: string;
+  status: string;
+  previous_status: string;
+  motivo: string;
+  categoria: string;
+  fecha_desde: string;
+  fecha_hasta: string;
+  observaciones: string;
+  actor_username: string;
+  actor_name: string;
+  created_at: string;
+}
+
+export interface EmployeeStatusHistoryResponse {
+  items: EmployeeStatusHistoryItem[];
+}
+
+export interface UserLinkCandidate {
+  username: string;
+  display_name?: string;
+  role?: string;
+  is_active?: boolean;
+}
+
+export interface UserLinkCandidatesResponse {
+  items: UserLinkCandidate[];
 }
 
 export interface CurrentUser {
@@ -728,6 +814,8 @@ export interface WarrantyRow {
   lugar_llegada?: string;
   estado: string;
   observaciones: string;
+  // Corrección pedida por el proveedor para este ítem ('' = sin corrección).
+  correction_note?: string;
   actualizado_por: string;
   fecha_ultima_actualizacion: string;
 }
@@ -785,6 +873,10 @@ export interface WarrantySummary {
   fecha_ultimo_reclamo?: string;
   estado_retiro_proveedor?: string;
   estado_retiro_proveedor_label?: string;
+  // Qué pidió el proveedor cuando respondió (retiro | revision | correccion).
+  provider_response_type?: string;
+  provider_response_type_label?: string;
+  provider_correction_note?: string;
   fecha_solicitud_retiro_proveedor?: string;
   fecha_retiro_proveedor?: string;
   dias_pendiente?: number;
@@ -878,10 +970,25 @@ export interface WarrantyProviderSendPayload {
   note?: string;
 }
 
+export interface WarrantyItemCorrectionPayload {
+  row_number: number;
+  note: string;
+}
+
 export interface WarrantyProviderResponsePayload {
   note?: string;
   provider_case_id?: string;
   estado?: string;
+  // Tipo de respuesta del proveedor: retiro | revision | correccion.
+  response_type?: string;
+  // Detalle general de qué corregir (cuando no se especifica por ítem).
+  correction_note?: string;
+  // Corrección por ítem/serie (cuando response_type = correccion).
+  item_corrections?: WarrantyItemCorrectionPayload[];
+}
+
+export interface WarrantyProviderCorrectionResolvePayload {
+  note?: string;
 }
 
 export interface WarrantyClaimPayload {
@@ -1203,6 +1310,10 @@ export interface GenerateRemitosPayload {
 
 export interface DepositTransferOptions {
   origen_deposito: string;
+  /** Depósitos a los que el usuario puede acceder como origen. Si el usuario
+   *  tiene `branches.cross_select` o permisos privilegiados, contiene todos los
+   *  depósitos. Si no, solo los asignados. */
+  origenes_posibles?: Array<{ id: string; name: string; code: string; company_id: string }>;
   destinos: Array<{ id: string; name: string; code: string; company_id: string }>;
 }
 
@@ -1210,6 +1321,9 @@ export interface DepositTransferPayload {
   destino_deposito: string;
   warranty_codes: string[];
   nota?: string;
+  /** Origen explícito. Necesario cuando el usuario tiene varios depósitos
+   *  asignados o quiere mover desde un depósito distinto al principal. */
+  origen_deposito?: string;
 }
 
 export interface ProviderDeliveryWarranty {

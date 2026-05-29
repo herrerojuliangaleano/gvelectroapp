@@ -7,131 +7,130 @@ import {
 import {
   approveWarrantyReview, can, fetchWarranties, markWarrantyIncomplete, takeWarrantyIntoReview,
 } from '../api/client';
+import {
+  ErpBadge,
+  ErpButton,
+  ErpCard,
+  ErpEmptyState,
+  ErpKpiCard,
+  ErpLoadingState,
+  ErpNotice,
+  ErpPageHeader,
+  ErpTextarea,
+  erpBtnGhost,
+  erpBtnSecondary,
+  type ErpBadgeTone,
+  type ErpKpiVariant,
+} from '../components/ProUI';
+import { WarrantyDetailDrawer } from '../components/WarrantyDetailDrawer';
 import type { WarrantySummary, WarrantyListResponse } from '../types';
 import {
-  computeLogisticsAlerts, flowToneClass, getWarrantyStatusMeta, getReviewStatusMeta,
-  alertPriorityClass, type LogisticsAlert,
+  computeLogisticsAlerts, getWarrantyStatusMeta, getReviewStatusMeta, type LogisticsAlert,
 } from '../warrantyFlow';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 const FINAL_ESTADOS = new Set(['10 - FINALIZADO', '9 - ANULADA', '8 - RECHAZADO']);
 
-function priorityDot(priority: LogisticsAlert['priority']) {
-  if (priority === 'high')   return 'bg-red-400';
-  if (priority === 'medium') return 'bg-amber-400';
-  return 'bg-slate-500';
+function flowToneToBadgeTone(tone?: string): ErpBadgeTone {
+  switch (tone) {
+    case 'success': case 'green': return 'success';
+    case 'warning': case 'amber': case 'yellow': return 'warning';
+    case 'danger': case 'red': return 'danger';
+    case 'info': case 'blue': case 'cyan': return 'info';
+    case 'violet': case 'purple': return 'violet';
+    default: return 'neutral';
+  }
 }
 
-function BandejaBadge({ count, priority = 'base' }: { count: number; priority?: 'base' | 'warn' | 'danger' | 'ok' }) {
-  const cls =
-    priority === 'danger' ? 'border-red-500/50 bg-red-500/15 text-red-100' :
-    priority === 'warn'   ? 'border-amber-500/40 bg-amber-500/10 text-amber-100' :
-    priority === 'ok'     ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100' :
-    'border-slate-600 bg-slate-800 text-slate-200';
-  return (
-    <span className={`rounded-full border px-2 py-0.5 text-xs font-black ${cls}`}>{count}</span>
-  );
+function priorityKpiVariant(priority: 'base' | 'warn' | 'danger' | 'ok'): ErpKpiVariant {
+  if (priority === 'danger') return 'danger';
+  if (priority === 'warn') return 'alert';
+  if (priority === 'ok') return 'success';
+  return 'default';
 }
 
-function SectionHeader({ title, icon, count, priority = 'base' }: {
-  title: string; icon: ReactNode; count: number; priority?: 'base' | 'warn' | 'danger' | 'ok';
-}) {
-  return (
-    <div className="flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 px-4 py-3">
-      <span className="text-slate-400">{icon}</span>
-      <span className="font-black text-slate-100">{title}</span>
-      <BandejaBadge count={count} priority={priority} />
-    </div>
-  );
+function alertNoticeT(priority: LogisticsAlert['priority']): 'error' | 'warning' | 'info' {
+  if (priority === 'high') return 'error';
+  if (priority === 'medium') return 'warning';
+  return 'info';
 }
 
-function GestorCard({ item }: { item: WarrantySummary }) {
-  const alerts = computeLogisticsAlerts(item);
-  const topAlert = alerts.find((a) => a.targetRole !== 'posventa') || alerts[0];
+// ─── Card del gestor (vista general) ─────────────────────────────────────────
+
+function GestorCard({ item, onOpen }: { item: WarrantySummary; onOpen: () => void }) {
+  const alerts = computeLogisticsAlerts(item).filter((a) => a.targetRole !== 'posventa');
+  const topAlert = alerts[0];
   const statusMeta = getWarrantyStatusMeta(item.estado);
   const reviewMeta = getReviewStatusMeta(item.review_status);
 
   return (
-    <div className={`rounded-2xl border p-4 ${topAlert?.priority === 'high' ? 'border-red-500/30 bg-red-500/5' : 'border-slate-700 bg-slate-950/60'}`}>
+    <ErpCard
+      size="sm"
+      className={topAlert?.priority === 'high' ? 'border-[color:rgba(239,68,68,0.36)]' : ''}
+    >
       <div className="flex flex-wrap items-start justify-between gap-2">
-        {/* ID + badges */}
-        <div className="flex flex-wrap items-center gap-2">
-          <Link
-            to={`/warranties/${encodeURIComponent(item.id_garantia)}`}
-            className="font-mono text-lg font-black text-white hover:text-blue-200"
-          >
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Link to={`/warranties/${encodeURIComponent(item.id_garantia)}`} className="font-mono text-[14px] font-semibold text-[color:var(--text)] hover:text-[color:var(--primary-soft-text)]">
             {item.id_garantia}
           </Link>
-          <span className={`rounded-full border px-2 py-0.5 text-xs font-black ${flowToneClass(statusMeta.tone)}`}>
-            {statusMeta.shortLabel}
-          </span>
-          <span className={`rounded-full border px-2 py-0.5 text-xs font-black ${flowToneClass(reviewMeta.tone)}`}>
-            {item.review_status_label || reviewMeta.label}
-          </span>
+          <ErpBadge tone={flowToneToBadgeTone(statusMeta.tone)}>{statusMeta.shortLabel}</ErpBadge>
+          {item.review_status && (
+            <ErpBadge tone={flowToneToBadgeTone(reviewMeta.tone)}>
+              {item.review_status_label || reviewMeta.label}
+            </ErpBadge>
+          )}
         </div>
-        {/* Days badge */}
-        <span className="rounded-full border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-bold text-slate-300">
-          <Clock size={11} className="mr-1 inline" />{item.dias_pendiente ?? 0}d
-        </span>
+        <ErpBadge tone="neutral">
+          <Clock size={11} className="inline mr-0.5" /> {item.dias_pendiente ?? 0}d
+        </ErpBadge>
       </div>
 
-      {/* Product + meta */}
-      <div className="mt-2 text-slate-200 font-semibold">{item.producto_principal || 'Sin producto'}</div>
-      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-400">
-        {item.sucursal && <span><span className="text-slate-500">Sucursal:</span> {item.sucursal}</span>}
-        {item.provider_name && <span><span className="text-slate-500">Proveedor:</span> {item.provider_name}</span>}
-        {item.marca && <span><span className="text-slate-500">Marca:</span> {item.marca}</span>}
-        {item.serie && <span><span className="text-slate-500">Serie:</span> {item.serie}</span>}
+      <div className="mt-2 text-[13px] font-medium text-[color:var(--text)]">{item.producto_principal || 'Sin producto'}</div>
+
+      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11.5px] text-[color:var(--text-2)]">
+        {item.sucursal && <span><span className="text-[color:var(--text-3)]">Sucursal:</span> {item.sucursal}</span>}
+        {item.provider_name && <span><span className="text-[color:var(--text-3)]">Proveedor:</span> {item.provider_name}</span>}
+        {item.marca && <span><span className="text-[color:var(--text-3)]">Marca:</span> {item.marca}</span>}
+        {item.serie && <span><span className="text-[color:var(--text-3)]">Serie:</span> {item.serie}</span>}
       </div>
 
-      {/* Location */}
-      <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-400">
-        <MapPin size={12} className="shrink-0 text-slate-500" />
+      <div className="mt-2 flex items-center gap-1.5 text-[11.5px] text-[color:var(--text-2)]">
+        <MapPin size={11} className="shrink-0 text-[color:var(--text-3)]" />
         <span>{item.ubicacion_actual_label || item.ubicacion_actual || (item.transit_status === 'en_transito' ? 'En tránsito' : '—')}</span>
-        {item.transit_status === 'en_transito' && (
-          <span className="ml-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-amber-200">En tránsito</span>
-        )}
-        {item.transit_status === 'en_deposito' && (
-          <span className="ml-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-200">En depósito</span>
-        )}
+        {item.transit_status === 'en_transito' && <ErpBadge tone="warning" withDot={false}>en tránsito</ErpBadge>}
+        {item.transit_status === 'en_deposito' && <ErpBadge tone="success" withDot={false}>en depósito</ErpBadge>}
       </div>
 
-      {/* Alerts */}
-      {alerts.filter((a) => a.targetRole !== 'posventa').length > 0 && (
-        <div className="mt-3 space-y-1.5">
-          {alerts.filter((a) => a.targetRole !== 'posventa').map((alert, idx) => (
-            <div key={idx} className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-xs font-bold ${alertPriorityClass(alert.priority)}`}>
-              <span className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${priorityDot(alert.priority)}`} />
-              <div className="min-w-0 flex-1">
-                <div>{alert.message}</div>
-                <div className="mt-0.5 font-normal opacity-75">→ {alert.action}</div>
-              </div>
-            </div>
+      {alerts.length > 0 && (
+        <div className="mt-3 erp-stack-2">
+          {alerts.map((alert, idx) => (
+            <ErpNotice key={idx} tone={alertNoticeT(alert.priority)}>
+              <div className="text-[12px] font-semibold">{alert.message}</div>
+              <div className="text-[11.5px] opacity-80">→ {alert.action}</div>
+            </ErpNotice>
           ))}
         </div>
       )}
 
-      {/* Quick actions */}
-      <div className="mt-3 flex flex-wrap gap-2">
-        <Link
-          to={`/warranties/${encodeURIComponent(item.id_garantia)}`}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/40 px-3 py-1.5 text-xs font-bold text-blue-200 hover:bg-blue-500/10"
-        >
-          <ArrowRight size={13} /> Ver detalle
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        <button type="button" onClick={onOpen} className="erp-btn erp-btn-primary erp-btn-sm">
+          <Eye size={13} /> Vista rápida
+        </button>
+        <Link to={`/warranties/${encodeURIComponent(item.id_garantia)}`} className="erp-btn erp-btn-secondary erp-btn-sm">
+          <ArrowRight size={13} /> Detalle completo
         </Link>
         {(item.transit_status === 'en_transito' || item.origen_ingreso === 'sucursal') && can('warranties.remitos.view') && (
-          <Link
-            to="/warranties/remitos"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 px-3 py-1.5 text-xs font-bold text-amber-200 hover:bg-amber-500/10"
-          >
+          <Link to="/warranties/remitos" className="erp-btn erp-btn-ghost erp-btn-sm">
             <Truck size={13} /> Remitos
           </Link>
         )}
       </div>
-    </div>
+    </ErpCard>
   );
 }
+
+// ─── Card de acciones de revisión (bandeja revisión / corrección) ────────────
 
 function ReviewActionCard({
   item, note, setNote, saving,
@@ -153,91 +152,87 @@ function ReviewActionCard({
   const isCorrection = item.review_status === 'requiere_correccion';
   const detailUrl    = `/warranties/${encodeURIComponent(item.id_garantia)}?from=revision`;
 
-  const statusPill = (s?: string) => {
-    if (s === 'requiere_correccion') return 'border-amber-500/40 bg-amber-500/10 text-amber-100';
-    if (s === 'revisada')            return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100';
-    if (s === 'en_revision')         return 'border-violet-500/40 bg-violet-500/10 text-violet-100';
-    return 'border-blue-500/40 bg-blue-500/10 text-blue-100';
-  };
+  const reviewTone: ErpBadgeTone =
+    item.review_status === 'requiere_correccion' ? 'warning' :
+    item.review_status === 'revisada' ? 'success' :
+    item.review_status === 'en_revision' ? 'violet' : 'info';
 
   return (
-    <div className={`rounded-2xl border p-4 sm:p-5 transition-colors ${
-      isInProgress ? 'border-violet-500/40 bg-violet-500/[0.03]' :
-      isCorrection ? 'border-amber-500/30 bg-amber-500/5' :
-      'border-slate-700 bg-slate-950/60'
-    }`}>
-      <div className="flex flex-wrap items-center gap-2">
-        <Link to={detailUrl} className="font-mono text-lg font-black text-white hover:text-blue-200">
+    <ErpCard
+      size="sm"
+      className={
+        isInProgress ? 'border-[color:rgba(167,139,250,0.40)]' :
+        isCorrection ? 'border-[color:rgba(245,158,11,0.36)]' :
+        ''
+      }
+    >
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Link to={detailUrl} className="font-mono text-[14px] font-semibold text-[color:var(--text)] hover:text-[color:var(--primary-soft-text)]">
           {item.id_garantia}
         </Link>
-        <span className={`rounded-full border px-2.5 py-0.5 text-xs font-black ${statusPill(item.review_status)}`}>
-          {item.review_status_label || 'Pendiente de revisión'}
-        </span>
+        <ErpBadge tone={reviewTone}>{item.review_status_label || 'Pendiente de revisión'}</ErpBadge>
         {item.dias_pendiente != null && Number(item.dias_pendiente) > 0 && (
-          <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-xs text-slate-400">
-            <Clock size={10} className="mr-1 inline" />{item.dias_pendiente}d
-          </span>
+          <ErpBadge tone="neutral">
+            <Clock size={10} className="inline mr-0.5" /> {item.dias_pendiente}d
+          </ErpBadge>
         )}
       </div>
 
-      <div className="mt-1.5 font-semibold text-slate-100">{item.producto_principal || 'Sin producto'}</div>
+      <div className="mt-1.5 text-[13px] font-medium text-[color:var(--text)]">{item.producto_principal || 'Sin producto'}</div>
 
-      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-400">
-        {item.sucursal && <span><span className="text-slate-500">Sucursal:</span> {item.sucursal}</span>}
-        {item.sku      && <span><span className="text-slate-500">SKU:</span> {item.sku}</span>}
-        {item.serie    && <span><span className="text-slate-500">Serie:</span> {item.serie}</span>}
-        {item.tipo_ingreso_label && <span><span className="text-slate-500">Tipo:</span> {item.tipo_ingreso_label}</span>}
+      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11.5px] text-[color:var(--text-2)]">
+        {item.sucursal && <span><span className="text-[color:var(--text-3)]">Sucursal:</span> {item.sucursal}</span>}
+        {item.sku      && <span><span className="text-[color:var(--text-3)]">SKU:</span> {item.sku}</span>}
+        {item.serie    && <span><span className="text-[color:var(--text-3)]">Serie:</span> {item.serie}</span>}
+        {item.tipo_ingreso_label && <span><span className="text-[color:var(--text-3)]">Tipo:</span> {item.tipo_ingreso_label}</span>}
       </div>
 
       {item.falla && (
-        <div className="mt-2.5 rounded-xl bg-slate-900 px-3 py-2 text-xs text-slate-300">
-          <span className="font-bold text-slate-400">Falla: </span>{item.falla}
+        <div className="mt-2 rounded-md border border-[color:var(--border)] bg-[color:var(--surface-2)] px-3 py-2 text-[12px] text-[color:var(--text-2)]">
+          <span className="font-semibold text-[color:var(--text-3)]">Falla: </span>{item.falla}
         </div>
       )}
 
       {item.review_note && (
-        <div className="mt-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
-          <span className="font-bold">Nota de revision: </span>{item.review_note}
+        <div className="mt-2">
+          <ErpNotice tone="warning"><span className="font-semibold">Nota de revisión: </span>{item.review_note}</ErpNotice>
         </div>
       )}
 
       <div className="mt-3">
         {isPending && can('warranties.review') && (
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap gap-2">
+          <div className="erp-stack-2">
+            <div className="flex flex-wrap gap-1.5">
               {can('warranties.approve_review') && onDirectApprove && (
-                <button disabled={saving} onClick={onDirectApprove}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white hover:bg-emerald-500 disabled:opacity-50">
-                  <CheckCircle2 size={13} /> Aprobar
-                </button>
+                <ErpButton size="sm" variant="primary" disabled={saving} onClick={onDirectApprove} leftIcon={<CheckCircle2 size={13} />}>
+                  Aprobar
+                </ErpButton>
               )}
               {onTake && (
-                <button disabled={saving} onClick={onTake}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-violet-500/50 bg-violet-500/10 px-3 py-2 text-xs font-black text-violet-100 hover:bg-violet-500/20 disabled:opacity-50">
-                  <Eye size={13} /> Revisar en detalle <ArrowRight size={12} />
-                </button>
+                <ErpButton size="sm" variant="secondary" disabled={saving} onClick={onTake} leftIcon={<Eye size={13} />} rightIcon={<ArrowRight size={12} />}>
+                  Revisar en detalle
+                </ErpButton>
               )}
               {can('warranties.mark_incomplete') && onDirectIncomplete && (
-                <button disabled={saving} onClick={() => setShowReturnForm((v) => !v)}
-                  className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-black transition-all disabled:opacity-50 ${
-                    showReturnForm ? 'border-amber-500/60 bg-amber-500/15 text-amber-100' : 'border-amber-500/40 text-amber-300 hover:bg-amber-500/10'
-                  }`}>
-                  <AlertTriangle size={13} /> Devolver {showReturnForm && <X size={11} />}
-                </button>
+                <ErpButton size="sm" variant={showReturnForm ? 'primary' : 'ghost'} disabled={saving} onClick={() => setShowReturnForm((v) => !v)} leftIcon={<AlertTriangle size={13} />} rightIcon={showReturnForm ? <X size={11} /> : undefined}>
+                  Devolver
+                </ErpButton>
               )}
             </div>
             {showReturnForm && can('warranties.mark_incomplete') && onDirectIncomplete && (
-              <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
-                <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} autoFocus
-                  placeholder="Motivo de correccion (obligatorio)..."
-                  className="w-full rounded-xl border border-amber-500/30 bg-slate-950 px-3 py-2 text-xs outline-none focus:border-amber-400" />
+              <div className="rounded-md border border-[color:rgba(245,158,11,0.36)] bg-[color:var(--warning-soft)] p-3">
+                <ErpTextarea
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  rows={2}
+                  autoFocus
+                  placeholder="Motivo de corrección (obligatorio)..."
+                />
                 <div className="mt-2 flex gap-2">
-                  <button disabled={saving || !note.trim()} onClick={onDirectIncomplete}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-black text-white hover:bg-amber-400 disabled:opacity-40">
-                    <AlertTriangle size={12} /> Devolver con nota
-                  </button>
-                  <button type="button" onClick={() => setShowReturnForm(false)}
-                    className="rounded-xl border border-slate-700 px-3 py-1.5 text-xs font-bold text-slate-400 hover:bg-slate-900">
+                  <ErpButton size="sm" variant="primary" disabled={saving || !note.trim()} onClick={onDirectIncomplete} leftIcon={<AlertTriangle size={12} />}>
+                    Devolver con nota
+                  </ErpButton>
+                  <button type="button" onClick={() => setShowReturnForm(false)} className="erp-btn erp-btn-ghost erp-btn-sm">
                     Cancelar
                   </button>
                 </div>
@@ -248,27 +243,28 @@ function ReviewActionCard({
 
         {isInProgress && (
           <div className="flex flex-wrap items-end gap-3">
-            <Link to={detailUrl}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-violet-500/50 bg-violet-500/10 px-3 py-2 text-xs font-black text-violet-100 hover:bg-violet-500/20">
-              <ExternalLink size={13} /> Continuar revision
+            <Link to={detailUrl} className="erp-btn erp-btn-secondary erp-btn-sm">
+              <ExternalLink size={13} /> Continuar revisión
             </Link>
             {(can('warranties.mark_incomplete') || can('warranties.approve_review')) && (
               <div className="flex flex-wrap items-end gap-2">
-                <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2}
-                  placeholder="Nota (obligatoria para correccion)..."
-                  className="w-52 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs outline-none focus:border-blue-400" />
+                <ErpTextarea
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  rows={2}
+                  placeholder="Nota (obligatoria para corrección)..."
+                  style={{ minHeight: 56, width: 220 }}
+                />
                 <div className="flex flex-col gap-1.5">
                   {can('warranties.mark_incomplete') && onIncomplete && (
-                    <button disabled={saving || !note.trim()} onClick={onIncomplete}
-                      className="inline-flex items-center gap-1 rounded-xl border border-amber-500/50 px-3 py-1.5 text-xs font-black text-amber-100 hover:bg-amber-500/10 disabled:opacity-40">
-                      <AlertTriangle size={12} /> Correccion
-                    </button>
+                    <ErpButton size="sm" variant="ghost" disabled={saving || !note.trim()} onClick={onIncomplete} leftIcon={<AlertTriangle size={12} />}>
+                      Corrección
+                    </ErpButton>
                   )}
                   {can('warranties.approve_review') && onApprove && (
-                    <button disabled={saving} onClick={onApprove}
-                      className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-black text-white hover:bg-emerald-500 disabled:opacity-50">
-                      <CheckCircle2 size={12} /> Aprobar
-                    </button>
+                    <ErpButton size="sm" variant="primary" disabled={saving} onClick={onApprove} leftIcon={<CheckCircle2 size={12} />}>
+                      Aprobar
+                    </ErpButton>
                   )}
                 </div>
               </div>
@@ -278,19 +274,18 @@ function ReviewActionCard({
 
         {isCorrection && (
           <div className="flex flex-wrap items-center gap-3">
-            <p className="text-xs text-amber-200/70">Esperando que la sucursal corrija. Vuelve a revision automaticamente.</p>
-            <Link to={detailUrl}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-600 px-3 py-1.5 text-xs font-bold text-slate-300 hover:bg-slate-900">
+            <p className="text-[11.5px] text-[color:var(--warning-soft-text)]">Esperando que la sucursal corrija. Vuelve a revisión automáticamente.</p>
+            <Link to={detailUrl} className="erp-btn erp-btn-ghost erp-btn-sm">
               <ExternalLink size={12} /> Ver detalle
             </Link>
           </div>
         )}
       </div>
-    </div>
+    </ErpCard>
   );
 }
 
-// ─── main page ────────────────────────────────────────────────────────────────
+// ─── Main page ───────────────────────────────────────────────────────────────
 
 export function WarrantyGestorPage() {
   const navigate = useNavigate();
@@ -298,8 +293,8 @@ export function WarrantyGestorPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<string>('revision');
+  const [drawerId, setDrawerId] = useState<string | null>(null);
 
-  // ── review actions state ──
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [savingId, setSavingId] = useState('');
   const [actionMsg, setActionMsg] = useState('');
@@ -357,7 +352,6 @@ export function WarrantyGestorPage() {
     [data],
   );
 
-  // ── Bandejas ──────────────────────────────────────────────────────────────
   const pendingReview = useMemo(
     () => allActive.filter((item) => !item.review_status || item.review_status === 'pendiente_revision' || item.review_status === 'en_revision'),
     [allActive],
@@ -375,10 +369,7 @@ export function WarrantyGestorPage() {
     [allActive],
   );
   const logisticsAlerts = useMemo(
-    () => allActive.filter((item) => {
-      const alerts = computeLogisticsAlerts(item);
-      return alerts.some((a) => a.targetRole !== 'posventa');
-    }),
+    () => allActive.filter((item) => computeLogisticsAlerts(item).some((a) => a.targetRole !== 'posventa')),
     [allActive],
   );
   const pickupRequested = useMemo(
@@ -386,109 +377,85 @@ export function WarrantyGestorPage() {
     [allActive],
   );
 
-  const TABS = [
-    { id: 'revision',     label: 'Revisión pendiente',  count: pendingReview.length,    priority: 'base'   as const, items: pendingReview },
-    { id: 'correccion',   label: 'Requieren corrección', count: needsCorrection.length,  priority: 'warn'   as const, items: needsCorrection },
-    { id: 'posventa',     label: 'Listas para Posventa', count: readyForPosventa.length, priority: 'ok'     as const, items: readyForPosventa },
-    { id: 'transito',     label: 'En tránsito',          count: inTransit.length,        priority: 'warn'   as const, items: inTransit },
-    { id: 'logistica',    label: 'Alertas logísticas',   count: logisticsAlerts.length,  priority: logisticsAlerts.some((i) => computeLogisticsAlerts(i).some((a) => a.priority === 'high' && a.targetRole !== 'posventa')) ? 'danger' as const : 'warn' as const, items: logisticsAlerts },
-    { id: 'retiro',       label: 'Retiro solicitado',    count: pickupRequested.length,  priority: pickupRequested.length > 0 ? 'danger' as const : 'base' as const, items: pickupRequested },
+  const TABS: Array<{ id: string; label: string; icon: ReactNode; count: number; priority: 'base' | 'warn' | 'danger' | 'ok'; items: WarrantySummary[] }> = [
+    { id: 'revision',   label: 'Revisión pendiente',   icon: <ClipboardCheck size={13} />, count: pendingReview.length,    priority: 'base',  items: pendingReview },
+    { id: 'correccion', label: 'Requieren corrección', icon: <XCircle size={13} />,        count: needsCorrection.length,  priority: 'warn',  items: needsCorrection },
+    { id: 'posventa',   label: 'Listas para Posventa', icon: <CheckCircle2 size={13} />,   count: readyForPosventa.length, priority: 'ok',    items: readyForPosventa },
+    { id: 'transito',   label: 'En tránsito',           icon: <Truck size={13} />,          count: inTransit.length,        priority: 'warn',  items: inTransit },
+    { id: 'logistica',  label: 'Alertas logísticas',    icon: <AlertTriangle size={13} />,  count: logisticsAlerts.length,  priority: logisticsAlerts.some((i) => computeLogisticsAlerts(i).some((a) => a.priority === 'high' && a.targetRole !== 'posventa')) ? 'danger' : 'warn', items: logisticsAlerts },
+    { id: 'retiro',     label: 'Retiro solicitado',     icon: <Package size={13} />,        count: pickupRequested.length,  priority: pickupRequested.length > 0 ? 'danger' : 'base', items: pickupRequested },
   ];
 
   const activeTabData = TABS.find((t) => t.id === activeTab) || TABS[0];
-
   const totalAlerts = needsCorrection.length + pickupRequested.length;
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6">
-      {/* Header */}
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/10 px-3 py-1 text-xs font-black uppercase tracking-wide text-violet-100">
-            <Wrench size={13} /> Panel interno — Gestor de Garantías
-          </div>
-          <h1 className="mt-3 text-3xl font-black sm:text-4xl">Mesa de trabajo</h1>
-          <p className="mt-1 text-slate-400">Control interno, revisión, logística y preparación para Posventa.</p>
-        </div>
-        <button onClick={load} className="inline-flex items-center gap-2 rounded-xl border border-slate-600 px-4 py-3 font-bold text-slate-100 hover:bg-slate-900">
-          <RefreshCw size={18} /> Actualizar
-        </button>
-      </div>
+    <div className="erp-stack-6">
+      <ErpPageHeader
+        title="Mesa de trabajo del gestor"
+        description="Control interno, revisión, logística y preparación para Posventa."
+        actions={
+          <button type="button" onClick={load} className={erpBtnSecondary} disabled={loading}>
+            <RefreshCw size={14} className={loading ? 'erp-spin' : ''} /> Actualizar
+          </button>
+        }
+      />
 
-      {error    && <div className="rounded-2xl border border-red-500/40    bg-red-500/10    p-4 text-red-100">{error}</div>}
-      {actionErr && <div className="rounded-2xl border border-red-500/40    bg-red-500/10    p-4 text-sm text-red-100">{actionErr}</div>}
-      {actionMsg && <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4 text-sm text-emerald-100">{actionMsg}</div>}
+      {error && <ErpNotice tone="error">{error}</ErpNotice>}
+      {actionErr && <ErpNotice tone="error">{actionErr}</ErpNotice>}
+      {actionMsg && <ErpNotice tone="success">{actionMsg}</ErpNotice>}
 
-      {/* KPI summary row */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+      {/* KPIs clickables — funcionan como tabs */}
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6" aria-label="Bandejas del gestor">
         {TABS.map((tab) => (
           <button
             key={tab.id}
+            type="button"
             onClick={() => setActiveTab(tab.id)}
-            className={`rounded-2xl border p-4 text-left transition-all ${
-              activeTab === tab.id ? 'ring-2 ring-blue-500/60' :
-              tab.priority === 'danger' ? 'border-red-500/30 bg-red-500/5 hover:bg-red-500/10' :
-              tab.priority === 'warn'   ? 'border-amber-500/25 bg-amber-500/5 hover:bg-amber-500/10' :
-              tab.priority === 'ok'     ? 'border-emerald-500/25 bg-emerald-500/5 hover:bg-emerald-500/10' :
-              'border-slate-700 bg-slate-950/50 hover:bg-slate-900'
-            }`}
+            className={`text-left transition-all ${activeTab === tab.id ? 'ring-2 ring-[color:var(--primary)]' : ''}`}
           >
-            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">{tab.label}</div>
-            <div className={`mt-1 text-3xl font-black ${
-              tab.priority === 'danger' ? 'text-red-300' :
-              tab.priority === 'warn'   ? 'text-amber-300' :
-              tab.priority === 'ok'     ? 'text-emerald-300' : 'text-white'
-            }`}>{tab.count}</div>
+            <ErpKpiCard
+              label={tab.label}
+              value={tab.count}
+              icon={tab.icon}
+              variant={priorityKpiVariant(tab.priority)}
+            />
           </button>
         ))}
-      </div>
+      </section>
 
-      {/* Alerts summary */}
+      {/* Alertas urgentes consolidadas */}
       {totalAlerts > 0 && (
-        <div className="flex items-center gap-3 rounded-2xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm font-bold text-red-100">
-          <AlertTriangle size={18} className="shrink-0 text-red-400" />
-          {totalAlerts === 1
-            ? 'Hay 1 caso que requiere atención urgente.'
-            : `Hay ${totalAlerts} casos que requieren atención urgente.`}
-        </div>
+        <ErpNotice tone="error" title={totalAlerts === 1 ? 'Hay 1 caso que requiere atención urgente' : `Hay ${totalAlerts} casos que requieren atención urgente`}>
+          Revisalos primero antes de avanzar con el resto de la bandeja.
+        </ErpNotice>
       )}
 
-      {/* Active tab content */}
-      <div>
-        <SectionHeader
-          title={activeTabData.label}
-          icon={
-            activeTab === 'revision'   ? <ClipboardCheck size={18} /> :
-            activeTab === 'correccion' ? <XCircle size={18} /> :
-            activeTab === 'posventa'   ? <CheckCircle2 size={18} /> :
-            activeTab === 'transito'   ? <Truck size={18} /> :
-            activeTab === 'retiro'     ? <AlertTriangle size={18} /> :
-            <ShieldCheck size={18} />
-          }
-          count={activeTabData.count}
-          priority={activeTabData.priority}
-        />
-
-        {loading && (
-          <div className="mt-4 rounded-2xl border border-slate-700 bg-slate-950/60 p-6 text-center text-slate-400">
-            <div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-slate-700 border-t-blue-400" />
-            Cargando garantías...
-          </div>
-        )}
+      {/* Contenido del tab activo */}
+      <ErpCard
+        title={
+          <span className="inline-flex items-center gap-2">
+            {activeTabData.icon}
+            {activeTabData.label}
+          </span>
+        }
+        subtitle={`${activeTabData.count} caso${activeTabData.count === 1 ? '' : 's'}`}
+      >
+        {loading && <ErpLoadingState />}
 
         {!loading && activeTabData.items.length === 0 && (
-          <div className="mt-4 rounded-2xl border border-slate-700 bg-slate-950/60 p-6 text-center">
-            <Package size={32} className="mx-auto mb-2 text-slate-600" />
-            <div className="font-bold text-slate-400">Sin casos en esta bandeja.</div>
-          </div>
+          <ErpEmptyState
+            icon={<Package size={20} />}
+            title="Sin casos en esta bandeja"
+            description="Cuando aparezcan, los vas a ver acá ordenados por prioridad."
+          />
         )}
 
         {!loading && activeTabData.items.length > 0 && (
-          <div className="mt-3 space-y-3">
+          <div className="erp-stack-3">
             {activeTabData.items
               .sort((a, b) => {
                 if (activeTab === 'revision') {
-                  // en_revision primero, luego pendiente_revision, luego por dias
                   const aInProg = a.review_status === 'en_revision' ? 1 : 0;
                   const bInProg = b.review_status === 'en_revision' ? 1 : 0;
                   if (aInProg !== bInProg) return bInProg - aInProg;
@@ -514,12 +481,23 @@ export function WarrantyGestorPage() {
                     onDirectIncomplete={() => reviewAction(item.id_garantia, 'direct_incomplete')}
                   />
                 ) : (
-                  <GestorCard key={item.id_garantia} item={item} />
+                  <GestorCard
+                    key={item.id_garantia}
+                    item={item}
+                    onOpen={() => setDrawerId(item.id_garantia)}
+                  />
                 ),
               )}
           </div>
         )}
-      </div>
+      </ErpCard>
+
+      <WarrantyDetailDrawer
+        open={drawerId !== null}
+        warrantyId={drawerId}
+        onClose={() => setDrawerId(null)}
+        onChanged={() => load()}
+      />
     </div>
   );
 }

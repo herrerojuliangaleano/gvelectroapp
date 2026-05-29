@@ -1,18 +1,45 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, RefreshCw, XCircle } from 'lucide-react';
 import { cancelJob, fetchJob, fetchJobLogs } from '../api/client';
 import { LogsConsole } from '../components/LogsConsole';
-import { StatusBadge } from '../components/StatusBadge';
-import type { JobInfo } from '../types';
+import {
+  ErpBadge,
+  ErpButton,
+  ErpCard,
+  ErpInfoGrid,
+  ErpInfoRow,
+  ErpNotice,
+  ErpPageHeader,
+  erpBtnGhost,
+  type ErpBadgeTone,
+} from '../components/ProUI';
+import type { JobInfo, JobStatus } from '../types';
 
-const runningStates = new Set(['pending', 'running']);
+const runningStates = new Set<JobStatus>(['pending', 'running']);
+
+const STATUS_TONE: Record<JobStatus, ErpBadgeTone> = {
+  pending: 'warning',
+  running: 'info',
+  success: 'success',
+  error: 'danger',
+  cancelled: 'neutral',
+};
+
+const STATUS_LABEL: Record<JobStatus, string> = {
+  pending: 'Pendiente',
+  running: 'Ejecutando',
+  success: 'Finalizado',
+  error: 'Error',
+  cancelled: 'Cancelado',
+};
 
 export function JobDetailPage() {
   const { jobId } = useParams();
   const [job, setJob] = useState<JobInfo | null>(null);
   const [logs, setLogs] = useState('');
   const [error, setError] = useState('');
+  const [cancelling, setCancelling] = useState(false);
 
   async function refresh() {
     if (!jobId) return;
@@ -33,30 +60,56 @@ export function JobDetailPage() {
 
   async function doCancel() {
     if (!jobId) return;
-    await cancelJob(jobId);
-    await refresh();
+    setCancelling(true);
+    try {
+      await cancelJob(jobId);
+      await refresh();
+    } finally {
+      setCancelling(false);
+    }
   }
 
   return (
-    <div>
-      <Link to="/jobs" className="mb-6 inline-flex items-center gap-2 text-sm font-semibold text-slate-300 hover:text-white"><ArrowLeft size={16} /> Historial</Link>
-      {error && <div className="mb-5 rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-red-200">{error}</div>}
+    <div className="erp-stack-6">
+      <ErpPageHeader
+        title={job ? job.tool_name : 'Detalle del proceso'}
+        description={job ? <>Job <span className="font-mono">{job.id}</span> · iniciado el {new Date(job.created_at).toLocaleString('es-AR')}</> : undefined}
+        actions={
+          <>
+            <Link to="/jobs" className={erpBtnGhost}><ArrowLeft size={14} /> Historial</Link>
+            <button type="button" onClick={refresh} className={erpBtnGhost}><RefreshCw size={14} /> Refrescar</button>
+            {job && runningStates.has(job.status) && (
+              <ErpButton variant="danger" loading={cancelling} onClick={doCancel} leftIcon={<XCircle size={14} />}>
+                Cancelar ejecución
+              </ErpButton>
+            )}
+          </>
+        }
+      />
+
+      {error && <ErpNotice tone="error">{error}</ErpNotice>}
+
       {job && (
-        <div className="mb-5 rounded-2xl border border-slate-700 bg-slate-900/70 p-5 shadow-xl">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-black">{job.tool_name}</h1>
-              <p className="mt-1 text-sm text-slate-400">Job {job.id} · {new Date(job.created_at).toLocaleString()}</p>
-              {job.error && <p className="mt-3 text-sm text-red-200">{job.error}</p>}
+        <ErpCard title="Estado del proceso" actions={<ErpBadge tone={STATUS_TONE[job.status] || 'neutral'}>{STATUS_LABEL[job.status] || job.status}</ErpBadge>}>
+          <ErpInfoGrid columns={3}>
+            <ErpInfoRow label="Herramienta" value={job.tool_name} />
+            <ErpInfoRow label="Estado" value={STATUS_LABEL[job.status] || job.status} />
+            <ErpInfoRow label="Duración" value={job.duration_seconds ? `${job.duration_seconds.toFixed(1)} s` : '—'} />
+            <ErpInfoRow label="Iniciado" value={new Date(job.created_at).toLocaleString('es-AR')} />
+            <ErpInfoRow label="ID del job" value={<span className="font-mono">{job.id}</span>} />
+            <ErpInfoRow label="Disparado por" value={(job as any).actor_display_name || (job as any).actor_username || 'Sistema'} />
+          </ErpInfoGrid>
+          {job.error && (
+            <div className="mt-3">
+              <ErpNotice tone="error" title="Error reportado por el proceso">{job.error}</ErpNotice>
             </div>
-            <div className="flex items-center gap-3">
-              <StatusBadge status={job.status} />
-              {runningStates.has(job.status) && <button onClick={doCancel} className="rounded-xl border border-red-500/50 px-4 py-2 text-sm font-bold text-red-200 hover:bg-red-500/10">Cancelar</button>}
-            </div>
-          </div>
-        </div>
+          )}
+        </ErpCard>
       )}
-      <LogsConsole logs={logs} />
+
+      <ErpCard title="Logs en vivo" subtitle="Salida del proceso. Se actualiza cada 2 segundos mientras se ejecuta.">
+        <LogsConsole logs={logs} />
+      </ErpCard>
     </div>
   );
 }

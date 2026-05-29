@@ -97,6 +97,7 @@ ALL_PERMISSIONS: dict[str, str] = {
     "companies.manage": "Crear y modificar empresas",
     "branches.view": "Ver sucursales operativas",
     "branches.manage": "Crear y modificar sucursales operativas",
+    "branches.cross_select": "Seleccionar/operar sucursales fuera de las asignadas (multi-sucursal)",
     "google.manage": "Gestionar conexión Google OAuth",
     "users.view": "Ver usuarios",
     "users.manage": "Crear y modificar usuarios",

@@ -121,6 +121,41 @@ def normalize_provider_pickup_status(value: Any) -> str:
     raw = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
     return raw if raw in PROVIDER_PICKUP_STATUSES else "sin_solicitud"
 
+# Tipo de respuesta del proveedor (Fase B — flujo claro de posventa).
+# Cuando el proveedor responde (estado "6 - RESPONDIDO POR PROVEEDOR") puede pedir
+# una de tres cosas. Es una dimensión paralela al estado principal, igual que
+# review_status o estado_retiro_proveedor: NO reemplaza al estado, lo califica.
+#   · retiro     → el proveedor pasa a retirar el equipo (dispara logística de retiro).
+#   · revision   → hay que enviarle el equipo al proveedor para que lo revise.
+#   · correccion → el proveedor pide corregir datos/serie antes de continuar.
+PROVIDER_RESPONSE_TYPES = {
+    "retiro": "Solicitó retiro",
+    "revision": "Solicitó revisión",
+    "correccion": "Pidió corrección",
+}
+PROVIDER_RESPONSE_ALIASES = {
+    "retiro_solicitado": "retiro",
+    "solicito_retiro": "retiro",
+    "solicita_retiro": "retiro",
+    "pickup": "retiro",
+    "revision_solicitada": "revision",
+    "solicito_revision": "revision",
+    "solicita_revision": "revision",
+    "envio_a_proveedor": "revision",
+    "correccion_solicitada": "correccion",
+    "solicito_correccion": "correccion",
+    "pidio_correccion": "correccion",
+    "correction": "correccion",
+}
+
+def normalize_provider_response_type(value: Any) -> str:
+    raw = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if not raw:
+        return ""
+    if raw in PROVIDER_RESPONSE_TYPES:
+        return raw
+    return PROVIDER_RESPONSE_ALIASES.get(raw, "")
+
 DEFAULT_DELAY_RANGES = [3, 7, 14, 30]
 DEFAULT_REQUIRED_REVIEW_FIELDS = ["producto", "sku", "marca", "serie", "falla", "sucursal", "deposito"]
 CANCELLED_STATUS = "ANULADA"
@@ -322,6 +357,7 @@ class WarrantyRow(BaseModel):
     lugar_llegada: str = ""
     estado: str = ""
     observaciones: str = ""
+    correction_note: str = ""
     actualizado_por: str = ""
     fecha_ultima_actualizacion: str = ""
     cancelled: bool = False
@@ -384,6 +420,10 @@ class WarrantySummary(BaseModel):
     fecha_ultimo_reclamo: str = ""
     estado_retiro_proveedor: str = "sin_solicitud"
     estado_retiro_proveedor_label: str = "Sin solicitud"
+    # Qué pidió el proveedor cuando respondió (retiro | revision | correccion).
+    provider_response_type: str = ""
+    provider_response_type_label: str = ""
+    provider_correction_note: str = ""
     fecha_solicitud_retiro_proveedor: str = ""
     fecha_retiro_proveedor: str = ""
     dias_pendiente: int = 0
@@ -482,10 +522,25 @@ class WarrantyProviderSendRequest(BaseModel):
     note: str | None = None
 
 
+class WarrantyItemCorrection(BaseModel):
+    row_number: int            # id del ítem (guarantee_items.id) — coincide con WarrantyRow.row_number
+    note: str = ""             # qué corregir en ese ítem ("" = sin corrección para ese ítem)
+
+
 class WarrantyProviderResponseRequest(BaseModel):
     note: str | None = None
     provider_case_id: str | None = None
     estado: str | None = None
+    # Tipo de respuesta del proveedor: retiro | revision | correccion.
+    response_type: str | None = None
+    # Detalle general de qué corregir (cuando no se especifica por ítem).
+    correction_note: str | None = None
+    # Corrección por ítem/serie (cuando response_type = correccion).
+    item_corrections: list[WarrantyItemCorrection] | None = None
+
+
+class WarrantyProviderCorrectionResolveRequest(BaseModel):
+    note: str | None = None
 
 
 class WarrantyClaimRequest(BaseModel):
@@ -1633,6 +1688,10 @@ def ensure_warranty_tables(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "guarantees", "fecha_solicitud_retiro_proveedor", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "guarantees", "fecha_retiro_proveedor", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "guarantees", "nota_retiro_proveedor", "TEXT NOT NULL DEFAULT ''")
+    # Fase B — tipo de respuesta del proveedor + corrección pedida por el proveedor.
+    ensure_column(conn, "guarantees", "provider_response_type", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "guarantees", "provider_correction_note", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "guarantees", "provider_correction_resolved_at", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "guarantees", "remito_proveedor",      "TEXT NOT NULL DEFAULT ''")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_guarantees_code ON guarantees(warranty_code)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_guarantees_status ON guarantees(status)")
@@ -1669,6 +1728,8 @@ def ensure_warranty_tables(conn: sqlite3.Connection) -> None:
         """
     )
     ensure_column(conn, "guarantee_items", "item_index", "INTEGER NOT NULL DEFAULT 1")
+    # Fase B — corrección pedida por el proveedor a nivel ítem/serie (vacío = sin corrección).
+    ensure_column(conn, "guarantee_items", "correction_note", "TEXT NOT NULL DEFAULT ''")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_guarantee_items_gid ON guarantee_items(guarantee_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_guarantee_items_sku ON guarantee_items(sku)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_guarantee_items_marca ON guarantee_items(marca)")
@@ -2312,6 +2373,9 @@ def row_to_summary(row: sqlite3.Row, items: list[sqlite3.Row]) -> WarrantySummar
         fecha_ultimo_reclamo=format_datetime_ar(parse_iso_datetime(row["last_claim_at"])) if "last_claim_at" in row.keys() and row["last_claim_at"] else "",
         estado_retiro_proveedor=normalize_provider_pickup_status(row["estado_retiro_proveedor"]) if "estado_retiro_proveedor" in row.keys() else "sin_solicitud",
         estado_retiro_proveedor_label=PROVIDER_PICKUP_STATUSES.get(normalize_provider_pickup_status(row["estado_retiro_proveedor"]) if "estado_retiro_proveedor" in row.keys() else "sin_solicitud", "Sin solicitud"),
+        provider_response_type=normalize_provider_response_type(row["provider_response_type"]) if "provider_response_type" in row.keys() else "",
+        provider_response_type_label=PROVIDER_RESPONSE_TYPES.get(normalize_provider_response_type(row["provider_response_type"]) if "provider_response_type" in row.keys() else "", ""),
+        provider_correction_note=str(row["provider_correction_note"] or "") if "provider_correction_note" in row.keys() else "",
         fecha_solicitud_retiro_proveedor=format_datetime_ar(parse_iso_datetime(row["fecha_solicitud_retiro_proveedor"])) if "fecha_solicitud_retiro_proveedor" in row.keys() and row["fecha_solicitud_retiro_proveedor"] else "",
         fecha_retiro_proveedor=format_datetime_ar(parse_iso_datetime(row["fecha_retiro_proveedor"])) if "fecha_retiro_proveedor" in row.keys() and row["fecha_retiro_proveedor"] else (format_datetime_ar(parse_iso_datetime(row["fecha_retiro"])) if "fecha_retiro" in row.keys() and row["fecha_retiro"] else ""),
         dias_pendiente=compute_pending_days(row),
@@ -2365,6 +2429,7 @@ def item_to_row(warranty_row: sqlite3.Row, item: sqlite3.Row, index: int) -> War
         lugar_llegada=str(warranty_row["lugar_llegada"] or warranty_row["deposito"] or ""),
         estado=str(warranty_row["status"] or ""),
         observaciones=str(item["observaciones"] or warranty_row["observations"] or ""),
+        correction_note=str(item["correction_note"] or "") if "correction_note" in item.keys() else "",
         actualizado_por=str(warranty_row["updated_by_name"] or warranty_row["updated_by"] or ""),
         fecha_ultima_actualizacion=format_datetime_ar(parse_iso_datetime(warranty_row["updated_at"]) or now_ar()),
     )
@@ -4620,6 +4685,19 @@ def register_provider_response(warranty_id: str, data: WarrantyProviderResponseR
     note = (data.note or "").strip()
     case_id = (data.provider_case_id or "").strip()
     requested_status = (data.estado or "").strip()
+    response_type = normalize_provider_response_type(data.response_type)
+    correction_note = (data.correction_note or "").strip()
+    # Correcciones por ítem/serie: {id_item: nota} (solo notas no vacías).
+    item_corrections = {
+        int(c.row_number): c.note.strip()
+        for c in (data.item_corrections or [])
+        if c.note and c.note.strip()
+    }
+    if data.response_type and not response_type:
+        raise HTTPException(status_code=400, detail="Tipo de respuesta inválido. Usá: retiro, revisión o corrección.")
+    if response_type == "correccion" and not correction_note and not item_corrections:
+        raise HTTPException(status_code=400, detail="Indicá qué pidió corregir el proveedor (en general o por ítem).")
+    now = utc_now_iso()
     with db_connect() as conn:
         result = fetch_guarantee_with_items(conn, warranty_id)
         if not result:
@@ -4633,13 +4711,58 @@ def register_provider_response(warranty_id: str, data: WarrantyProviderResponseR
         if target_key in {"EN EL PROVEEDOR", "RESUELTO"}:
             assert_provider_has_physical_product(row)
         updates = {
-            "last_provider_response_at": utc_now_iso(),
+            "last_provider_response_at": now,
             "status": new_status,
         }
         if case_id:
             updates["provider_case_id"] = case_id
         if is_resolved_status(new_status) and not row["fecha_resolucion"]:
-            updates["fecha_resolucion"] = utc_now_iso()
+            updates["fecha_resolucion"] = now
+
+        # Tipo de respuesta del proveedor (dimensión paralela al estado).
+        pickup_status = ""
+        correction_summary = ""
+        if response_type:
+            updates["provider_response_type"] = response_type
+            if response_type == "correccion":
+                # El proveedor pide corregir datos. Queda marcado para posventa;
+                # se limpia cuando se aplica la corrección y se reenvía.
+                # Persistimos la corrección por ítem y armamos un resumen a nivel garantía.
+                items_by_id = {int(it["id"]): it for it in _items}
+                summary_parts: list[str] = []
+                for item_id, item_note in item_corrections.items():
+                    it = items_by_id.get(item_id)
+                    if it is None:
+                        continue
+                    conn.execute(
+                        "UPDATE guarantee_items SET correction_note = ?, updated_at = ? WHERE id = ? AND guarantee_id = ?",
+                        (item_note, now, item_id, int(row["id"])),
+                    )
+                    producto = str(it["producto"] or "").strip()
+                    serie = str(it["serie"] or "").strip()
+                    label = producto + (f" ({serie})" if serie else "")
+                    summary_parts.append(f"{label}: {item_note}" if label else item_note)
+                correction_summary = correction_note or "; ".join(summary_parts)
+                updates["provider_correction_note"] = correction_summary
+                updates["provider_correction_resolved_at"] = ""
+            else:
+                # retiro / revision dejan sin efecto cualquier corrección anterior.
+                updates["provider_correction_note"] = ""
+                if response_type == "retiro":
+                    # Reusa la lógica de retiro: si el equipo ya está en depósito queda
+                    # listo para retiro; si no, dispara la urgencia logística.
+                    pickup_status = "listo_para_retiro" if internal_logistics_ready_for_provider(row) else "retiro_solicitado"
+                    updates["estado_retiro_proveedor"] = pickup_status
+                    updates["fecha_solicitud_retiro_proveedor"] = now
+                    if note:
+                        updates["nota_retiro_proveedor"] = note
+
+        history_note = note or "Respuesta del proveedor registrada"
+        if response_type:
+            history_note = f"{history_note} | {PROVIDER_RESPONSE_TYPES[response_type]}"
+            if response_type == "correccion" and correction_summary:
+                history_note = f"{history_note}: {correction_summary}"
+
         update_guarantee_provider_fields(
             conn,
             row=row,
@@ -4648,11 +4771,70 @@ def register_provider_response(warranty_id: str, data: WarrantyProviderResponseR
             action="provider_response",
             old_status=old_status,
             new_status=new_status,
-            note=note or "Respuesta del proveedor registrada",
-            details={"provider_case_id": case_id, "last_provider_response_at": updates["last_provider_response_at"]},
+            note=history_note,
+            details={
+                "provider_case_id": case_id,
+                "last_provider_response_at": now,
+                "response_type": response_type,
+                "pickup_status": pickup_status,
+            },
         )
         conn.commit()
-    audit("warranties.provider.response", user=user, resource_type="warranty", resource_id=warranty_id, details={"status": new_status})
+
+    # Si el proveedor pidió retiro y el equipo NO está en depósito, avisar a logística.
+    if pickup_status == "retiro_solicitado":
+        _notify_gestor_garantias_pickup(
+            "⚠️ Retiro urgente pendiente",
+            f"El proveedor solicitó retiro de la garantía {warranty_id} pero el producto no está en depósito. Coordinar traslado urgente.",
+        )
+
+    audit("warranties.provider.response", user=user, resource_type="warranty", resource_id=warranty_id, details={"status": new_status, "response_type": response_type})
+    return get_warranty_detail(warranty_id, user)
+
+
+@router.post("/{warranty_id}/provider-correction-resolve", response_model=WarrantyDetailResponse)
+def resolve_provider_correction(warranty_id: str, data: WarrantyProviderCorrectionResolveRequest, user: Annotated[Any, Depends(require_permission("warranties.register_provider_response"))]):
+    deny_plain_deposit_operator(user, "resolver correcciones del proveedor")
+    """Cierra una corrección pedida por el proveedor.
+
+    Posventa ya corrigió los datos (vía edición de la garantía) y reenvía la
+    información al proveedor. Limpia la marca de corrección, reinicia el contador
+    de días sin respuesta y vuelve el estado a "Enviado · esperando respuesta".
+    """
+    note = (data.note or "").strip()
+    now = utc_now_iso()
+    with db_connect() as conn:
+        result = fetch_guarantee_with_items(conn, warranty_id)
+        if not result:
+            raise HTTPException(status_code=404, detail="Garantía no encontrada")
+        row, _items = result
+        current_type = normalize_provider_response_type(row["provider_response_type"]) if "provider_response_type" in row.keys() else ""
+        if current_type != "correccion":
+            raise HTTPException(status_code=400, detail="Esta garantía no tiene una corrección pendiente del proveedor.")
+        old_status = str(row["status"] or "")
+        new_status = "4 - ENVIADO AL PROVEEDOR"
+        # Limpiar las marcas de corrección por ítem.
+        conn.execute("UPDATE guarantee_items SET correction_note = '' WHERE guarantee_id = ?", (int(row["id"]),))
+        update_guarantee_provider_fields(
+            conn,
+            row=row,
+            user=user,
+            updates={
+                "provider_response_type": "",
+                "provider_correction_note": "",
+                "provider_correction_resolved_at": now,
+                "fecha_ultimo_mail_proveedor": now,
+                "last_claim_at": now,
+                "status": new_status,
+            },
+            action="provider_correction_resolved",
+            old_status=old_status,
+            new_status=new_status,
+            note=note or "Corrección aplicada y reenviada al proveedor",
+            details={"provider_correction_resolved_at": now},
+        )
+        conn.commit()
+    audit("warranties.provider.correction_resolved", user=user, resource_type="warranty", resource_id=warranty_id, details={"note": note})
     return get_warranty_detail(warranty_id, user)
 
 
@@ -4753,6 +4935,13 @@ def change_warranty_status(warranty_id: str, data: WarrantyStatusChangeRequest, 
             raise HTTPException(status_code=400, detail="No se puede avanzar proveedor sin confirmar antes el ENV/mail enviado.")
         old_status = str(row["status"] or "")
         updates: dict[str, Any] = {"status": new_status}
+        # Al avanzar/cerrar, una corrección pedida por el proveedor queda sin efecto.
+        if target_key in {"EN EL PROVEEDOR", "RESUELTO", "RECHAZADO", "ANULADA", "FINALIZADO"}:
+            current_resp_type = normalize_provider_response_type(row["provider_response_type"]) if "provider_response_type" in row.keys() else ""
+            if current_resp_type == "correccion":
+                updates["provider_response_type"] = ""
+                updates["provider_correction_note"] = ""
+                conn.execute("UPDATE guarantee_items SET correction_note = '' WHERE guarantee_id = ?", (int(row["id"]),))
         if target_key == "EN EL PROVEEDOR":
             now_pickup = utc_now_iso()
             updates["estado_retiro_proveedor"] = "retirado"

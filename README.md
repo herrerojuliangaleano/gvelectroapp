@@ -217,6 +217,22 @@ Ambos archivos se crean automáticamente al iniciar el backend por primera vez.
 
 ---
 
+## Modo local — frontend y backend sin ngrok
+
+Para desarrollar el frontend contra el backend local (sin pasar por ngrok ni Vercel):
+
+```
+1. Backend:  scripts_laptop/01_start_backend.bat   → queda en http://127.0.0.1:8000
+2. Frontend: cd frontend && npm install
+3. Frontend: cd frontend && npm run dev            → queda en http://localhost:5173
+```
+
+Abrir `http://localhost:5173`. El servidor de Vite redirige automáticamente `/api`, `/auth`, `/storage` y `/downloads` al backend en `127.0.0.1:8000` mediante proxy (configurado en `frontend/vite.config.ts`).
+
+**No hace falta crear `.env.local`** salvo que quieras apuntar a otro backend (por ejemplo ngrok). En ese caso, copiar `frontend/.env.local.example` como `frontend/.env.local` y definir `VITE_API_BASE_URL`.
+
+---
+
 ## Notas de operación
 
 - El backend usa SQLite en modo WAL, lo que permite lecturas concurrentes sin bloqueos

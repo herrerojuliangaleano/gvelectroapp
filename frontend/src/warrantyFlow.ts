@@ -151,7 +151,9 @@ export const HISTORY_EVENT_LABELS: Record<string, string> = {
   sent_to_provider:                 'Enviado al proveedor',
   provider_notified:                'Mail enviado al proveedor',
   provider_mail_resent:             'Mail reenviado al proveedor',
+  provider_response:                'Respuesta del proveedor registrada',
   provider_response_registered:     'Respuesta del proveedor registrada',
+  provider_correction_resolved:     'Corrección aplicada y reenviada',
   provider_pickup_requested:        'Retiro solicitado por proveedor',
   claim_registered:                 'Reclamo registrado',
   resolution_set:                   'Resolución definida',
@@ -197,40 +199,40 @@ export const CANONICAL_WARRANTY_STATUSES = [
 
 const STATUS_META: Record<string, { label: string; shortLabel: string; tone: FlowTone; helper: string }> = {
   '1 - INGRESO': {
-    label: 'Ingreso',
-    shortLabel: 'Ingreso',
+    label: 'Ingresado',
+    shortLabel: 'Ingresado',
     tone: 'blue',
     helper: 'Recién cargada. Debe revisarse o, si está en sucursal, viajar a Chiclana por remito interno.',
   },
   '2 - PENDIENTE': {
-    label: 'Pendiente de gestión',
+    label: 'Pendiente de ENV',
     shortLabel: 'Pendiente',
     tone: 'violet',
     helper: 'Ya fue revisada. El próximo paso es crear el ENV desde Exportación.',
   },
   '3 - LISTO PARA ENVIAR': {
-    label: 'Listo para enviar mail',
-    shortLabel: 'Listo ENV',
+    label: 'ENV listo',
+    shortLabel: 'ENV listo',
     tone: 'amber',
     helper: 'Tiene ENV/Excel generado. Falta confirmar el mail enviado al proveedor.',
   },
   '4 - ENVIADO AL PROVEEDOR': {
-    label: 'Mail enviado al proveedor',
-    shortLabel: 'Mail enviado',
+    label: 'Enviado · esperando respuesta',
+    shortLabel: 'Esperando',
     tone: 'amber',
-    helper: 'El proveedor fue notificado. Se puede reenviar mail, registrar respuesta o solicitud de retiro.',
+    helper: 'El mail salió. Esperando respuesta del proveedor: podés reenviar el mail o registrar la respuesta cuando llegue.',
   },
   '5 - EN EL PROVEEDOR': {
-    label: 'En el proveedor',
+    label: 'En el proveedor (físico)',
     shortLabel: 'En proveedor',
     tone: 'violet',
-    helper: 'El proveedor ya tiene físicamente el producto. Falta respuesta o resolución.',
+    helper: 'El proveedor ya tiene físicamente el producto (post-retiro). Falta la resolución.',
   },
   '6 - RESPONDIDO POR PROVEEDOR': {
-    label: 'Respondido por proveedor',
-    shortLabel: 'Respondido',
+    label: 'Respondió el proveedor',
+    shortLabel: 'Respondió',
     tone: 'blue',
-    helper: 'Ya hubo respuesta. Falta definir resolución, rechazo o anulación.',
+    helper: 'El proveedor respondió: puede pedir retiro, revisión o corrección. Registrá la respuesta y avanzá.',
   },
   '7 - RESUELTO': {
     label: 'Resuelto',
@@ -272,6 +274,36 @@ const RESOLUTION_LABELS: Record<string, string> = {
   rechazo: 'Rechazo',
   anulacion: 'Anulación',
 };
+
+// Tipo de respuesta del proveedor (qué pidió cuando respondió). Dimensión paralela
+// al estado, igual que review_status. Solo aplica desde "Respondió el proveedor".
+export type ProviderResponseType = 'retiro' | 'revision' | 'correccion';
+
+const PROVIDER_RESPONSE_TYPE_META: Record<string, { label: string; tone: FlowTone; helper: string }> = {
+  retiro: {
+    label: 'Solicitó retiro',
+    tone: 'amber',
+    helper: 'El proveedor pasa a retirar el equipo. Asegurate de que esté en Depósito Chiclana.',
+  },
+  revision: {
+    label: 'Solicitó revisión',
+    tone: 'blue',
+    helper: 'Hay que enviarle el equipo al proveedor para que lo revise.',
+  },
+  correccion: {
+    label: 'Pidió corrección',
+    tone: 'red',
+    helper: 'El proveedor pide corregir datos/serie. Corregí y reenviá la información.',
+  },
+};
+
+export function getProviderResponseTypeMeta(value?: string) {
+  return PROVIDER_RESPONSE_TYPE_META[value || ''] || null;
+}
+
+export function getProviderResponseTypeLabel(value?: string): string {
+  return PROVIDER_RESPONSE_TYPE_META[value || '']?.label || '';
+}
 
 export type DetailMode = 'editable' | 'operational' | 'readonly';
 
@@ -324,7 +356,7 @@ export function flowToneClass(tone: FlowTone) {
   return map[tone];
 }
 
-export function getWarrantyNextStep(item: Pick<WarrantySummary, 'estado' | 'review_status' | 'origen_ingreso' | 'ubicacion_actual' | 'transit_status' | 'shipment_code' | 'fecha_envio_proveedor' | 'estado_retiro_proveedor' | 'resultado_resolucion' | 'fecha_ultima_respuesta'>) {
+export function getWarrantyNextStep(item: Pick<WarrantySummary, 'estado' | 'review_status' | 'origen_ingreso' | 'ubicacion_actual' | 'transit_status' | 'shipment_code' | 'fecha_envio_proveedor' | 'estado_retiro_proveedor' | 'provider_response_type' | 'resultado_resolucion' | 'fecha_ultima_respuesta'>) {
   if (item.estado === '10 - FINALIZADO') return 'Caso finalizado. No requiere acciones.';
   if (item.estado === '9 - ANULADA') return 'Caso anulado. No requiere acciones operativas.';
   if (item.estado === '8 - RECHAZADO') return 'Caso rechazado. Revisar cierre administrativo si corresponde.';
@@ -346,14 +378,64 @@ export function getWarrantyNextStep(item: Pick<WarrantySummary, 'estado' | 'revi
       const ready = item.transit_status === 'en_deposito' || loc === 'DEPOSITO' || loc.startsWith('DEPOSITO ');
       return ready ? 'Listo para que el proveedor retire.' : 'Urgente: traer a Chiclana para retiro del proveedor.';
     }
-    return 'Esperar respuesta, reenviar mail o registrar solicitud de retiro.';
+    return 'Esperando respuesta del proveedor. Reenviá el mail o registrá la respuesta cuando llegue.';
   }
   if (item.estado === '5 - EN EL PROVEEDOR') {
-    return item.fecha_ultima_respuesta
-      ? 'El proveedor ya respondió. Verificar y definir resolución, rechazo o avanzar estado.'
-      : 'Cargar respuesta, rechazo o resolución del proveedor.';
+    return 'El proveedor tiene el equipo físicamente. Definí la resolución (NC, reparación o cambio).';
   }
-  if (item.estado === '6 - RESPONDIDO POR PROVEEDOR') return 'Definir resolución, rechazo o anulación.';
+  if (item.estado === '6 - RESPONDIDO POR PROVEEDOR') {
+    if (item.provider_response_type === 'correccion') return 'El proveedor pidió corrección: corregí los datos y reenviá la información.';
+    if (item.provider_response_type === 'retiro') return 'El proveedor solicitó retiro: coordiná la entrega y registrá cuando lo retire.';
+    if (item.provider_response_type === 'revision') return 'El proveedor solicitó revisión: enviale el equipo y registrá cuando lo tenga.';
+    return 'El proveedor respondió. Registrá qué pidió (retiro/revisión/corrección) o avanzá a resuelto/rechazado.';
+  }
   if (item.estado === '7 - RESUELTO') return item.resultado_resolucion ? 'Ejecutar la resolución y finalizar cuando esté cerrada.' : 'Completar tipo de resolución.';
   return getWarrantyStatusMeta(item.estado).helper;
+}
+
+// ─── Flow transitions ─────────────────────────────────────────────────────────
+// Esta tabla define las transiciones LEGALES desde cada estado vía el drawer /
+// vista de gestión. Los pasos automáticos (ingreso→pendiente vía revisión,
+// pendiente→listo_para_enviar vía exportación/ENV) no aparecen acá porque NO se
+// hacen con el botón "Cambiar estado": son resultado de otros flujos (revisión,
+// generar ENV desde Exportación, confirmar mail enviado con código).
+//
+// Si el estado actual no tiene transiciones manuales válidas, la UI debería
+// ocultar la pill "Cambiar estado" y mostrar el "Próximo paso" como pista
+// (getWarrantyNextStep).
+// Flujo real (validado con operación):
+//   4 ENVIADO (esperando) → 6 RESPONDIÓ → 5 EN EL PROVEEDOR (físico, post-retiro) → 7 RESUELTO → 10 FINALIZADO
+// Desde "esperando" o "respondió" también se puede rechazar/anular directo.
+const MANUAL_STATUS_TRANSITIONS: Record<string, string[]> = {
+  '1 - INGRESO':                   [],                                                                              // pasa a 2 vía revisión (aprobar)
+  '2 - PENDIENTE':                 [],                                                                              // pasa a 3 vía Exportación (crear ENV)
+  '3 - LISTO PARA ENVIAR':         [],                                                                              // pasa a 4 vía Confirmar envío (mail enviado)
+  '4 - ENVIADO AL PROVEEDOR':      ['6 - RESPONDIDO POR PROVEEDOR', '8 - RECHAZADO', '9 - ANULADA'],                // esperando → respondió (o rechazo/anula directo)
+  '6 - RESPONDIDO POR PROVEEDOR':  ['5 - EN EL PROVEEDOR', '7 - RESUELTO', '8 - RECHAZADO', '9 - ANULADA'],         // respondió → en el proveedor (retiro) / resuelto / rechazo / anula
+  '5 - EN EL PROVEEDOR':           ['7 - RESUELTO', '8 - RECHAZADO', '9 - ANULADA'],                                // físico en proveedor → resuelto / rechazo / anula
+  '7 - RESUELTO':                  ['10 - FINALIZADO'],
+  '8 - RECHAZADO':                 [],
+  '9 - ANULADA':                   [],
+  '10 - FINALIZADO':               [],
+};
+
+/**
+ * Devuelve los estados a los que se puede transicionar manualmente desde el
+ * estado actual mediante la acción "Cambiar estado" del drawer / panel de gestión.
+ *
+ * Excluye transiciones automáticas (revisión → pendiente, ENV → listo_para_enviar,
+ * confirmar envío → enviado_al_proveedor). Esas se hacen en sus propias pantallas.
+ */
+export function getManualStatusTransitions(estado: string | null | undefined): string[] {
+  if (!estado) return [];
+  return MANUAL_STATUS_TRANSITIONS[estado] ?? [];
+}
+
+/**
+ * Indica si el estado actual permite cambiar de estado manualmente desde el drawer.
+ * Si retorna `false`, la UI debe ocultar la pill "Cambiar estado" y mostrar el
+ * próximo paso de `getWarrantyNextStep` como guía.
+ */
+export function canManuallyChangeStatus(estado: string | null | undefined): boolean {
+  return getManualStatusTransitions(estado).length > 0;
 }

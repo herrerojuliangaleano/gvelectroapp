@@ -1,0 +1,23 @@
+# Entornos y caches de Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secretos y datos de runtime (se montan como volumen, NO se hornean en la imagen)
+.env
+.env.*
+storage/
+secrets/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Misc
+.git/
+.gitignore
+*.md

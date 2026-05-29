@@ -282,6 +282,11 @@ class DepositTransferRequest(BaseModel):
     destino_deposito: str = Field(min_length=1)
     warranty_codes: list[str] = Field(min_length=1)
     nota: str | None = None
+    # Origen explícito (opcional). Si el usuario tiene acceso a más de un depósito
+    # —ya sea por sus branches asignadas con type='deposit' o por el permiso
+    # branches.cross_select—, puede elegir desde cuál mover. Si no se manda, el
+    # backend usa la sucursal principal del usuario (comportamiento anterior).
+    origen_deposito: str | None = None
 
 
 class ProviderDeliveryRequest(BaseModel):
@@ -434,19 +439,84 @@ def _require_any(user: Any, *permissions: str) -> None:
         raise HTTPException(403, "No tenés permiso para realizar esta acción")
 
 
-def _user_deposit_name(user: Any) -> str:
+def _has_permission(user: Any, perm: str) -> bool:
+    """Chequeo de permiso compatible con la estructura de usuario actual."""
+    try:
+        from ..permissions import has_perm  # type: ignore
+        return bool(has_perm(user, perm))
+    except Exception:
+        pass
+    perms = getattr(user, "permissions", None) or []
+    if perm in perms:
+        return True
+    if "*" in perms:
+        return True
+    return False
+
+
+def _user_assigned_deposits(user: Any) -> list[str]:
+    """Lista de nombres de depósitos asignados al usuario (incluye principal + multi)."""
+    names: list[str] = []
+    branch_type = str(getattr(user, "branch_type", "") or "").lower()
+    main_name = str(getattr(user, "branch_name", "") or getattr(user, "sucursal", "") or "").strip()
+    if main_name and (branch_type == "deposit" or any(kw in main_name.lower() for kw in ("deposito", "depósito"))):
+        names.append(main_name)
+    for branch in getattr(user, "branches", None) or []:
+        btype = str(getattr(branch, "type", "") or "").lower() if hasattr(branch, "type") else str(branch.get("type", "") or "").lower()
+        bname = str(getattr(branch, "name", "") or "").strip() if hasattr(branch, "name") else str(branch.get("name", "") or "").strip()
+        is_dep = btype == "deposit" or any(kw in bname.lower() for kw in ("deposito", "depósito"))
+        if is_dep and bname and bname not in names:
+            names.append(bname)
+    return names
+
+
+def _user_deposit_name(user: Any, requested: str | None = None) -> str:
+    """Resuelve el depósito de origen para una operación de remito.
+
+    Lógica:
+      1. Si `requested` viene desde el frontend → validar que el usuario tenga acceso:
+         - el depósito está en sus branches asignadas (incluyendo principal), o
+         - el usuario tiene `branches.cross_select` o privilegios globales.
+      2. Si no se pidió origen explícito → usar la sucursal principal del usuario
+         si es un depósito (comportamiento histórico).
+    """
+    if requested is not None:
+        req = requested.strip()
+        if not req:
+            raise HTTPException(400, "El depósito de origen no puede estar vacío.")
+        assigned = _user_assigned_deposits(user)
+        can_cross = (
+            _has_permission(user, "branches.cross_select")
+            or _has_permission(user, "warranties.manage")
+            or _has_permission(user, "warranties.manage_provider")
+            or _has_permission(user, "warranties.dashboard")
+            or _has_permission(user, "warranties.export")
+            or _has_permission(user, "warranties.review")
+            or _has_permission(user, "warranties.gestor.panel")
+        )
+        # Chequeo case-insensitive contra los asignados.
+        if any(req.lower() == a.lower() for a in assigned):
+            return req
+        if can_cross:
+            return req
+        raise HTTPException(403, "No tenés acceso al depósito de origen solicitado.")
+
+    # Sin requested: comportamiento histórico (sucursal principal).
     branch_type = str(getattr(user, "branch_type", "") or "").lower()
     name = str(getattr(user, "branch_name", "") or getattr(user, "sucursal", "") or "").strip()
-    # Acepta branch_type="deposit" O branch name que claramente refiera a un depósito.
-    # Esto cubre usuarios cuyo branch fue creado antes de normalizar el campo type.
     is_deposit = branch_type == "deposit" or any(
         kw in name.lower() for kw in ("deposito", "depósito")
     )
-    if not is_deposit:
+    if is_deposit and name:
+        return name
+    # Fallback: si el usuario tiene exactamente un depósito en multi-asignación, usarlo.
+    assigned = _user_assigned_deposits(user)
+    if len(assigned) == 1:
+        return assigned[0]
+    if not assigned:
         raise HTTPException(403, "Tu usuario no está asignado a un depósito.")
-    if not name:
-        raise HTTPException(400, "Tu usuario no tiene depósito asignado.")
-    return name
+    # Tiene varios: requiere que el frontend especifique uno.
+    raise HTTPException(400, "Tu usuario tiene varios depósitos asignados. Indicá `origen_deposito` en la operación.")
 
 
 def _active_remito_codes(conn: sqlite3.Connection) -> set[str]:
@@ -599,29 +669,59 @@ def deposit_transfer_options(
 ):
     """Opciones para operadores de depósito.
 
-    Este endpoint no devuelve seguimiento completo. Solo informa origen asignado
-    y destinos posibles para movimientos internos depósito→depósito.
+    Devuelve:
+      - origen_deposito: el depósito sugerido por default (sucursal principal si es
+        depósito, o el único asignado si tiene uno solo; vacío si tiene varios).
+      - origenes_posibles: lista de depósitos a los que el usuario puede acceder
+        (sus branches asignadas con type='deposit', o todos si tiene
+        branches.cross_select / permisos privilegiados).
+      - destinos: depósitos donde puede mover, excluyendo el origen actual si hay
+        uno único.
     """
     _require_any(user, "warranties.remitos.deposit_transfer")
-    origen = _user_deposit_name(user)
     with db_connect() as conn:
         ensure_remito_tables(conn)
-        deposits = _deposit_branches(conn)
-    destinos = [d for d in deposits if d["name"].strip().lower() != origen.strip().lower()]
-    return {"origen_deposito": origen, "destinos": destinos}
+        all_deposits = _deposit_branches(conn)
+    assigned_names = [n.lower() for n in _user_assigned_deposits(user)]
+    can_cross = (
+        _has_permission(user, "branches.cross_select")
+        or _has_permission(user, "warranties.manage")
+        or _has_permission(user, "warranties.manage_provider")
+        or _has_permission(user, "warranties.dashboard")
+        or _has_permission(user, "warranties.export")
+        or _has_permission(user, "warranties.review")
+        or _has_permission(user, "warranties.gestor.panel")
+    )
+    if can_cross:
+        origenes_posibles = list(all_deposits)
+    else:
+        origenes_posibles = [d for d in all_deposits if d["name"].strip().lower() in assigned_names]
+    try:
+        origen_default = _user_deposit_name(user)
+    except HTTPException:
+        origen_default = origenes_posibles[0]["name"] if len(origenes_posibles) == 1 else ""
+    destinos = [d for d in all_deposits if d["name"].strip().lower() != origen_default.strip().lower()]
+    return {
+        "origen_deposito": origen_default,
+        "origenes_posibles": origenes_posibles,
+        "destinos": destinos,
+    }
 
 
 @router.get("/deposit-transfer/available-warranties")
 def available_warranties_for_deposit_transfer(
     user: Annotated[Any, Depends(require_current_user)],
+    origen: str = "",
 ):
     """Garantías físicamente en el depósito del usuario y libres para mover.
 
     No requiere permiso de seguimiento: está pensado para empleados de depósito
-    que solo hacen recepción y movimientos internos.
+    que solo hacen recepción y movimientos internos. Si el usuario tiene acceso a
+    múltiples depósitos, puede pasar `?origen=...` para filtrar; el helper valida
+    que tenga acceso.
     """
     _require_any(user, "warranties.remitos.deposit_transfer")
-    origen = _user_deposit_name(user)
+    origen = _user_deposit_name(user, requested=origen or None)
     with db_connect() as conn:
         ensure_remito_tables(conn)
         ensure_warranty_tables(conn)
@@ -657,11 +757,13 @@ def generate_deposit_transfer_remito(
 ):
     """Genera un remito interno depósito→depósito.
 
-    Alcance del rol DEPOSITO: mover físicamente garantías desde su depósito
-    asignado hacia otro depósito. No permite seguimiento global ni gestión proveedor.
+    Permite mover físicamente garantías desde un depósito asignado al usuario
+    (o cualquier depósito si tiene `branches.cross_select` / permisos privilegiados)
+    hacia otro depósito. Si el usuario tiene varios depósitos, debe pasar
+    `origen_deposito` en el payload.
     """
     _require_any(user, "warranties.remitos.deposit_transfer")
-    origen = _user_deposit_name(user)
+    origen = _user_deposit_name(user, requested=data.origen_deposito)
     destino = data.destino_deposito.strip()
     if not destino:
         raise HTTPException(400, "Seleccioná depósito destino.")
@@ -1154,11 +1256,17 @@ def _confirm_arrival_update(
                             note=f"Remito {remito_code} confirmado: producto entregado a {destino}",
                             details={"remito": remito_code, "proveedor": destino})
             else:
+                # Si el proveedor ya había solicitado el retiro mientras el equipo
+                # estaba en sucursal/tránsito, al llegar al depósito queda LISTO PARA
+                # RETIRO (ya se puede generar el remito de entrega al proveedor).
                 conn.execute(
                     """UPDATE guarantees
                        SET transit_status = 'en_deposito', lugar_llegada = ?,
                            deposito = ?, ubicacion_actual = ?,
                            fecha_llegada_transito = ?,
+                           estado_retiro_proveedor = CASE
+                               WHEN estado_retiro_proveedor = 'retiro_solicitado' THEN 'listo_para_retiro'
+                               ELSE estado_retiro_proveedor END,
                            updated_at = ?, updated_by = ?, updated_by_name = ?
                        WHERE warranty_code = ?""",
                     (destino, destino, destino or "deposito", now, now, actor, actor_nm, wcode),
