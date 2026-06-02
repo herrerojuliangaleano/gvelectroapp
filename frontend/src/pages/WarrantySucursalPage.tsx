@@ -19,7 +19,7 @@ import type {
   WarrantyRemitoInfo,
   WarrantySummary,
 } from '../types';
-import { computeLogisticsAlerts, getWarrantyStatusMeta } from '../warrantyFlow';
+import { computeLogisticsAlerts, getWarrantyStatusMeta, isAtDeposit } from '../warrantyFlow';
 import { isWarrantyPrivilegedUser } from '../warrantyAccess';
 import { canCrossSelectBranches } from '../branchAccess';
 import { WarrantyQuickCreateModal } from '../components/WarrantyQuickCreateModal';
@@ -201,13 +201,18 @@ export function WarrantySucursalPage() {
   // ── warranty derived state ──
   const items = useMemo(() => data?.items || [], [data]);
 
+  // Una garantía necesita despacho desde sucursal sólo si está físicamente en la sucursal:
+  // — no está finalizada/anulada
+  // — no está en tránsito a depósito ni en otro depósito (cualquier nombre, ej. "Depósito Chiclana")
+  // — no está en el proveedor ni en camino al proveedor
+  // isAtDeposit() detecta ubicaciones del tipo "DEPOSITO" o "DEPOSITO <nombre>",
+  // que es el formato que usa la app por la regla de Fase 36 y el import histórico.
   const needsDispatch = useMemo(
     () => items.filter((item) =>
       !FINAL_ESTADOS.has(item.estado || '') &&
       !item.cancelled &&
       item.transit_status !== 'en_transito' &&
-      item.transit_status !== 'en_deposito' &&
-      item.ubicacion_actual !== 'deposito' &&
+      !isAtDeposit(item) &&
       item.ubicacion_actual !== 'proveedor' &&
       item.ubicacion_actual !== 'en_transito_proveedor'
     ),

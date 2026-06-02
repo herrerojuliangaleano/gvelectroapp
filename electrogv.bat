@@ -322,6 +322,20 @@ popd
 if not "%GOOGLE_EXIT%"=="0" goto command_error
 echo.
 echo Token generado en backend\storage\private\token.json.
+rem Replicar el token a PROD local (mismo OAuth client, sirve para los dos stacks).
+rem Esto evita que las Herramientas/Scripts legacy fallen en PROD con
+rem "could not locate runnable browser" cuando intentan hacer OAuth dentro del container.
+if exist "backend\storage-prod\private" (
+  copy /Y "backend\storage\private\token.json" "backend\storage-prod\private\token.json" >nul
+  if not errorlevel 1 (
+    echo Token replicado tambien a backend\storage-prod\private\token.json ^(PROD local^).
+  ) else (
+    echo [AVISO] No pude replicar el token a storage-prod. Copialo manualmente.
+  )
+) else (
+  echo [INFO] backend\storage-prod\private no existe ^(PROD local no inicializada^).
+  echo        Cuando levantes PROD, volve a correr esta opcion para que copie el token.
+)
 echo Si la app ya estaba abierta, tocá "Actualizar estado" en OAuth Google.
 pause
 exit /b 0

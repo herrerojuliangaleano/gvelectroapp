@@ -30,7 +30,7 @@ function normUbicacion(value?: string | null): string {
   return (value || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toUpperCase();
 }
 
-function isAtDeposit(item: Pick<WarrantySummary, 'transit_status' | 'ubicacion_actual'>): boolean {
+export function isAtDeposit(item: Pick<WarrantySummary, 'transit_status' | 'ubicacion_actual'>): boolean {
   const loc = normUbicacion(item.ubicacion_actual);
   return item.transit_status === 'en_deposito' || loc === 'DEPOSITO' || loc.startsWith('DEPOSITO ');
 }
