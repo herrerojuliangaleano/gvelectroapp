@@ -16,6 +16,7 @@ Code puedan entender la aplicacion sin depender de memoria oral.
 7. [06 - Integracion ERP - Ventas](06-integracion-erp-ventas.md)
 8. [07 - Produccion local con Vercel + ngrok](07-produccion-local-vercel-ngrok.md)
 9. [08 - Android con Capacitor](08-android-capacitor.md)
+10. [09 - Import histórico de garantías desde Excel](09-import-historico-excel.md)
 
 ## Documentacion por fases
 
@@ -39,6 +40,7 @@ Code puedan entender la aplicacion sin depender de memoria oral.
 | Integracion ERP para ventas | [06-integracion-erp-ventas.md](06-integracion-erp-ventas.md) |
 | Produccion inicial Vercel + ngrok | [07-produccion-local-vercel-ngrok.md](07-produccion-local-vercel-ngrok.md) |
 | Android / Capacitor | [08-android-capacitor.md](08-android-capacitor.md) |
+| Import histórico de garantías (Excel → Postgres) | [09-import-historico-excel.md](09-import-historico-excel.md) |
 | Docker local | [fase-1-docker/README.md](fase-1-docker/README.md) |
 | Modelo de datos futuro en Postgres | [fase-2-postgres/01-modelo-datos.md](fase-2-postgres/01-modelo-datos.md) |
 | Administracion de base de datos | [fase-2-postgres/02-administracion-db.md](fase-2-postgres/02-administracion-db.md) |

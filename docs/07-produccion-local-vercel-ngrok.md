@@ -190,3 +190,167 @@ tablas para no pisar datos nuevos.
 No usar la DB de desarrollo para Vercel/ngrok produccion. Si hay que probar un
 cambio nuevo, probarlo en `repo2` o en desarrollo y recien despues empujarlo a
 `origin`.
+
+## Switch dev → prod paso a paso (procedure validado)
+
+Procedure usado para promover dev a prod local. Es el camino corto cuando no
+hace falta merge de tablas (prod arranca limpia o el operador autoriza
+sobreescribir).
+
+### 0. Pre-flight
+
+```bash
+# Verificar que no hay cambios sin commitear que vayan a perderse
+git status
+
+# Confirmar que estás en main
+git branch --show-current
+```
+
+### 1. Push del código a Vercel
+
+```bash
+git push origin main
+```
+
+Vercel detecta el push y empieza a buildear el frontend automáticamente
+(https://electrogv.vayori.net). Mirá el progreso en
+https://vercel.com/herrerojuliangaleanos-projects.
+
+### 2. Levantar prod Postgres (sin backend todavía)
+
+```bash
+docker compose --env-file backend/.env.production.local \
+  -f docker-compose.prod-local.yml up -d postgres-prod
+```
+
+Esperá a que esté healthy:
+
+```bash
+until docker exec electrogv-postgres-prod pg_isready \
+  -U electrogv_prod -d electrogv 2>/dev/null; do sleep 2; done
+```
+
+### 3. Dump dev → restore prod
+
+```bash
+# Dump completo, sin owner/acl (los users son distintos: electrogv vs electrogv_prod)
+docker exec electrogv-postgres pg_dump \
+  -U electrogv -d electrogv_dev \
+  --no-owner --no-acl --no-privileges --clean --if-exists \
+  > backend/backups-prod/dev-snapshot.sql
+
+# Restore en prod
+docker exec -i electrogv-postgres-prod psql \
+  -U electrogv_prod -d electrogv < backend/backups-prod/dev-snapshot.sql
+```
+
+### 4. Apagar dev y levantar prod completo
+
+```bash
+docker compose down
+docker compose --env-file backend/.env.production.local \
+  -f docker-compose.prod-local.yml up -d --build
+```
+
+### 5. Migrar y verificar
+
+```bash
+# Alembic upgrade
+docker exec electrogv-backend-prod alembic upgrade head
+
+# Health
+curl -s http://localhost:8010/api/health
+
+# Conteo sanity check
+docker exec electrogv-postgres-prod psql -U electrogv_prod -d electrogv -c "
+SELECT 'guarantees', COUNT(*) FROM guarantees
+UNION ALL SELECT 'products', COUNT(*) FROM products
+UNION ALL SELECT 'users', COUNT(*) FROM users;
+"
+```
+
+### 6. Ngrok prod
+
+Si ya hay un proceso ngrok corriendo apuntando al dominio prod, no hace falta
+levantarlo de nuevo. Verificar:
+
+```bash
+curl -s https://electrogv.ngrok.dev/api/health
+```
+
+Si no responde, levantarlo desde `electrogv.bat` opción 9.
+
+## Gotchas post-corte (lessons learned)
+
+Dos problemas que aparecieron en el primer corte real. Hay que tenerlos en
+mente cada vez que se cambia el origen de datos de prod.
+
+### 1. Contadores no se sincronizan con el restore
+
+`pg_dump`/`restore` copia la tabla `guarantee_counters` tal cual está, **pero
+si los datos en `guarantees` vinieron por otro camino** (import histórico,
+inserts directos a Postgres, etc.), los contadores quedan desincronizados.
+
+Resultado: al primer intento de crear una garantía nueva el sistema empieza
+desde el contador (que puede ser 0) y choca con `UNIQUE violation` contra los
+warranty_codes existentes.
+
+**Fix**: ejecutar el resync nativo después de cualquier carga masiva.
+
+```http
+POST /api/warranties/counters/resync
+```
+
+O desde la línea de comandos del backend:
+
+```bash
+docker exec electrogv-backend-prod python -c \
+  "from app.warranties_db import pg_resync_counters; print(pg_resync_counters())"
+```
+
+Verificación:
+
+```sql
+SELECT year, sucursal_code, last_number FROM guarantee_counters;
+```
+
+### 2. Token OAuth de Google no se replica automáticamente
+
+El backend prod necesita un `token.json` válido en
+`backend/storage-prod/private/` para que funcionen:
+
+- El sync de productos desde Planilla Madre.
+- La feature **Herramientas** (scripts legacy que usan Google Sheets/Drive).
+
+Si el token solo existe en `backend/storage/private/` (dev), las Herramientas
+revientan en prod con:
+
+```text
+webbrowser.Error: could not locate runnable browser
+```
+
+porque el script `eb.py`/`gpd.py` intenta hacer OAuth desde dentro del
+container Docker, que no tiene browser.
+
+**Fix automatizado**: `electrogv.bat` opción 18 (**Generar token OAuth
+Google**) ahora replica el token a `storage-prod/private/` automáticamente
+después de generarlo. Como el `credentials.local.json` es el mismo OAuth
+client en dev y prod, el mismo token vale para ambos.
+
+**Fix manual** (si el token de dev ya existe y solo hay que copiarlo):
+
+```bash
+cp backend/storage/private/token.json backend/storage-prod/private/token.json
+```
+
+### 3. Bug histórico: garantías "flotantes" en Mi Sucursal
+
+Si el último import trajo garantías con `ubicacion_actual="Depósito Chiclana"`
+pero sin `transit_status="en_deposito"`, van a aparecer como pendientes de
+despacho en la pantalla Mi Sucursal aunque ya están físicamente en el
+depósito.
+
+Ver `docs/09-import-historico-excel.md` sección "Pasos POST-IMPORT
+obligatorios → 2. Mover garantías flotantes al depósito" para el bulk UPDATE
+con audit trail.
