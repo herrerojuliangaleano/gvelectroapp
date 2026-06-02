@@ -18,6 +18,7 @@ import {
   Truck,
   Unlock,
   Wrench,
+  TrendingUp,
   XCircle,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -55,6 +56,7 @@ type ConfigTab =
   | 'precios_costos'
   | 'recibos'
   | 'herramientas'
+  | 'comercial'    // Módulo Comercial · PSI (Fase 1)
   | 'auditoria';
 
 function splitList(text: string): string[] { return text.split(',').map((x) => x.trim()).filter(Boolean); }
@@ -228,6 +230,7 @@ export function OperationalConfigPage() {
     ['precios_costos', 'Precios y costos', <Database size={16} />],
     ['recibos', 'Recibos', <Archive size={16} />],
     ['herramientas', 'Herramientas', <Wrench size={16} />],
+    ['comercial', 'Comercial', <TrendingUp size={16} />],
     ['auditoria', 'Auditoría', <ClipboardCheck size={16} />],
   ] as Array<[ConfigTab, string, ReactNode]>, []);
 
@@ -382,6 +385,136 @@ export function OperationalConfigPage() {
       <div className="mt-5 grid gap-4 lg:grid-cols-2">
         <Field label="Estado"><select disabled={readOnly} className={inputClass} value={config.tools?.enabled === false ? 'false' : 'true'} onChange={(e) => patch('tools.enabled', e.target.value === 'true')}><option value="true">Habilitadas</option><option value="false">Deshabilitadas</option></select></Field>
         <Field label="Descripción"><input disabled={readOnly} className={inputClass} value={config.tools?.workspace_description || ''} onChange={(e) => patch('tools.workspace_description', e.target.value)} /></Field>
+      </div>
+    </section>}
+
+    {tab === 'comercial' && <section className={cardClass}>
+      <SectionTitle
+        title="Comercial · PSI"
+        subtitle="Fuentes de datos para el módulo PSI (Planificación de Ventas e Inventario). Ver docs/10-modulo-comercial-fase1.md."
+      />
+      <div className="mt-5 space-y-6">
+        {/* Fuentes en Drive */}
+        <div>
+          <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-300">Fuentes en Drive</h3>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Field
+              label="Year Folder ID"
+              help="Carpeta del año vigente en Drive (contiene 01-Enero/, 02-Febrero/, …). Mismo que usa la herramienta Generar GFK."
+            >
+              <input
+                disabled={readOnly}
+                className={inputClass}
+                placeholder="1FU6G8gqqI73DjsrpbseG-0sbzX7_a2YK"
+                value={config.commercial?.year_folder_id || ''}
+                onChange={(e) => patch('commercial.year_folder_id', e.target.value)}
+              />
+            </Field>
+            <Field
+              label="Stock Book ID"
+              help="file_id del libro de Stock (Sheet con tabs Stock/Ingresos/Planilla Caseros/…). Obligatorio para que el PSI muestre stock."
+            >
+              <input
+                disabled={readOnly}
+                className={inputClass}
+                placeholder="ID del Sheet de Stock"
+                value={config.commercial?.stock_book_id || ''}
+                onChange={(e) => patch('commercial.stock_book_id', e.target.value)}
+              />
+            </Field>
+            <Field
+              label="Hoja maestra de Stock"
+              help="Tab consolidada dentro del libro de Stock. Default: 'Stock'."
+            >
+              <input
+                disabled={readOnly}
+                className={inputClass}
+                placeholder="Stock"
+                value={config.commercial?.stock_sheet_name || ''}
+                onChange={(e) => patch('commercial.stock_sheet_name', e.target.value)}
+              />
+            </Field>
+            <Field
+              label="Price Sheet ID (Productos PVP)"
+              help="Catálogo de precios. Compartido con la herramienta GFK."
+            >
+              <input
+                disabled={readOnly}
+                className={inputClass}
+                placeholder="13PUriou-rXu8VnvKN5oe-yTdfTD9WPksVQftgVE5_Js"
+                value={config.commercial?.price_sheet_id || ''}
+                onChange={(e) => patch('commercial.price_sheet_id', e.target.value)}
+              />
+            </Field>
+          </div>
+        </div>
+
+        {/* Performance */}
+        <div>
+          <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-300">Performance</h3>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Field
+              label="Cache TTL (segundos)"
+              help="Tiempo de vida del cache en memoria para stock y ventas. Default 900 (15 min)."
+            >
+              <input
+                disabled={readOnly}
+                type="number"
+                min={60}
+                max={86400}
+                className={inputClass}
+                value={config.commercial?.cache_ttl_seconds ?? 900}
+                onChange={(e) => patch('commercial.cache_ttl_seconds', Number(e.target.value || 900))}
+              />
+            </Field>
+          </div>
+        </div>
+
+        {/* Logos */}
+        <div>
+          <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-300">Logos para export PDF</h3>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Field
+              label="Logo GV (path relativo a backend/)"
+              help="Default: storage/brand/gv-electro.png"
+            >
+              <input
+                disabled={readOnly}
+                className={inputClass}
+                placeholder="storage/brand/gv-electro.png"
+                value={config.commercial?.logos?.gv_path || ''}
+                onChange={(e) => patch('commercial.logos.gv_path', e.target.value)}
+              />
+            </Field>
+            <Field
+              label="Logo ABC (path relativo a backend/)"
+              help="Default: storage/brand/abc-electro.png"
+            >
+              <input
+                disabled={readOnly}
+                className={inputClass}
+                placeholder="storage/brand/abc-electro.png"
+                value={config.commercial?.logos?.abc_path || ''}
+                onChange={(e) => patch('commercial.logos.abc_path', e.target.value)}
+              />
+            </Field>
+          </div>
+        </div>
+
+        {/* Ayuda */}
+        <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-4 text-sm text-blue-100/90">
+          <p className="font-bold">Cómo obtener un file_id de Drive</p>
+          <p className="mt-1">
+            Abrí el Sheet en Drive. La URL es:
+            <code className="ml-2 rounded bg-slate-900 px-2 py-0.5 text-xs">
+              https://docs.google.com/spreadsheets/d/<b>FILE_ID</b>/edit
+            </code>
+          </p>
+          <p className="mt-2">
+            Si el PSI tira <code>500 - Falta configurar 'commercial.stock_book_id'</code>,
+            es porque este campo está vacío.
+          </p>
+        </div>
       </div>
     </section>}
 

@@ -650,6 +650,17 @@ export interface OperationalConfigPayload {
     cutoff_day: number;
     cutoff_description: string;
   };
+  commercial?: {
+    year_folder_id?: string;
+    stock_book_id?: string;
+    stock_sheet_name?: string;
+    price_sheet_id?: string;
+    cache_ttl_seconds?: number;
+    logos?: {
+      gv_path?: string;
+      abc_path?: string;
+    };
+  };
 }
 
 export interface OperationalConfigSchemaInfo {
