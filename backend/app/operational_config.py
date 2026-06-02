@@ -151,6 +151,27 @@ def _default_config() -> dict[str, Any]:
             "cutoff_day": 11,
             "cutoff_description": "Del día 1 al 10 se revisa mes actual + mes anterior completo. Desde el día 11 solo mes actual.",
         },
+        # Módulo Comercial · Fase 1 (PSI). Ver docs/10-modulo-comercial-fase1.md §14.
+        "commercial": {
+            # folder_id del año vigente en Drive (contiene 01-Enero/, 02-Febrero/, etc.).
+            # Mismo que usa gg.py (YEAR_FOLDER_ID). Si lo dejás vacío, el PSI no encuentra
+            # los libros mensuales.
+            "year_folder_id": "1FU6G8gqqI73DjsrpbseG-0sbzX7_a2YK",
+            # file_id del libro Stock (el sheet con tabs Stock / Ingresos / etc.).
+            # Si está vacío, el PSI tira HTTPException 500 al pedir el reporte.
+            "stock_book_id": "",
+            # Nombre de la hoja maestra dentro del libro de Stock.
+            "stock_sheet_name": "Stock",
+            # ID del catálogo de precios (Productos PVP). Mismo que usa gg.py.
+            "price_sheet_id": "13PUriou-rXu8VnvKN5oe-yTdfTD9WPksVQftgVE5_Js",
+            # TTL del cache en memoria para stock y ventas (segundos).
+            "cache_ttl_seconds": 900,
+            # Logos para el export PDF. Paths relativos a backend/.
+            "logos": {
+                "gv_path": "storage/brand/gv-electro.png",
+                "abc_path": "storage/brand/abc-electro.png",
+            },
+        },
     }
 
 

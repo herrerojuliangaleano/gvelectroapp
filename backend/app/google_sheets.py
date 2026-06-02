@@ -82,5 +82,9 @@ def sheets_service():
     return build("sheets", "v4", credentials=get_google_credentials(), cache_discovery=False)
 
 
+def drive_service():
+    return build("drive", "v3", credentials=get_google_credentials(), cache_discovery=False)
+
+
 def quote_sheet_name(sheet_name: str) -> str:
     return "'" + sheet_name.replace("'", "''") + "'"

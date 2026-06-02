@@ -93,6 +93,11 @@ ALL_PERMISSIONS: dict[str, str] = {
     "settings.view": "Ver configuración técnica",
     "ops_config.view": "Ver configuración operativa",
     "ops_config.manage": "Modificar configuración operativa",
+
+    # Módulo Comercial · PSI (Planificación de Ventas e Inventario)
+    "psi.view":   "Ver módulo PSI (Planificación de Ventas e Inventario)",
+    "psi.adjust": "Crear y revertir ajustes manuales en PSI",
+    "psi.export": "Exportar reportes PSI a PDF",
     "companies.view": "Ver empresas",
     "companies.manage": "Crear y modificar empresas",
     "branches.view": "Ver sucursales operativas",
@@ -149,6 +154,27 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
             "tools.view", "jobs.view", "settings.view", "ops_config.view", "ops_config.manage", "companies.view", "companies.manage", "branches.view", "branches.manage",
             "users.view", "users.assign_roles", "employees.view", "employees.manage", "employees.photo.request", "employees.photo.approve", "employees.photo.reject", "payroll_receipts.view_all", "payroll_receipts.upload", "payroll_receipts.bulk_upload", "payroll_receipts.cancel", "payroll_receipts.respond_observation", "roles.view", "audit.view", "backups.view",
             "sales_bi.view", "sales_bi.import", "sales_bi.void", "sales_bi.view_costs", "sales_bi.view_margin",
+            "psi.view", "psi.adjust", "psi.export",
+        ],
+    },
+    "GERENTE_COMERCIAL": {
+        "label": "Gerente Comercial",
+        "level": 70,
+        "permissions": [
+            "dashboard.view", "profile.view", "about.view", "notifications.view", "push.subscribe",
+            # PSI completo
+            "psi.view", "psi.adjust", "psi.export",
+            # BI Comercial existente
+            "sales_bi.view", "sales_bi.import", "sales_bi.view_costs", "sales_bi.view_margin",
+            # Catálogo (necesita para crear productos no catalogados que aparezcan en PSI)
+            "products.view", "products.sync", "products.manage", "products.providers.manage",
+            # Herramientas legacy comerciales (Ventas/Costos, GFK, normalizadores)
+            "tools.view", "tools.run.gg", "tools.run.nvsc", "tools.run.vsc", "tools.run.ncm", "tools.run.ncmc", "tools.run.cf",
+            # Jobs (para ver salida de herramientas)
+            "jobs.view",
+            # Ops config sólo lectura (para que vea la sección Comercial)
+            "ops_config.view",
+            "companies.view", "branches.view",
         ],
     },
     "ADMINISTRADOR": {
@@ -295,6 +321,9 @@ PERMISSION_GROUPS: dict[str, list[str]] = {
     ],
     "Inteligencia comercial": [
         "sales_bi.view", "sales_bi.import", "sales_bi.void", "sales_bi.view_costs", "sales_bi.view_margin",
+    ],
+    "PSI · Planificación de Ventas e Inventario": [
+        "psi.view", "psi.adjust", "psi.export",
     ],
     "Notificaciones": ["notifications.view", "notifications.manage", "push.subscribe"],
     "Recibos de sueldo": ["payroll_receipts.view_own", "payroll_receipts.sign_own", "payroll_receipts.observe_own", "payroll_receipts.view_all", "payroll_receipts.upload", "payroll_receipts.bulk_upload", "payroll_receipts.cancel", "payroll_receipts.respond_observation"],

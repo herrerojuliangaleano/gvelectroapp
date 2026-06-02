@@ -13,6 +13,7 @@ from .routers import (
     jobs, notifications, operational_config, organization, payroll,
     price_cost_updates, products, remitos, sales_bi, sales_web, system, tools, warranties,
 )
+from .routers import psi
 
 settings = get_settings()
 
@@ -76,6 +77,7 @@ app.include_router(notifications.router)
 app.include_router(price_cost_updates.router)
 app.include_router(products.router)
 app.include_router(sales_bi.router)
+app.include_router(psi.router)
 app.include_router(organization.router)
 app.include_router(employees.router)
 app.include_router(payroll.router)
