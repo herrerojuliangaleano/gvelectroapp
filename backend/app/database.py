@@ -1,635 +1,167 @@
+"""Jobs, app_events y auditor?a sobre PostgreSQL.
+
+El esquema lo gestiona Alembic (`alembic upgrade head`) + el seed inicial. Esta
+capa expone helpers de compatibilidad para jobs y auditor?a mientras los
+routers siguen importando desde `app.database`.
+"""
 from __future__ import annotations
 
-import json
-import sqlite3
-import threading
 from datetime import datetime, timezone
 from typing import Any
 
-from .config import get_settings
-from .product_catalog import ensure_product_catalog_tables
-from .sales_bi import ensure_sales_bi_tables
+from sqlalchemy import select
 
-_lock = threading.RLock()
+from .db import db_session
+from .models.auth import User
+from .models.system import AppEvent, Job
 
 
 def utc_now_iso() -> str:
+    """Mantenido por compat. con código que aún use el string ISO."""
     return datetime.now(timezone.utc).isoformat()
 
 
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(get_settings().database_path, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
-def init_db() -> None:
-    with _lock, _connect() as conn:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS jobs (
-                id TEXT PRIMARY KEY,
-                tool_id TEXT NOT NULL,
-                tool_name TEXT NOT NULL,
-                status TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                started_at TEXT,
-                finished_at TEXT,
-                duration_seconds REAL,
-                user TEXT,
-                payload_json TEXT,
-                log_path TEXT,
-                error TEXT,
-                pid INTEGER
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS app_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_at TEXT NOT NULL,
-                event_type TEXT NOT NULL,
-                detail_json TEXT
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_app_events_created_at ON app_events(created_at)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_app_events_type ON app_events(event_type)")
+# ── Jobs ─────────────────────────────────────────────────────────────────────
 
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sales_web_requests (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                numero_solicitud TEXT UNIQUE NOT NULL,
-                numero_remito_prefactura TEXT,
-                estado TEXT NOT NULL,
-                vendedor_id TEXT NOT NULL,
-                vendedor_nombre TEXT NOT NULL,
-                sucursal TEXT,
-                canal TEXT,
-                dni TEXT NOT NULL,
-                apellido_nombre TEXT NOT NULL,
-                telefono TEXT NOT NULL,
-                correo_electronico TEXT NOT NULL,
-                domicilio TEXT NOT NULL,
-                codigo_postal TEXT NOT NULL,
-                localidad TEXT NOT NULL,
-                barrio TEXT,
-                entre_calles TEXT,
-                observaciones TEXT,
-                pago_tipo TEXT NOT NULL,
-                entrega_tipo TEXT NOT NULL,
-                costo_envio TEXT,
-                observacion_admin TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                taken_at TEXT,
-                taken_by TEXT,
-                completed_at TEXT,
-                completed_by TEXT,
-                sent_to_sales_at TEXT,
-                sent_to_sales_by TEXT,
-                cancelled_at TEXT,
-                cancelled_by TEXT,
-                cancel_reason TEXT
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_sales_web_estado ON sales_web_requests(estado)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_sales_web_vendedor ON sales_web_requests(vendedor_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_sales_web_created ON sales_web_requests(created_at)")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sales_web_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                request_id INTEGER NOT NULL,
-                sku TEXT,
-                producto TEXT NOT NULL,
-                marca TEXT,
-                tipo TEXT,
-                condicion TEXT,
-                cantidad INTEGER NOT NULL DEFAULT 1,
-                precio_unitario TEXT,
-                total_linea TEXT,
-                FOREIGN KEY(request_id) REFERENCES sales_web_requests(id) ON DELETE CASCADE
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_sales_web_items_request ON sales_web_items(request_id)")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS notifications (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL,
-                title TEXT NOT NULL,
-                message TEXT NOT NULL,
-                type TEXT NOT NULL,
-                sales_request_id INTEGER,
-                read INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                read_at TEXT
-            )
-            """
-        )
-        existing_notification_cols = {row["name"] for row in conn.execute("PRAGMA table_info(notifications)").fetchall()}
-        notification_extra_cols = {
-            "module": "TEXT NOT NULL DEFAULT 'general'",
-            "event_type": "TEXT NOT NULL DEFAULT 'general'",
-            "priority": "TEXT NOT NULL DEFAULT 'normal'",
-            "entity_type": "TEXT",
-            "entity_id": "TEXT",
-            "link_url": "TEXT",
-            "branch_id": "TEXT",
-            "branch_name": "TEXT",
-            "target_role": "TEXT",
-            "metadata": "TEXT",
-            "delivered_push_at": "TEXT",
-            "push_status": "TEXT",
-        }
-        for col_name, col_def in notification_extra_cols.items():
-            if col_name not in existing_notification_cols:
-                conn.execute(f"ALTER TABLE notifications ADD COLUMN {col_name} {col_def}")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(username, read)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user_module ON notifications(username, module, read)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user_priority ON notifications(username, priority, read)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_entity ON notifications(entity_type, entity_id)")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS push_subscriptions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL,
-                endpoint TEXT NOT NULL,
-                p256dh TEXT,
-                auth TEXT,
-                created_at TEXT NOT NULL,
-                UNIQUE(username, endpoint)
-            )
-            """
-        )
+def _resolve_user_id(session, username: str | None) -> int | None:
+    if not username:
+        return None
+    uname = str(username).strip().lower()
+    if not uname:
+        return None
+    return session.scalar(select(User.id).where(User.username == uname))
 
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS price_cost_updates (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                type TEXT NOT NULL,
-                producto TEXT NOT NULL,
-                sku TEXT NOT NULL,
-                marca TEXT,
-                valor_anterior TEXT,
-                valor_nuevo TEXT NOT NULL,
-                estado TEXT NOT NULL,
-                lookup_warning TEXT,
-                created_by TEXT NOT NULL,
-                created_by_name TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                cancelled_at TEXT,
-                cancelled_by TEXT,
-                cancel_reason TEXT
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_price_cost_updates_type ON price_cost_updates(type)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_price_cost_updates_estado ON price_cost_updates(estado)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_price_cost_updates_created ON price_cost_updates(created_at)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_price_cost_updates_sku ON price_cost_updates(sku)")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS price_cost_update_checks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                update_id INTEGER NOT NULL,
-                check_key TEXT NOT NULL,
-                label TEXT NOT NULL,
-                checked INTEGER NOT NULL DEFAULT 0,
-                checked_by TEXT,
-                checked_by_name TEXT,
-                checked_at TEXT,
-                FOREIGN KEY(update_id) REFERENCES price_cost_updates(id) ON DELETE CASCADE,
-                UNIQUE(update_id, check_key)
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_price_cost_update_checks_update ON price_cost_update_checks(update_id)")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS price_cost_update_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                update_id INTEGER NOT NULL,
-                created_at TEXT NOT NULL,
-                username TEXT NOT NULL,
-                display_name TEXT NOT NULL,
-                action TEXT NOT NULL,
-                detail_json TEXT,
-                FOREIGN KEY(update_id) REFERENCES price_cost_updates(id) ON DELETE CASCADE
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_price_cost_update_history_update ON price_cost_update_history(update_id)")
 
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS companies (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                legal_name TEXT,
-                cuit TEXT,
-                is_active INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_companies_active ON companies(is_active)")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS branches (
-                id TEXT PRIMARY KEY,
-                company_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                code TEXT NOT NULL UNIQUE,
-                type TEXT NOT NULL DEFAULT 'physical',
-                parent_branch_id TEXT,
-                is_active INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                FOREIGN KEY(company_id) REFERENCES companies(id),
-                FOREIGN KEY(parent_branch_id) REFERENCES branches(id)
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_branches_company ON branches(company_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_branches_parent ON branches(parent_branch_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_branches_type ON branches(type)")
+def _job_to_dict(j: Job, session) -> dict[str, Any]:
+    username = ""
+    if j.user_id is not None:
+        u = session.get(User, j.user_id)
+        username = u.username if u else ""
+    return {
+        "id": j.id,
+        "tool_id": j.tool_id,
+        "tool_name": j.tool_name,
+        "status": j.status,
+        "created_at": j.created_at.isoformat() if j.created_at else "",
+        "started_at": j.started_at.isoformat() if j.started_at else None,
+        "finished_at": j.finished_at.isoformat() if j.finished_at else None,
+        "duration_seconds": j.duration_seconds,
+        "user": username,
+        "payload": dict(j.payload or {}),
+        "log_path": j.log_path,
+        "error": j.error,
+        "pid": j.pid,
+    }
 
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS user_branches (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL,
-                branch_id TEXT NOT NULL,
-                is_primary INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                UNIQUE(username, branch_id),
-                FOREIGN KEY(branch_id) REFERENCES branches(id)
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_user_branches_username ON user_branches(username)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_user_branches_branch ON user_branches(branch_id)")
 
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS user_roles (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL,
-                role TEXT NOT NULL,
-                is_primary INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                UNIQUE(username, role)
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_user_roles_username ON user_roles(username)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_user_roles_role ON user_roles(role)")
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS employees (
-                id TEXT PRIMARY KEY,
-                username TEXT UNIQUE,
-                dni TEXT UNIQUE,
-                first_name TEXT NOT NULL DEFAULT '',
-                last_name TEXT NOT NULL DEFAULT '',
-                display_name TEXT NOT NULL DEFAULT '',
-                phone TEXT NOT NULL DEFAULT '',
-                personal_email TEXT NOT NULL DEFAULT '',
-                position TEXT NOT NULL DEFAULT '',
-                company_id TEXT NOT NULL DEFAULT '',
-                branch_id TEXT NOT NULL DEFAULT '',
-                photo_url TEXT NOT NULL DEFAULT '',
-                photo_status TEXT NOT NULL DEFAULT 'sin_foto',
-                status TEXT NOT NULL DEFAULT 'activo',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                FOREIGN KEY(company_id) REFERENCES companies(id),
-                FOREIGN KEY(branch_id) REFERENCES branches(id)
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_employees_username ON employees(username)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_employees_dni ON employees(dni)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_employees_company ON employees(company_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_employees_branch ON employees(branch_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status)")
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS payroll_receipts (
-                id TEXT PRIMARY KEY,
-                employee_id TEXT NOT NULL,
-                employee_username TEXT NOT NULL DEFAULT '',
-                employee_dni TEXT NOT NULL DEFAULT '',
-                employee_name TEXT NOT NULL DEFAULT '',
-                period_year INTEGER NOT NULL,
-                period_month INTEGER NOT NULL,
-                receipt_type TEXT NOT NULL DEFAULT 'mensual',
-                file_path TEXT NOT NULL,
-                file_name TEXT NOT NULL,
-                file_content_type TEXT NOT NULL DEFAULT '',
-                file_size INTEGER NOT NULL DEFAULT 0,
-                file_hash TEXT NOT NULL DEFAULT '',
-                status TEXT NOT NULL DEFAULT 'pendiente',
-                uploaded_by TEXT NOT NULL DEFAULT '',
-                uploaded_by_name TEXT NOT NULL DEFAULT '',
-                uploaded_at TEXT NOT NULL,
-                viewed_at TEXT NOT NULL DEFAULT '',
-                viewed_by TEXT NOT NULL DEFAULT '',
-                signed_at TEXT NOT NULL DEFAULT '',
-                signed_by TEXT NOT NULL DEFAULT '',
-                observed_at TEXT NOT NULL DEFAULT '',
-                cancelled_at TEXT NOT NULL DEFAULT '',
-                cancelled_by TEXT NOT NULL DEFAULT '',
-                cancel_reason TEXT NOT NULL DEFAULT '',
-                replaced_by_receipt_id TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                FOREIGN KEY(employee_id) REFERENCES employees(id)
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_payroll_employee ON payroll_receipts(employee_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_payroll_username ON payroll_receipts(employee_username)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_payroll_period ON payroll_receipts(period_year, period_month)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_payroll_status ON payroll_receipts(status)")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS payroll_receipt_observations (
-                id TEXT PRIMARY KEY,
-                receipt_id TEXT NOT NULL,
-                employee_id TEXT NOT NULL DEFAULT '',
-                employee_username TEXT NOT NULL DEFAULT '',
-                message TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'abierta',
-                created_at TEXT NOT NULL,
-                answered_by TEXT NOT NULL DEFAULT '',
-                answered_by_name TEXT NOT NULL DEFAULT '',
-                answered_at TEXT NOT NULL DEFAULT '',
-                answer_message TEXT NOT NULL DEFAULT '',
-                FOREIGN KEY(receipt_id) REFERENCES payroll_receipts(id) ON DELETE CASCADE
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_payroll_obs_receipt ON payroll_receipt_observations(receipt_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_payroll_obs_status ON payroll_receipt_observations(status)")
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS guarantees (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                warranty_code TEXT UNIQUE NOT NULL,
-                status TEXT NOT NULL DEFAULT '1 - INGRESO',
-                review_status TEXT NOT NULL DEFAULT 'pendiente_revision',
-                reviewed_by TEXT NOT NULL DEFAULT '',
-                reviewed_by_name TEXT NOT NULL DEFAULT '',
-                reviewed_at TEXT NOT NULL DEFAULT '',
-                review_note TEXT NOT NULL DEFAULT '',
-                responsible_username TEXT NOT NULL DEFAULT '',
-                responsible_name TEXT NOT NULL DEFAULT '',
-                created_by TEXT NOT NULL DEFAULT '',
-                created_by_name TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                ingreso_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                updated_by TEXT NOT NULL DEFAULT '',
-                updated_by_name TEXT NOT NULL DEFAULT '',
-                sucursal TEXT NOT NULL DEFAULT '',
-                sucursal_code TEXT NOT NULL DEFAULT '',
-                branch_id TEXT NOT NULL DEFAULT '',
-                deposito TEXT NOT NULL DEFAULT '',
-                lugar_llegada TEXT NOT NULL DEFAULT '',
-                provider_name TEXT NOT NULL DEFAULT '',
-                provider_case_id TEXT NOT NULL DEFAULT '',
-                sent_to_provider_at TEXT NOT NULL DEFAULT '',
-                last_provider_response_at TEXT NOT NULL DEFAULT '',
-                fecha_retiro TEXT NOT NULL DEFAULT '',
-                fecha_resolucion TEXT NOT NULL DEFAULT '',
-                finalizacion TEXT NOT NULL DEFAULT '',
-                vuelve_a TEXT NOT NULL DEFAULT '',
-                observations TEXT NOT NULL DEFAULT '',
-                photos_reference TEXT NOT NULL DEFAULT '',
-                cancelled INTEGER NOT NULL DEFAULT 0,
-                cancel_reason TEXT NOT NULL DEFAULT '',
-                cancelled_by TEXT NOT NULL DEFAULT '',
-                cancelled_at TEXT NOT NULL DEFAULT '',
-                synced_to_google_sheet INTEGER NOT NULL DEFAULT 0,
-                last_google_sync_at TEXT NOT NULL DEFAULT '',
-                google_sheet_row_id TEXT NOT NULL DEFAULT '',
-                google_sheet_updated_at TEXT NOT NULL DEFAULT ''
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_guarantees_code ON guarantees(warranty_code)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_guarantees_status ON guarantees(status)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_guarantees_sucursal ON guarantees(sucursal)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_guarantees_ingreso ON guarantees(ingreso_at)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_guarantees_updated ON guarantees(updated_at)")
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS guarantee_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                guarantee_id INTEGER NOT NULL,
-                producto TEXT NOT NULL DEFAULT '',
-                sku TEXT NOT NULL DEFAULT '',
-                marca TEXT NOT NULL DEFAULT '',
-                tipo TEXT NOT NULL DEFAULT '',
-                serie TEXT NOT NULL DEFAULT '',
-                falla TEXT NOT NULL DEFAULT '',
-                observaciones TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                FOREIGN KEY(guarantee_id) REFERENCES guarantees(id) ON DELETE CASCADE
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_guarantee_items_gid ON guarantee_items(guarantee_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_guarantee_items_sku ON guarantee_items(sku)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_guarantee_items_marca ON guarantee_items(marca)")
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS guarantee_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                guarantee_id INTEGER NOT NULL,
-                warranty_code TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                actor_username TEXT NOT NULL DEFAULT '',
-                actor_name TEXT NOT NULL DEFAULT '',
-                action TEXT NOT NULL,
-                old_status TEXT NOT NULL DEFAULT '',
-                new_status TEXT NOT NULL DEFAULT '',
-                field_name TEXT NOT NULL DEFAULT '',
-                old_value TEXT NOT NULL DEFAULT '',
-                new_value TEXT NOT NULL DEFAULT '',
-                note TEXT NOT NULL DEFAULT '',
-                details_json TEXT NOT NULL DEFAULT '{}',
-                FOREIGN KEY(guarantee_id) REFERENCES guarantees(id) ON DELETE CASCADE
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_guarantee_history_gid ON guarantee_history(guarantee_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_guarantee_history_code ON guarantee_history(warranty_code)")
-
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS guarantee_counters (
-                year INTEGER NOT NULL,
-                sucursal_code TEXT NOT NULL,
-                last_number INTEGER NOT NULL DEFAULT 0,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY(year, sucursal_code)
-            )
-            """
-        )
-
-        ensure_product_catalog_tables(conn)
-        ensure_sales_bi_tables(conn)
-
-        now = utc_now_iso()
-        seed_companies = [
-            ("electro_gv", "Electro GV", "Electro GV", ""),
-            ("electro_abc_srl", "Electro ABC SRL", "Electro ABC SRL", ""),
-        ]
-        for company_id, name, legal_name, cuit in seed_companies:
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO companies (id, name, legal_name, cuit, is_active, created_at, updated_at)
-                VALUES (?, ?, ?, ?, 1, ?, ?)
-                """,
-                (company_id, name, legal_name, cuit, now, now),
-            )
-
-        seed_branches = [
-            ("caseros", "electro_gv", "Caseros", "CASEROS", "physical", None),
-            ("caseros_web", "electro_gv", "Caseros - WEB", "CASEROS_WEB", "web", "caseros"),
-            ("canning", "electro_abc_srl", "Canning", "CANNING", "physical", None),
-            ("canning_web", "electro_abc_srl", "Canning - WEB", "CANNING_WEB", "web", "canning"),
-            ("norte", "electro_abc_srl", "Norte", "NORTE", "physical", None),
-            ("norte_web", "electro_abc_srl", "Norte - WEB", "NORTE_WEB", "web", "norte"),
-            ("sur", "electro_abc_srl", "Sur", "SUR", "physical", None),
-            ("sur_web", "electro_abc_srl", "Sur - WEB", "SUR_WEB", "web", "sur"),
-            # Depósitos reales. Se modelan como branches type=deposit para que
-            # usuarios, permisos, filtros y Garantías usen la misma lógica
-            # organizativa existente: usuario -> empresa -> branch asignada.
-            # Chiclana es el depósito operativo principal de garantías;
-            # Corrales y Cachi quedan disponibles como depósitos de guarda.
-            # La diferenciación fina se mantiene en configuración/fases futuras;
-            # por ahora evitamos crear una lógica paralela fuera de branches.
-            ("deposito_chiclana", "electro_gv", "Depósito Chiclana", "CHICLANA", "deposit", None),
-            ("deposito_corrales", "electro_gv", "Depósito Corrales", "CORRALES", "deposit", None),
-            ("deposito_cachi", "electro_gv", "Depósito Cachi", "CACHI", "deposit", None),
-        ]
-        for branch_id, company_id, name, code, branch_type, parent_branch_id in seed_branches:
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO branches (id, company_id, name, code, type, parent_branch_id, is_active, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
-                """,
-                (branch_id, company_id, name, code, branch_type, parent_branch_id, now, now),
-            )
-
-        conn.commit()
+def _parse_dt(value: Any) -> datetime | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        text = str(value).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(text)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
 
 
 def create_job(job: dict[str, Any]) -> None:
-    with _lock, _connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO jobs (id, tool_id, tool_name, status, created_at, user, payload_json, log_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                job["id"], job["tool_id"], job["tool_name"], job["status"], job["created_at"],
-                job.get("user"), json.dumps(job.get("payload", {}), ensure_ascii=False), job.get("log_path"),
-            ),
+    with db_session() as session:
+        new_job = Job(
+            id=str(job["id"]),
+            tool_id=str(job["tool_id"]),
+            tool_name=str(job["tool_name"]),
+            status=str(job["status"]),
+            created_at=_parse_dt(job.get("created_at")) or _utc_now(),
+            user_id=_resolve_user_id(session, job.get("user")),
+            payload=dict(job.get("payload") or {}),
+            log_path=job.get("log_path"),
         )
-        conn.commit()
+        session.add(new_job)
+        session.commit()
 
 
 def update_job(job_id: str, **fields: Any) -> None:
     if not fields:
         return
-    with _lock, _connect() as conn:
-        cols = []
-        vals = []
+    with db_session() as session:
+        j = session.get(Job, job_id)
+        if not j:
+            return
         for key, value in fields.items():
-            cols.append(f"{key} = ?")
-            vals.append(value)
-        vals.append(job_id)
-        conn.execute(f"UPDATE jobs SET {', '.join(cols)} WHERE id = ?", vals)
-        conn.commit()
+            # Mapeo: el wrapper viejo aceptaba campos varios + payload como dict.
+            if key in ("started_at", "finished_at"):
+                setattr(j, key, _parse_dt(value))
+            elif key == "payload":
+                j.payload = dict(value or {})
+            elif key == "user":
+                j.user_id = _resolve_user_id(session, value)
+            elif hasattr(j, key):
+                setattr(j, key, value)
+        session.commit()
 
 
 def get_job(job_id: str) -> dict[str, Any] | None:
-    with _lock, _connect() as conn:
-        row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
-        if row is None:
-            return None
-        return _row_to_job(row)
+    with db_session() as session:
+        j = session.get(Job, str(job_id))
+        return _job_to_dict(j, session) if j else None
 
 
 def list_jobs(limit: int = 100) -> list[dict[str, Any]]:
-    with _lock, _connect() as conn:
-        rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
-        return [_row_to_job(row) for row in rows]
+    with db_session() as session:
+        rows = session.scalars(
+            select(Job).order_by(Job.created_at.desc()).limit(max(1, int(limit or 100)))
+        ).all()
+        return [_job_to_dict(j, session) for j in rows]
 
 
-def _row_to_job(row: sqlite3.Row) -> dict[str, Any]:
-    data = dict(row)
-    try:
-        data["payload"] = json.loads(data.pop("payload_json") or "{}")
-    except Exception:
-        data["payload"] = {}
-    return data
-
+# ── Auditoría / app_events ───────────────────────────────────────────────────
 
 def append_event(event_type: str, detail: dict[str, Any]) -> None:
-    with _lock, _connect() as conn:
-        conn.execute(
-            "INSERT INTO app_events (created_at, event_type, detail_json) VALUES (?, ?, ?)",
-            (utc_now_iso(), event_type, json.dumps(detail, ensure_ascii=False)),
+    with db_session() as session:
+        actor_username = ""
+        if isinstance(detail, dict):
+            actor = detail.get("actor")
+            if isinstance(actor, dict):
+                actor_username = str(actor.get("username") or "")
+        actor_user_id = _resolve_user_id(session, actor_username) if actor_username else None
+        ev = AppEvent(
+            event_type=str(event_type or ""),
+            actor_user_id=actor_user_id,
+            detail=dict(detail or {}),
         )
-        conn.commit()
+        session.add(ev)
+        session.commit()
 
 
 def list_audit_events(limit: int = 200) -> list[dict[str, Any]]:
-    with _lock, _connect() as conn:
-        rows = conn.execute(
-            "SELECT id, created_at, event_type, detail_json FROM app_events ORDER BY id DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-    events: list[dict[str, Any]] = []
-    for row in rows:
-        detail: dict[str, Any] = {}
-        try:
-            detail = json.loads(row["detail_json"] or "{}")
-        except Exception:
-            detail = {}
-        actor = detail.get("actor") if isinstance(detail.get("actor"), dict) else {}
-        events.append({
-            "id": row["id"],
-            "created_at": row["created_at"],
-            "event_type": row["event_type"],
-            "actor_username": actor.get("username"),
-            "actor_display_name": actor.get("display_name"),
-            "actor_role": actor.get("role"),
-            "resource_type": detail.get("resource_type"),
-            "resource_id": detail.get("resource_id"),
-            "status": detail.get("status", "ok"),
-            "message": detail.get("message"),
-            "details": detail.get("details", {}),
-        })
-    return events
+    with db_session() as session:
+        rows = session.scalars(
+            select(AppEvent).order_by(AppEvent.id.desc()).limit(max(1, int(limit or 200)))
+        ).all()
+        events: list[dict[str, Any]] = []
+        for r in rows:
+            detail = dict(r.detail or {})
+            actor = detail.get("actor") if isinstance(detail.get("actor"), dict) else {}
+            events.append({
+                "id": int(r.id),
+                "created_at": r.created_at.isoformat() if r.created_at else "",
+                "event_type": r.event_type,
+                "actor_username": actor.get("username"),
+                "actor_display_name": actor.get("display_name"),
+                "actor_role": actor.get("role"),
+                "resource_type": detail.get("resource_type"),
+                "resource_id": detail.get("resource_id"),
+                "status": detail.get("status", "ok"),
+                "message": detail.get("message"),
+                "details": detail.get("details", {}),
+            })
+        return events

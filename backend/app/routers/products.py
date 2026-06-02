@@ -1,24 +1,23 @@
 from __future__ import annotations
 
-import json
-import sqlite3
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
 
 from ..auth import require_permission
+from ..db import db_session
+from ..models.auth import User
+from ..models.products import BrandProvider, Product, ProductBrand, ProductSyncLog, Provider
 from ..product_catalog import (
     clean_text,
-    db_connect,
-    ensure_product_catalog_tables,
-    get_provider_for_brand,
     normalize_text,
     row_to_product,
     runtime_product_catalog_config,
     search_products,
     sync_products_from_sheet,
-    utc_now_iso,
+    utc_now_dt,
 )
 
 router = APIRouter(prefix="/api/products", tags=["products"])
@@ -154,72 +153,83 @@ class ProductCatalogStatus(BaseModel):
     config: dict[str, Any] = {}
 
 
-def provider_row(row: sqlite3.Row) -> ProviderInfo:
+def _dt(value: Any) -> str:
+    return value.isoformat() if value else ""
+
+
+def _provider_info(provider: Provider) -> ProviderInfo:
     return ProviderInfo(
-        id=int(row["id"]),
-        name=str(row["name"] or ""),
-        contact_name=str(row["contact_name"] or ""),
-        email=str(row["email"] or ""),
-        phone=str(row["phone"] or ""),
-        notes=str(row["notes"] or ""),
-        is_active=bool(row["is_active"]),
-        created_at=str(row["created_at"] or ""),
-        updated_at=str(row["updated_at"] or ""),
+        id=int(provider.id),
+        name=str(provider.name or ""),
+        contact_name=str(provider.contact_name or ""),
+        email=str(provider.email or ""),
+        phone=str(provider.phone or ""),
+        notes=str(provider.notes or ""),
+        is_active=bool(provider.is_active),
+        created_at=_dt(provider.created_at),
+        updated_at=_dt(provider.updated_at),
     )
 
 
-def sync_log_row(row: sqlite3.Row) -> ProductSyncLogInfo:
-    try:
-        errors = json.loads(row["errors_json"] or "[]")
-        if not isinstance(errors, list):
-            errors = [str(errors)]
-    except Exception:
-        errors = []
+def _sync_log_info(log: ProductSyncLog, session) -> ProductSyncLogInfo:
+    username = ""
+    display_name = ""
+    if log.actor_user_id:
+        user = session.get(User, log.actor_user_id)
+        if user:
+            username = str(user.username or "")
+            display_name = str(user.display_name or "")
     return ProductSyncLogInfo(
-        id=int(row["id"]),
-        source=str(row["source"] or ""),
-        status=str(row["status"] or ""),
-        started_at=str(row["started_at"] or ""),
-        finished_at=str(row["finished_at"] or ""),
-        actor_username=str(row["actor_username"] or ""),
-        actor_name=str(row["actor_name"] or ""),
-        rows_processed=int(row["rows_processed"] or 0),
-        rows_created=int(row["rows_created"] or 0),
-        rows_updated=int(row["rows_updated"] or 0),
-        rows_skipped=int(row["rows_skipped"] or 0),
-        brands_created=int(row["brands_created"] or 0),
-        errors=[str(x) for x in errors],
-        spreadsheet_id=str(row["spreadsheet_id"] or ""),
-        sheet_name=str(row["sheet_name"] or ""),
-        price_changes_detected=int(row["price_changes_detected"] if "price_changes_detected" in row.keys() else 0),
-        cost_changes_detected=int(row["cost_changes_detected"] if "cost_changes_detected" in row.keys() else 0),
-        price_cost_updates_created=int(row["price_cost_updates_created"] if "price_cost_updates_created" in row.keys() else 0),
-        price_cost_updates_skipped=int(row["price_cost_updates_skipped"] if "price_cost_updates_skipped" in row.keys() else 0),
+        id=int(log.id),
+        source=str(log.source or ""),
+        status=str(log.status or ""),
+        started_at=_dt(log.started_at),
+        finished_at=_dt(log.finished_at),
+        actor_username=username,
+        actor_name=display_name,
+        rows_processed=int(log.rows_processed or 0),
+        rows_created=int(log.rows_created or 0),
+        rows_updated=int(log.rows_updated or 0),
+        rows_skipped=int(log.rows_skipped or 0),
+        brands_created=int(log.brands_created or 0),
+        errors=[str(x) for x in (log.errors or [])],
+        spreadsheet_id=str(log.spreadsheet_id or ""),
+        sheet_name=str(log.sheet_name or ""),
+        price_changes_detected=int(log.price_changes_detected or 0),
+        cost_changes_detected=int(log.cost_changes_detected or 0),
+        price_cost_updates_created=int(log.price_cost_updates_created or 0),
+        price_cost_updates_skipped=int(log.price_cost_updates_skipped or 0),
+    )
+
+
+def _product_info(product: Product) -> ProductInfo:
+    return ProductInfo(**{k: v for k, v in row_to_product(product).items() if k != "search"})
+
+
+def _brand_provider_info(link: BrandProvider) -> BrandProviderInfo:
+    return BrandProviderInfo(
+        id=int(link.id),
+        brand_id=int(link.brand_id),
+        brand_name=str(link.brand.name or "") if link.brand else "",
+        provider_id=int(link.provider_id),
+        provider_name=str(link.provider.name or "") if link.provider else "",
+        is_default=bool(link.is_default),
+        created_at=_dt(link.created_at),
+        updated_at=_dt(link.updated_at),
     )
 
 
 @router.get("/status", response_model=ProductCatalogStatus)
 def catalog_status(_user: Annotated[Any, Depends(require_permission("products.view"))]):
-    with db_connect() as conn:
-        ensure_product_catalog_tables(conn)
-        totals = conn.execute(
-            """
-            SELECT
-              (SELECT COUNT(*) FROM products) AS total_products,
-              (SELECT COUNT(*) FROM products WHERE is_active = 1) AS active_products,
-              (SELECT COUNT(*) FROM product_brands WHERE is_active = 1) AS total_brands,
-              (SELECT COUNT(*) FROM providers WHERE is_active = 1) AS total_providers,
-              (SELECT COUNT(DISTINCT brand_id) FROM brand_providers) AS mapped_brands
-            """
-        ).fetchone()
-        last = conn.execute("SELECT * FROM product_sync_logs ORDER BY id DESC LIMIT 1").fetchone()
+    with db_session() as session:
+        last = session.scalar(select(ProductSyncLog).order_by(ProductSyncLog.id.desc()).limit(1))
         return ProductCatalogStatus(
-            total_products=int(totals["total_products"] or 0),
-            active_products=int(totals["active_products"] or 0),
-            total_brands=int(totals["total_brands"] or 0),
-            total_providers=int(totals["total_providers"] or 0),
-            mapped_brands=int(totals["mapped_brands"] or 0),
-            last_sync=sync_log_row(last) if last else None,
+            total_products=int(session.scalar(select(func.count()).select_from(Product)) or 0),
+            active_products=int(session.scalar(select(func.count()).select_from(Product).where(Product.is_active.is_(True))) or 0),
+            total_brands=int(session.scalar(select(func.count()).select_from(ProductBrand).where(ProductBrand.is_active.is_(True))) or 0),
+            total_providers=int(session.scalar(select(func.count()).select_from(Provider).where(Provider.is_active.is_(True))) or 0),
+            mapped_brands=int(session.scalar(select(func.count(func.distinct(BrandProvider.brand_id)))) or 0),
+            last_sync=_sync_log_info(last, session) if last else None,
             config=runtime_product_catalog_config(),
         )
 
@@ -233,28 +243,26 @@ def list_catalog(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ):
-    where = ["is_active = 1"]
-    params: list[Any] = []
-    if q.strip():
-        tokens = normalize_text(q).split()
-        for token in tokens[:5]:
-            where.append("search_text LIKE ?")
-            params.append(f"%{token}%")
-    if marca.strip():
-        where.append("marca_normalized = ?")
-        params.append(normalize_text(marca))
-    if tipo.strip():
-        where.append("tipo = ?")
-        params.append(tipo.strip())
-    where_sql = " AND ".join(where)
-    with db_connect() as conn:
-        ensure_product_catalog_tables(conn)
-        total = conn.execute(f"SELECT COUNT(*) AS c FROM products WHERE {where_sql}", params).fetchone()["c"]
-        rows = conn.execute(
-            f"SELECT * FROM products WHERE {where_sql} ORDER BY marca, tipo, descripcion LIMIT ? OFFSET ?",
-            [*params, limit, offset],
-        ).fetchall()
-        return ProductListResponse(items=[ProductInfo(**{k: v for k, v in row_to_product(row).items() if k != "search"}) for row in rows], total=int(total or 0), limit=limit, offset=offset)
+    with db_session() as session:
+        stmt = select(Product).where(Product.is_active.is_(True))
+        count_stmt = select(func.count()).select_from(Product).where(Product.is_active.is_(True))
+        for token in normalize_text(q).split()[:5]:
+            stmt = stmt.where(Product.search_text.ilike(f"%{token}%"))
+            count_stmt = count_stmt.where(Product.search_text.ilike(f"%{token}%"))
+        if marca.strip():
+            norm = normalize_text(marca)
+            stmt = stmt.where(Product.marca_normalized == norm)
+            count_stmt = count_stmt.where(Product.marca_normalized == norm)
+        if tipo.strip():
+            stmt = stmt.where(Product.tipo == tipo.strip())
+            count_stmt = count_stmt.where(Product.tipo == tipo.strip())
+        total = int(session.scalar(count_stmt) or 0)
+        rows = session.scalars(
+            stmt.order_by(Product.marca.asc(), Product.tipo.asc(), Product.descripcion.asc())
+            .limit(limit)
+            .offset(offset)
+        ).all()
+        return ProductListResponse(items=[_product_info(row) for row in rows], total=total, limit=limit, offset=offset)
 
 
 @router.get("/search", response_model=list[ProductInfo])
@@ -269,160 +277,169 @@ def sync_from_sheet(user: Annotated[Any, Depends(require_permission("products.sy
 
 @router.get("/sync/logs", response_model=list[ProductSyncLogInfo])
 def sync_logs(_user: Annotated[Any, Depends(require_permission("products.view"))], limit: int = Query(default=20, ge=1, le=100)):
-    with db_connect() as conn:
-        ensure_product_catalog_tables(conn)
-        rows = conn.execute("SELECT * FROM product_sync_logs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-        return [sync_log_row(row) for row in rows]
+    with db_session() as session:
+        rows = session.scalars(select(ProductSyncLog).order_by(ProductSyncLog.id.desc()).limit(limit)).all()
+        return [_sync_log_info(row, session) for row in rows]
 
 
 @router.get("/brands", response_model=list[ProductBrandInfo])
 def list_brands(_user: Annotated[Any, Depends(require_permission("products.view"))]):
-    with db_connect() as conn:
-        ensure_product_catalog_tables(conn)
-        rows = conn.execute(
-            """
-            SELECT b.*, p.id AS provider_id, p.name AS provider_name
-            FROM product_brands b
-            LEFT JOIN brand_providers bp ON bp.brand_id = b.id AND bp.is_default = 1
-            LEFT JOIN providers p ON p.id = bp.provider_id
-            WHERE b.is_active = 1
-            ORDER BY b.name
-            """
-        ).fetchall()
-        return [ProductBrandInfo(id=int(r["id"]), name=r["name"], normalized_name=r["normalized_name"], is_active=bool(r["is_active"]), provider_id=r["provider_id"], provider_name=r["provider_name"], updated_at=r["updated_at"] or "") for r in rows]
+    with db_session() as session:
+        brands = session.scalars(
+            select(ProductBrand).where(ProductBrand.is_active.is_(True)).order_by(ProductBrand.name.asc())
+        ).all()
+        out: list[ProductBrandInfo] = []
+        for brand in brands:
+            link = session.scalar(
+                select(BrandProvider)
+                .where(BrandProvider.brand_id == brand.id, BrandProvider.is_default.is_(True))
+                .limit(1)
+            )
+            provider = session.get(Provider, link.provider_id) if link else None
+            out.append(ProductBrandInfo(
+                id=int(brand.id),
+                name=str(brand.name or ""),
+                normalized_name=str(brand.normalized_name or ""),
+                is_active=bool(brand.is_active),
+                provider_id=int(provider.id) if provider else None,
+                provider_name=str(provider.name or "") if provider else None,
+                updated_at=_dt(brand.updated_at),
+            ))
+        return out
 
 
 @router.get("/providers", response_model=list[ProviderInfo])
 def list_providers(_user: Annotated[Any, Depends(require_permission("products.view"))], include_inactive: bool = False):
-    with db_connect() as conn:
-        ensure_product_catalog_tables(conn)
-        query = "SELECT * FROM providers"
-        params: list[Any] = []
+    with db_session() as session:
+        stmt = select(Provider)
         if not include_inactive:
-            query += " WHERE is_active = 1"
-        query += " ORDER BY name"
-        return [provider_row(row) for row in conn.execute(query, params).fetchall()]
+            stmt = stmt.where(Provider.is_active.is_(True))
+        rows = session.scalars(stmt.order_by(Provider.name.asc())).all()
+        return [_provider_info(row) for row in rows]
 
 
 @router.post("/providers", response_model=ProviderInfo)
 def create_provider(data: ProviderPayload, _user: Annotated[Any, Depends(require_permission("products.providers.manage"))]):
-    now = utc_now_iso()
+    now = utc_now_dt()
     name = clean_text(data.name)
     norm = normalize_text(name)
     if not norm:
-        raise HTTPException(status_code=400, detail="Ingresá un proveedor válido.")
-    with db_connect() as conn:
-        ensure_product_catalog_tables(conn)
-        existing = conn.execute("SELECT * FROM providers WHERE normalized_name = ?", (norm,)).fetchone()
-        if existing:
-            conn.execute(
-                """
-                UPDATE providers SET name = ?, contact_name = ?, email = ?, phone = ?, notes = ?, is_active = ?, updated_at = ? WHERE id = ?
-                """,
-                (name, clean_text(data.contact_name), clean_text(data.email), clean_text(data.phone), clean_text(data.notes), 1 if data.is_active else 0, now, existing["id"]),
+        raise HTTPException(status_code=400, detail="Ingresa un proveedor valido.")
+    with db_session() as session:
+        provider = session.scalar(select(Provider).where(Provider.normalized_name == norm))
+        if provider:
+            provider.name = name
+            provider.contact_name = clean_text(data.contact_name)
+            provider.email = clean_text(data.email)
+            provider.phone = clean_text(data.phone)
+            provider.notes = clean_text(data.notes)
+            provider.is_active = bool(data.is_active)
+            provider.updated_at = now
+        else:
+            provider = Provider(
+                name=name,
+                normalized_name=norm,
+                contact_name=clean_text(data.contact_name),
+                email=clean_text(data.email),
+                phone=clean_text(data.phone),
+                notes=clean_text(data.notes),
+                is_active=bool(data.is_active),
+                created_at=now,
+                updated_at=now,
             )
-            conn.commit()
-            row = conn.execute("SELECT * FROM providers WHERE id = ?", (existing["id"],)).fetchone()
-            return provider_row(row)
-        cur = conn.execute(
-            """
-            INSERT INTO providers (name, normalized_name, contact_name, email, phone, notes, is_active, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (name, norm, clean_text(data.contact_name), clean_text(data.email), clean_text(data.phone), clean_text(data.notes), 1 if data.is_active else 0, now, now),
-        )
-        conn.commit()
-        row = conn.execute("SELECT * FROM providers WHERE id = ?", (cur.lastrowid,)).fetchone()
-        return provider_row(row)
+            session.add(provider)
+            session.flush()
+        session.commit()
+        return _provider_info(provider)
 
 
 @router.patch("/providers/{provider_id}", response_model=ProviderInfo)
 def update_provider(provider_id: int, data: ProviderPayload, _user: Annotated[Any, Depends(require_permission("products.providers.manage"))]):
-    now = utc_now_iso()
+    now = utc_now_dt()
     name = clean_text(data.name)
     norm = normalize_text(name)
-    with db_connect() as conn:
-        ensure_product_catalog_tables(conn)
-        row = conn.execute("SELECT * FROM providers WHERE id = ?", (provider_id,)).fetchone()
-        if not row:
+    with db_session() as session:
+        provider = session.get(Provider, provider_id)
+        if not provider:
             raise HTTPException(status_code=404, detail="Proveedor no encontrado.")
-        duplicate = conn.execute("SELECT id FROM providers WHERE normalized_name = ? AND id <> ?", (norm, provider_id)).fetchone()
+        duplicate = session.scalar(select(Provider.id).where(Provider.normalized_name == norm, Provider.id != provider_id))
         if duplicate:
             raise HTTPException(status_code=400, detail="Ya existe otro proveedor con ese nombre.")
-        conn.execute(
-            """
-            UPDATE providers SET name = ?, normalized_name = ?, contact_name = ?, email = ?, phone = ?, notes = ?, is_active = ?, updated_at = ? WHERE id = ?
-            """,
-            (name, norm, clean_text(data.contact_name), clean_text(data.email), clean_text(data.phone), clean_text(data.notes), 1 if data.is_active else 0, now, provider_id),
-        )
-        conn.commit()
-        updated = conn.execute("SELECT * FROM providers WHERE id = ?", (provider_id,)).fetchone()
-        return provider_row(updated)
+        provider.name = name
+        provider.normalized_name = norm
+        provider.contact_name = clean_text(data.contact_name)
+        provider.email = clean_text(data.email)
+        provider.phone = clean_text(data.phone)
+        provider.notes = clean_text(data.notes)
+        provider.is_active = bool(data.is_active)
+        provider.updated_at = now
+        session.commit()
+        return _provider_info(provider)
 
 
 @router.get("/brand-providers", response_model=list[BrandProviderInfo])
 def list_brand_providers(_user: Annotated[Any, Depends(require_permission("products.view"))]):
-    with db_connect() as conn:
-        ensure_product_catalog_tables(conn)
-        rows = conn.execute(
-            """
-            SELECT bp.*, b.name AS brand_name, p.name AS provider_name
-            FROM brand_providers bp
-            JOIN product_brands b ON b.id = bp.brand_id
-            JOIN providers p ON p.id = bp.provider_id
-            ORDER BY b.name, bp.is_default DESC, p.name
-            """
-        ).fetchall()
-        return [BrandProviderInfo(id=r["id"], brand_id=r["brand_id"], brand_name=r["brand_name"], provider_id=r["provider_id"], provider_name=r["provider_name"], is_default=bool(r["is_default"]), created_at=r["created_at"], updated_at=r["updated_at"]) for r in rows]
+    with db_session() as session:
+        rows = session.scalars(
+            select(BrandProvider)
+            .join(ProductBrand, ProductBrand.id == BrandProvider.brand_id)
+            .join(Provider, Provider.id == BrandProvider.provider_id)
+            .order_by(ProductBrand.name.asc(), BrandProvider.is_default.desc(), Provider.name.asc())
+        ).all()
+        return [_brand_provider_info(row) for row in rows]
 
 
 @router.post("/brand-providers", response_model=BrandProviderInfo)
 def set_brand_provider(data: BrandProviderPayload, _user: Annotated[Any, Depends(require_permission("products.providers.manage"))]):
-    now = utc_now_iso()
-    with db_connect() as conn:
-        ensure_product_catalog_tables(conn)
-        brand = conn.execute("SELECT * FROM product_brands WHERE id = ?", (data.brand_id,)).fetchone()
-        provider = conn.execute("SELECT * FROM providers WHERE id = ?", (data.provider_id,)).fetchone()
+    now = utc_now_dt()
+    with db_session() as session:
+        brand = session.get(ProductBrand, data.brand_id)
+        provider = session.get(Provider, data.provider_id)
         if not brand:
             raise HTTPException(status_code=404, detail="Marca no encontrada.")
         if not provider:
             raise HTTPException(status_code=404, detail="Proveedor no encontrado.")
         if data.is_default:
-            conn.execute("UPDATE brand_providers SET is_default = 0, updated_at = ? WHERE brand_id = ?", (now, data.brand_id))
-        existing = conn.execute("SELECT id FROM brand_providers WHERE brand_id = ? AND provider_id = ?", (data.brand_id, data.provider_id)).fetchone()
-        if existing:
-            conn.execute("UPDATE brand_providers SET is_default = ?, updated_at = ? WHERE id = ?", (1 if data.is_default else 0, now, existing["id"]))
-            bp_id = existing["id"]
-        else:
-            cur = conn.execute(
-                "INSERT INTO brand_providers (brand_id, provider_id, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                (data.brand_id, data.provider_id, 1 if data.is_default else 0, now, now),
+            links = session.scalars(select(BrandProvider).where(BrandProvider.brand_id == data.brand_id)).all()
+            for link in links:
+                link.is_default = False
+                link.updated_at = now
+        relation = session.scalar(
+            select(BrandProvider).where(
+                BrandProvider.brand_id == data.brand_id,
+                BrandProvider.provider_id == data.provider_id,
             )
-            bp_id = cur.lastrowid
-        conn.commit()
-        row = conn.execute(
-            """
-            SELECT bp.*, b.name AS brand_name, p.name AS provider_name
-            FROM brand_providers bp
-            JOIN product_brands b ON b.id = bp.brand_id
-            JOIN providers p ON p.id = bp.provider_id
-            WHERE bp.id = ?
-            """,
-            (bp_id,),
-        ).fetchone()
-        return BrandProviderInfo(id=row["id"], brand_id=row["brand_id"], brand_name=row["brand_name"], provider_id=row["provider_id"], provider_name=row["provider_name"], is_default=bool(row["is_default"]), created_at=row["created_at"], updated_at=row["updated_at"])
+        )
+        if relation:
+            relation.is_default = bool(data.is_default)
+            relation.updated_at = now
+        else:
+            relation = BrandProvider(
+                brand_id=data.brand_id,
+                provider_id=data.provider_id,
+                is_default=bool(data.is_default),
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(relation)
+            session.flush()
+        session.commit()
+        return _brand_provider_info(relation)
 
 
 @router.delete("/brand-providers/{relation_id}")
 def delete_brand_provider(relation_id: int, _user: Annotated[Any, Depends(require_permission("products.providers.manage"))]):
-    with db_connect() as conn:
-        ensure_product_catalog_tables(conn)
-        conn.execute("DELETE FROM brand_providers WHERE id = ?", (relation_id,))
-        conn.commit()
+    with db_session() as session:
+        relation = session.get(BrandProvider, relation_id)
+        if relation:
+            session.delete(relation)
+            session.commit()
     return {"ok": True}
 
 
 @router.get("/provider-by-brand")
 def provider_by_brand(_user: Annotated[Any, Depends(require_permission("products.view"))], marca: str = Query(default="")):
+    from ..product_catalog import get_provider_for_brand
+
     provider = get_provider_for_brand(marca)
     return {"found": bool(provider), "provider": provider}

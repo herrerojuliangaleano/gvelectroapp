@@ -223,6 +223,15 @@ export function WarrantyRemitosPage({
       setPdNota('');
       setPdSelected(new Set());
       await loadProviderDelivery();
+      // Abrir PDF del remito automáticamente para imprimir.
+      const newCode = res.remito_code || res.remitos?.[0]?.remito_code;
+      if (newCode) {
+        try {
+          await printRemitoPdf(newCode);
+        } catch (pdfErr) {
+          console.warn('No se pudo abrir el PDF del remito al proveedor:', pdfErr);
+        }
+      }
     } catch (e: unknown) {
       setPdError((e as Error).message || 'Error al generar el remito de entrega');
     } finally {

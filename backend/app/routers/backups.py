@@ -52,11 +52,11 @@ def create_backup(user: Annotated[CurrentUser, Depends(require_permission("backu
     settings.ensure_dirs()
     target = _backup_dir() / _backup_name()
     with zipfile.ZipFile(target, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-        # Archivos críticos de operación local.
+        # Archivos críticos de operación local. La base PostgreSQL se respalda
+        # con pg_dump/db-backup; no se incluyen SQLite ni users/roles JSON.
         private = settings.private_dir
-        for name in ["users.json", "roles.json", "operational_config.json", "counters.json"]:
+        for name in ["operational_config.json", "counters.json"]:
             _write_file_if_exists(zf, private / name, f"private/{name}")
-        _write_file_if_exists(zf, settings.database_path, "electrogv.sqlite3")
         _write_file_if_exists(zf, settings.audit_log_file, "logs/audit.jsonl")
         # Logs recientes de jobs.
         if settings.logs_dir.exists():

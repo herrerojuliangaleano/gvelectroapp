@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://electrogv.ngrok.dev/api/:path*"
+      "destination": "https://electrogvdev.ngrok.dev/api/:path*"
     },
     {
       "source": "/((?!assets/.*|icons/.*|downloads/.*|manifest.webmanifest|sw.js|favicon.ico|robots.txt|version.json).*)",

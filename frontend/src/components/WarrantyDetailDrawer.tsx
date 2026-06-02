@@ -9,6 +9,7 @@ import {
   cancelWarranty,
   changeWarrantyStatus,
   confirmWarrantyShipment,
+  downloadRemitoPdf,
   fetchAvailableWarrantiesForProviderDelivery,
   fetchWarrantyDetail,
   generateProviderDeliveryRemito,
@@ -104,6 +105,7 @@ export function WarrantyDetailDrawer({
   const [responseCaseId, setResponseCaseId] = useState('');
   const [responseNote, setResponseNote] = useState('');
   const [responseStatus, setResponseStatus] = useState('6 - RESPONDIDO POR PROVEEDOR');
+  const [responsePickupDate, setResponsePickupDate] = useState('');
   // Tipo de respuesta del proveedor (retiro / revisión / corrección) + detalle.
   const [responseType, setResponseType] = useState('');
   // Correcciones pedidas por el proveedor, por ítem (keyed por row_number).
@@ -135,6 +137,7 @@ export function WarrantyDetailDrawer({
     setResponseCaseId(detail?.summary.id_de_caso || '');
     setResponseNote('');
     setResponseStatus('6 - RESPONDIDO POR PROVEEDOR');
+    setResponsePickupDate('');
     setResponseType('');
     setItemCorrections({});
     setCorrectionResolveNote('');
@@ -281,6 +284,7 @@ export function WarrantyDetailDrawer({
           return;
         }
         await registerWarrantyProviderResponse(warrantyId, {
+          fecha_retiro_acordada: responseType === 'retiro' && responsePickupDate ? responsePickupDate : undefined,
           provider_case_id: responseCaseId.trim() || undefined,
           note: responseNote.trim() || undefined,
           estado: responseStatus || '6 - RESPONDIDO POR PROVEEDOR',
@@ -296,12 +300,24 @@ export function WarrantyDetailDrawer({
       } else if (action === 'provider_remito') {
         if (!providerRemitoName.trim()) { setActionError('Indicá el nombre del proveedor.'); setWorking(false); return; }
         const codes = providerRemitoSelected.size > 0 ? Array.from(providerRemitoSelected) : [warrantyId];
-        await generateProviderDeliveryRemito({
+        const res = await generateProviderDeliveryRemito({
           warranty_codes: codes,
           proveedor: providerRemitoName.trim(),
           nota: providerRemitoNote.trim() || undefined,
         });
         setActionMessage(codes.length > 1 ? `Remito de entrega generado con ${codes.length} garantías.` : 'Remito de entrega al proveedor generado.');
+        // Abre el PDF del remito en nueva ventana para imprimir directo.
+        const newCode = res.remito_code || res.remitos?.[0]?.remito_code;
+        if (newCode) {
+          try {
+            const blob = await downloadRemitoPdf(newCode);
+            const url = URL.createObjectURL(blob);
+            window.open(url, '_blank');
+            setTimeout(() => URL.revokeObjectURL(url), 60_000);
+          } catch (pdfErr) {
+            console.warn('No se pudo abrir el PDF del remito al proveedor:', pdfErr);
+          }
+        }
       } else if (action === 'resend') {
         await resendWarrantyProviderMail(warrantyId, {
           note: resendNote.trim() || undefined,
@@ -573,6 +589,15 @@ export function WarrantyDetailDrawer({
                       <ErpNotice tone={responseType === 'correccion' ? 'warning' : 'info'}>
                         {PROVIDER_RESPONSE_TYPES.find((t) => t.value === responseType)?.hint}
                       </ErpNotice>
+                    )}
+                    {responseType === 'retiro' && (
+                      <ErpField label="Fecha acordada de retiro (opcional)" hint="Cuándo dijo el proveedor que pasa a buscar el equipo. Si no la sabés todavía, podés dejarla vacía y completarla después.">
+                        <ErpInput
+                          type="date"
+                          value={responsePickupDate}
+                          onChange={(e) => setResponsePickupDate(e.target.value)}
+                        />
+                      </ErpField>
                     )}
                     {responseType === 'correccion' && (
                       <div className="erp-stack-2">

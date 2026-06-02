@@ -11,7 +11,13 @@ import {
 } from '../api/client';
 import type { GoogleAdminStatus } from '../types';
 
-export function GoogleAdminPage() {
+/**
+ * @deprecated Fase A consolidación: se embebe como tab "OAuth Google" dentro
+ * de OperationalConfigPage. La ruta /admin/google ahora redirige a
+ * /admin/operational-config?tab=oauth. Esta página queda exportada solo para
+ * ese embedding. A revisar para borrar tras la auditoría de Fase C.
+ */
+export function GoogleAdminPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [status, setStatus] = useState<GoogleAdminStatus | null>(null);
   const [credentialsText, setCredentialsText] = useState('');
   const [tokenText, setTokenText] = useState('');
@@ -99,7 +105,7 @@ export function GoogleAdminPage() {
     try {
       const res = await startGoogleLocalReconnect();
       setStatus((prev) => prev ? { ...prev, reconnect: res.reconnect } : prev);
-      setMessage('Reconexión iniciada. Revisá la laptop: debería abrirse el navegador para autorizar Google.');
+      setMessage('Reconexión iniciada. Si el backend corre en Docker y no se abre el navegador, usá electrogv.bat opción 18 para generar token.json.');
     } catch (err) { setError(err instanceof Error ? err.message : 'No se pudo iniciar la reconexión'); }
     finally { setLoading(false); }
   }
@@ -110,11 +116,13 @@ export function GoogleAdminPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-black sm:text-3xl">Google OAuth</h1>
-        <p className="mt-2 text-sm text-slate-400">Panel SUPERADMIN para administrar credenciales y token de Google en modo laptop.</p>
-      </div>
+    <div className={embedded ? 'space-y-6' : 'mx-auto max-w-6xl space-y-6'}>
+      {!embedded && (
+        <div>
+          <h1 className="text-2xl font-black sm:text-3xl">Google OAuth</h1>
+          <p className="mt-2 text-sm text-slate-400">Panel SUPERADMIN para administrar credenciales y token de Google en modo laptop.</p>
+        </div>
+      )}
 
       {error && <AlertBox type="error" text={error} />}
       {message && <AlertBox type="success" text={message} />}
@@ -157,8 +165,8 @@ export function GoogleAdminPage() {
 
       <Panel title="Reconectar Google desde la laptop" subtitle="Usá esto si el token queda inválido, se revocó el permiso o Google vuelve a pedir autorización.">
         <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-sm text-slate-300">
-          <p><b>Importante:</b> este botón debe usarse con el backend corriendo en la laptop. El navegador de autorización se abre en esa laptop, no en una PC remota.</p>
-          <p className="mt-2">Sirve bien para tu esquema: prendés laptop, entrás como SUPERADMIN, reconectás Google si hace falta y después habilitás la operación.</p>
+          <p><b>Importante:</b> si el backend corre en Docker, el navegador no siempre puede abrirse desde este botón. En Windows usá `electrogv.bat` opción 18 para generar `token.json` desde la laptop.</p>
+          <p className="mt-2">Después volvé a esta pantalla y tocá Actualizar estado.</p>
         </div>
         <div className="mt-4 grid gap-3 lg:grid-cols-3">
           <button disabled={loading || status?.reconnect.running || !status?.credentials.exists} onClick={doReconnect} className="inline-flex items-center justify-center gap-2 rounded-xl bg-green-500 px-4 py-3 font-black text-white hover:bg-green-400 disabled:opacity-50">

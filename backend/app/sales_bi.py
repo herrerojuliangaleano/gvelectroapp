@@ -1,19 +1,24 @@
 from __future__ import annotations
 
 import io
-import json
 import re
-import sqlite3
 import unicodedata
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import openpyxl
+from sqlalchemy import case, func, or_, select
+from sqlalchemy.orm import Session, selectinload
 
-from .config import get_settings
+from .db import db_session
 from .google_sheets import sheets_service
+from .models.auth import User
+from .models.org import Branch
+from .models.products import Product
+from .models.sales_bi import SalesBalance, SalesImport, SalesRecord
 from .operational_config import extract_spreadsheet_id
 
 
@@ -77,6 +82,66 @@ def _parse_date(v: Any) -> str:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def utc_now_dt() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_date_value(value: Any) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def _fmt_date(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value)
+
+
+def _fmt_dt(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
+def _decimal(value: Any) -> Decimal:
+    try:
+        if value is None or value == "":
+            return Decimal("0")
+        return Decimal(str(value))
+    except Exception:
+        return Decimal("0")
+
+
+def _num(value: Any) -> float:
+    if value is None:
+        return 0.0
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 # ── column aliases ────────────────────────────────────────────────────────────
@@ -205,7 +270,7 @@ def _normalize_sku(sku: str) -> str:
     return re.sub(r"[\s.\-/]", "", s).upper()
 
 
-def enrich_from_catalog(conn: sqlite3.Connection, records: list[dict]) -> list[dict]:
+def enrich_from_catalog(records: list[dict]) -> list[dict]:
     """
     Look up each record's SKU in the products catalog.
     Fills in marca, tipo_producto, costo (if missing or zero), then
@@ -222,13 +287,15 @@ def enrich_from_catalog(conn: sqlite3.Connection, records: list[dict]) -> list[d
     if not sku_map:
         return records
 
-    placeholders = ",".join("?" * len(sku_map))
-    rows = conn.execute(
-        f"SELECT sku_normalized, marca, tipo, costo_vigente FROM products WHERE sku_normalized IN ({placeholders})",
-        list(sku_map.keys()),
-    ).fetchall()
+    with db_session() as session:
+        rows = session.scalars(
+            select(Product).where(
+                Product.sku_normalized.in_(list(sku_map.keys())),
+                Product.is_active.is_(True),
+            )
+        ).all()
 
-    catalog: dict[str, dict] = {r["sku_normalized"]: dict(r) for r in rows}
+    catalog: dict[str, Product] = {str(row.sku_normalized): row for row in rows}
 
     for rec in records:
         raw_sku = rec.get("sku", "").strip()
@@ -240,16 +307,16 @@ def enrich_from_catalog(conn: sqlite3.Connection, records: list[dict]) -> list[d
             continue
 
         # Fill marca if missing
-        if not rec.get("marca") and prod.get("marca"):
-            rec["marca"] = prod["marca"]
+        if not rec.get("marca") and prod.marca:
+            rec["marca"] = prod.marca
 
         # Fill tipo_producto if missing
-        if not rec.get("tipo_producto") and prod.get("tipo"):
-            rec["tipo_producto"] = prod["tipo"]
+        if not rec.get("tipo_producto") and prod.tipo:
+            rec["tipo_producto"] = prod.tipo
 
         # Fill costo if missing or zero
-        if not rec.get("costo") and prod.get("costo_vigente"):
-            rec["costo"] = float(prod["costo_vigente"])
+        if not rec.get("costo") and prod.costo_vigente:
+            rec["costo"] = float(prod.costo_vigente)
 
         # Always recompute categoria/linea from the (now enriched) tipo
         rec["categoria"], rec["linea"] = _classify(rec.get("tipo_producto", ""))
@@ -266,139 +333,6 @@ def enrich_from_catalog(conn: sqlite3.Connection, records: list[dict]) -> list[d
 
 
 # ── DB ───────────────────────────────────────────────────────────────────────
-
-
-def db_connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(get_settings().database_path, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def ensure_sales_bi_tables(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS sales_imports (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fecha TEXT NOT NULL,
-            sucursal TEXT NOT NULL,
-            tipo TEXT NOT NULL,
-            fuente TEXT NOT NULL,
-            fuente_url TEXT NOT NULL DEFAULT '',
-            fuente_nombre TEXT NOT NULL DEFAULT '',
-            status TEXT NOT NULL DEFAULT 'activo',
-            total_records INTEGER NOT NULL DEFAULT 0,
-            total_pvp REAL NOT NULL DEFAULT 0,
-            total_costo REAL NOT NULL DEFAULT 0,
-            total_efectivo REAL NOT NULL DEFAULT 0,
-            total_transferencia REAL NOT NULL DEFAULT 0,
-            total_tarjeta REAL NOT NULL DEFAULT 0,
-            total_usd REAL NOT NULL DEFAULT 0,
-            total_cuenta_corriente REAL NOT NULL DEFAULT 0,
-            total_otros REAL NOT NULL DEFAULT 0,
-            cotizacion_dolar REAL,
-            imported_by TEXT NOT NULL DEFAULT '',
-            imported_by_name TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            voided_at TEXT NOT NULL DEFAULT '',
-            voided_by TEXT NOT NULL DEFAULT '',
-            void_reason TEXT NOT NULL DEFAULT '',
-            warnings_json TEXT NOT NULL DEFAULT '[]',
-            branch_id TEXT
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_sales_imports_fecha ON sales_imports(fecha)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_sales_imports_sucursal ON sales_imports(sucursal)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_sales_imports_status ON sales_imports(status)")
-
-    # Migrations for existing installs
-    for _col, _def in [
-        ("total_usd", "REAL NOT NULL DEFAULT 0"),
-        ("branch_id", "TEXT"),
-    ]:
-        try:
-            conn.execute(f"ALTER TABLE sales_imports ADD COLUMN {_col} {_def}")
-        except Exception:
-            pass
-
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS sales_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            import_id INTEGER NOT NULL,
-            nro_linea INTEGER NOT NULL,
-            remito TEXT NOT NULL DEFAULT '',
-            vendedor TEXT NOT NULL DEFAULT '',
-            producto TEXT NOT NULL DEFAULT '',
-            sku TEXT NOT NULL DEFAULT '',
-            marca TEXT NOT NULL DEFAULT '',
-            tipo_producto TEXT NOT NULL DEFAULT '',
-            condicion TEXT NOT NULL DEFAULT '',
-            categoria TEXT NOT NULL DEFAULT '',
-            linea TEXT NOT NULL DEFAULT '',
-            cantidad INTEGER NOT NULL DEFAULT 1,
-            pvp REAL NOT NULL DEFAULT 0,
-            costo REAL NOT NULL DEFAULT 0,
-            diferencia REAL NOT NULL DEFAULT 0,
-            margen_porcentaje REAL NOT NULL DEFAULT 0,
-            efectivo REAL NOT NULL DEFAULT 0,
-            transferencia REAL NOT NULL DEFAULT 0,
-            tarjeta REAL NOT NULL DEFAULT 0,
-            usd REAL NOT NULL DEFAULT 0,
-            cuenta_corriente REAL NOT NULL DEFAULT 0,
-            otros REAL NOT NULL DEFAULT 0,
-            total_cobrado REAL NOT NULL DEFAULT 0,
-            saldo REAL NOT NULL DEFAULT 0,
-            FOREIGN KEY(import_id) REFERENCES sales_imports(id) ON DELETE CASCADE
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_sales_records_import ON sales_records(import_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_sales_records_sku ON sales_records(sku)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_sales_records_vendedor ON sales_records(vendedor)")
-
-    # Migrate: add columns if missing on existing installs
-    for _col, _def in [
-        ("usd", "REAL NOT NULL DEFAULT 0"),
-        ("saldo", "REAL NOT NULL DEFAULT 0"),
-    ]:
-        try:
-            conn.execute(f"ALTER TABLE sales_records ADD COLUMN {_col} {_def}")
-        except Exception:
-            pass
-
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS sales_balances (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            import_id INTEGER NOT NULL,
-            remito TEXT NOT NULL DEFAULT '',
-            efectivo REAL NOT NULL DEFAULT 0,
-            transferencia REAL NOT NULL DEFAULT 0,
-            tarjeta REAL NOT NULL DEFAULT 0,
-            usd REAL NOT NULL DEFAULT 0,
-            otros REAL NOT NULL DEFAULT 0,
-            total REAL NOT NULL DEFAULT 0,
-            FOREIGN KEY(import_id) REFERENCES sales_imports(id) ON DELETE CASCADE
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_sales_balances_import ON sales_balances(import_id)")
-
-    # Migrate: add columns if missing (existing installs had concepto/monto schema)
-    for col, definition in [
-        ("remito", "TEXT NOT NULL DEFAULT ''"),
-        ("efectivo", "REAL NOT NULL DEFAULT 0"),
-        ("transferencia", "REAL NOT NULL DEFAULT 0"),
-        ("tarjeta", "REAL NOT NULL DEFAULT 0"),
-        ("usd", "REAL NOT NULL DEFAULT 0"),
-        ("otros", "REAL NOT NULL DEFAULT 0"),
-        ("total", "REAL NOT NULL DEFAULT 0"),
-    ]:
-        try:
-            conn.execute(f"ALTER TABLE sales_balances ADD COLUMN {col} {definition}")
-        except Exception:
-            pass
 
 
 # ── temp file storage ─────────────────────────────────────────────────────────
@@ -931,8 +865,7 @@ def _parse_sheet(name: str, rows: list[list], sucursal_override: str = "") -> di
 
     # Enrich with product catalog data (marca, tipo, costo, categoria, linea)
     try:
-        with db_connect() as conn:
-            records = enrich_from_catalog(conn, records)
+        records = enrich_from_catalog(records)
     except Exception:
         pass  # catalog enrichment is best-effort
 
@@ -990,45 +923,181 @@ def analyze_sheets(sheets: dict[str, list[list]], sucursal_override: str = "") -
 # ── DB operations ─────────────────────────────────────────────────────────────
 
 
-def find_branch(conn: sqlite3.Connection, sucursal: str, tipo: str) -> dict | None:
-    """
-    Match a sucursal name/code to an existing branch.
-    For 'online' tipo prefers web branches; for 'local' prefers physical.
-    Matches by code (uppercase, spaces→underscores) or by name (case-insensitive).
-    """
-    code_guess = sucursal.upper().strip().replace(" ", "_")
+def _branch_to_dict(branch: Branch | None) -> dict | None:
+    if not branch:
+        return None
+    return {
+        "id": str(branch.id),
+        "name": str(branch.name or ""),
+        "code": str(branch.code or ""),
+        "type": str(branch.type or ""),
+    }
 
+
+def _find_branch_in_session(session: Session, sucursal: str, tipo: str) -> dict | None:
+    code_guess = str(sucursal or "").upper().strip().replace(" ", "_")
+    if not code_guess:
+        return None
     if tipo == "online":
-        # Try _WEB suffix first, then exact match as fallback
         candidates = [code_guess + "_WEB", code_guess]
         preferred_type = "web"
     else:
-        # For physical, prefer exact match; _WEB would be wrong
         candidates = [code_guess]
         preferred_type = "physical"
 
     for code in candidates:
-        row = conn.execute(
-            "SELECT id, name, code, type FROM branches WHERE code=? AND is_active=1",
-            (code,),
-        ).fetchone()
-        if row:
-            return dict(row)
+        branch = session.scalar(
+            select(Branch).where(Branch.code == code, Branch.is_active.is_(True)).limit(1)
+        )
+        if branch:
+            return _branch_to_dict(branch)
 
-    # Fallback: name contains the sucursal string
-    row = conn.execute(
-        "SELECT id, name, code, type FROM branches WHERE UPPER(name) LIKE ? AND is_active=1 ORDER BY (type=?) DESC LIMIT 1",
-        (f"%{sucursal.upper()}%", preferred_type),
-    ).fetchone()
-    return dict(row) if row else None
+    branch = session.scalar(
+        select(Branch)
+        .where(
+            func.upper(Branch.name).like(f"%{str(sucursal or '').upper()}%"),
+            Branch.is_active.is_(True),
+        )
+        .order_by(case((Branch.type == preferred_type, 1), else_=0).desc())
+        .limit(1)
+    )
+    return _branch_to_dict(branch)
 
 
-def get_active_import(conn: sqlite3.Connection, fecha: str, sucursal: str, tipo: str) -> dict | None:
-    row = conn.execute(
-        "SELECT * FROM sales_imports WHERE fecha=? AND sucursal=? AND tipo=? AND status='activo'",
-        (fecha, sucursal, tipo),
-    ).fetchone()
-    return dict(row) if row else None
+def find_branch(sucursal: str, tipo: str) -> dict | None:
+    with db_session() as session:
+        return _find_branch_in_session(session, sucursal, tipo)
+
+
+def _user_id_from_username(session: Session, username: str) -> int | None:
+    uname = str(username or "").strip().lower()
+    if not uname:
+        return None
+    return session.scalar(select(User.id).where(User.username == uname))
+
+
+def _user_identity(session: Session, user_id: int | None) -> tuple[str, str]:
+    if user_id is None:
+        return "", ""
+    user = session.get(User, user_id)
+    if not user:
+        return "", ""
+    return str(user.username or ""), str(user.display_name or "")
+
+
+def _record_to_dict(record: SalesRecord, imp: SalesImport | None = None) -> dict:
+    data = {
+        "id": int(record.id),
+        "import_id": int(record.import_id),
+        "nro_linea": int(record.nro_linea or 0),
+        "remito": str(record.remito or ""),
+        "vendedor": str(record.vendedor or ""),
+        "producto": str(record.producto or ""),
+        "sku": str(record.sku or ""),
+        "marca": str(record.marca or ""),
+        "tipo_producto": str(record.tipo_producto or ""),
+        "condicion": str(record.condicion or ""),
+        "categoria": str(record.categoria or ""),
+        "linea": str(record.linea or ""),
+        "cantidad": int(record.cantidad or 0),
+        "pvp": _num(record.pvp),
+        "costo": _num(record.costo),
+        "diferencia": _num(record.diferencia),
+        "margen_porcentaje": _num(record.margen_porcentaje),
+        "efectivo": _num(record.efectivo),
+        "transferencia": _num(record.transferencia),
+        "tarjeta": _num(record.tarjeta),
+        "usd": _num(record.usd),
+        "cuenta_corriente": _num(record.cuenta_corriente),
+        "otros": _num(record.otros),
+        "total_cobrado": _num(record.total_cobrado),
+        "saldo": _num(record.saldo),
+    }
+    if imp is not None:
+        data.update({
+            "fecha": _fmt_date(imp.fecha),
+            "sucursal": str(imp.sucursal or ""),
+            "tipo": str(imp.tipo or ""),
+        })
+    return data
+
+
+def _balance_to_dict(balance: SalesBalance, imp: SalesImport | None = None) -> dict:
+    data = {
+        "id": int(balance.id),
+        "import_id": int(balance.import_id),
+        "remito": str(balance.remito or ""),
+        "efectivo": _num(balance.efectivo),
+        "transferencia": _num(balance.transferencia),
+        "tarjeta": _num(balance.tarjeta),
+        "usd": _num(balance.usd),
+        "otros": _num(balance.otros),
+        "total": _num(balance.total),
+    }
+    if imp is not None:
+        data.update({
+            "fecha": _fmt_date(imp.fecha),
+            "sucursal": str(imp.sucursal or ""),
+        })
+    return data
+
+
+def _import_to_dict(imp: SalesImport, session: Session, *, include_children: bool = False) -> dict:
+    imported_by, imported_by_name = _user_identity(session, imp.imported_by_user_id)
+    voided_by, _voided_by_name = _user_identity(session, imp.voided_by_user_id)
+    branch = session.get(Branch, imp.branch_id) if imp.branch_id else None
+    data = {
+        "id": int(imp.id),
+        "fecha": _fmt_date(imp.fecha),
+        "sucursal": str(imp.sucursal or ""),
+        "tipo": str(imp.tipo or ""),
+        "branch_id": str(imp.branch_id) if imp.branch_id else None,
+        "branch_name": str(branch.name or "") if branch else None,
+        "branch_type": str(branch.type or "") if branch else None,
+        "fuente": str(imp.fuente or ""),
+        "fuente_url": str(imp.fuente_url or ""),
+        "fuente_nombre": str(imp.fuente_nombre or ""),
+        "status": str(imp.status or "activo"),
+        "total_records": int(imp.total_records or 0),
+        "total_pvp": _num(imp.total_pvp),
+        "total_costo": _num(imp.total_costo),
+        "total_efectivo": _num(imp.total_efectivo),
+        "total_transferencia": _num(imp.total_transferencia),
+        "total_tarjeta": _num(imp.total_tarjeta),
+        "total_usd": _num(imp.total_usd),
+        "total_cuenta_corriente": _num(imp.total_cuenta_corriente),
+        "total_otros": _num(imp.total_otros),
+        "cotizacion_dolar": None if imp.cotizacion_dolar is None else _num(imp.cotizacion_dolar),
+        "imported_by": imported_by,
+        "imported_by_name": imported_by_name,
+        "created_at": _fmt_dt(imp.created_at),
+        "voided_at": _fmt_dt(imp.voided_at),
+        "voided_by": voided_by,
+        "void_reason": str(imp.void_reason or ""),
+        "warnings": list(imp.warnings or []),
+    }
+    if include_children:
+        records = sorted(list(imp.records or []), key=lambda r: int(r.nro_linea or 0))
+        balances = sorted(list(imp.balances or []), key=lambda b: int(b.id or 0))
+        data["records"] = [_record_to_dict(record) for record in records]
+        data["balances"] = [_balance_to_dict(balance) for balance in balances]
+    return data
+
+
+def get_active_import(fecha: str, sucursal: str, tipo: str) -> dict | None:
+    fecha_value = _parse_date_value(fecha)
+    if not fecha_value:
+        return None
+    with db_session() as session:
+        imp = session.scalar(
+            select(SalesImport).where(
+                SalesImport.fecha == fecha_value,
+                SalesImport.sucursal == str(sucursal or ""),
+                SalesImport.tipo == str(tipo or ""),
+                SalesImport.status == "activo",
+            )
+        )
+        return _import_to_dict(imp, session) if imp else None
 
 
 def save_import(
@@ -1040,108 +1109,118 @@ def save_import(
     display_name: str,
     branch_id: str | None = None,
 ) -> int:
-    now = utc_now()
+    now = utc_now_dt()
     totals = _sheet_totals(sheet["records"])
 
-    with db_connect() as conn:
-        # Auto-match branch if not provided
-        if not branch_id:
-            matched = find_branch(conn, sheet["sucursal"], sheet["tipo"])
-            branch_id = matched["id"] if matched else None
+    with db_session() as session:
+        fecha = _parse_date_value(sheet.get("fecha"))
+        if fecha is None:
+            raise ValueError("La importacion no tiene fecha valida.")
 
-        cur = conn.execute(
-            """
-            INSERT INTO sales_imports
-                (fecha, sucursal, tipo, fuente, fuente_url, fuente_nombre, status,
-                 total_records, total_pvp, total_costo,
-                 total_efectivo, total_transferencia, total_tarjeta, total_usd,
-                 total_cuenta_corriente, total_otros, cotizacion_dolar,
-                 imported_by, imported_by_name, created_at, warnings_json, branch_id)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                sheet["fecha"], sheet["sucursal"], sheet["tipo"],
-                fuente, fuente_url, fuente_nombre, "activo",
-                totals["total_records"], totals["total_pvp"], totals["total_costo"],
-                totals["total_efectivo"], totals["total_transferencia"], totals["total_tarjeta"],
-                totals["total_usd"], totals["total_cuenta_corriente"], totals["total_otros"],
-                sheet.get("cotizacion_dolar"),
-                username, display_name, now,
-                json.dumps(sheet.get("warnings", []), ensure_ascii=False),
-                branch_id,
-            ),
+        if not branch_id:
+            matched = _find_branch_in_session(session, sheet["sucursal"], sheet["tipo"])
+            branch_id = matched["id"] if matched else None
+        elif not session.get(Branch, branch_id):
+            branch_id = None
+
+        imp = SalesImport(
+            fecha=fecha,
+            sucursal=str(sheet["sucursal"]),
+            tipo=str(sheet["tipo"]),
+            fuente=fuente,
+            fuente_url=fuente_url,
+            fuente_nombre=fuente_nombre,
+            status="activo",
+            total_records=int(totals["total_records"]),
+            total_pvp=_decimal(totals["total_pvp"]),
+            total_costo=_decimal(totals["total_costo"]),
+            total_efectivo=_decimal(totals["total_efectivo"]),
+            total_transferencia=_decimal(totals["total_transferencia"]),
+            total_tarjeta=_decimal(totals["total_tarjeta"]),
+            total_usd=_decimal(totals["total_usd"]),
+            total_cuenta_corriente=_decimal(totals["total_cuenta_corriente"]),
+            total_otros=_decimal(totals["total_otros"]),
+            cotizacion_dolar=None if sheet.get("cotizacion_dolar") is None else _decimal(sheet.get("cotizacion_dolar")),
+            imported_by_user_id=_user_id_from_username(session, username),
+            created_at=now,
+            warnings=list(sheet.get("warnings", [])),
+            branch_id=branch_id,
         )
-        import_id = cur.lastrowid
+        session.add(imp)
+        session.flush()
 
         for i, rec in enumerate(sheet["records"], start=1):
-            conn.execute(
-                """
-                INSERT INTO sales_records
-                    (import_id, nro_linea, remito, vendedor, producto, sku, marca,
-                     tipo_producto, condicion, categoria, linea, cantidad,
-                     pvp, costo, diferencia, margen_porcentaje,
-                     efectivo, transferencia, tarjeta, usd, cuenta_corriente, otros, total_cobrado, saldo)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """,
-                (
-                    import_id, i, rec["remito"], rec["vendedor"], rec["producto"],
-                    rec["sku"], rec["marca"], rec["tipo_producto"], rec["condicion"],
-                    rec["categoria"], rec["linea"], rec["cantidad"],
-                    rec["pvp"], rec["costo"], rec["diferencia"], rec["margen_porcentaje"],
-                    rec["efectivo"], rec["transferencia"], rec["tarjeta"], rec["usd"],
-                    rec["cuenta_corriente"], rec["otros"], rec["total_cobrado"],
-                    rec.get("saldo", 0.0),
-                ),
+            session.add(
+                SalesRecord(
+                    import_=imp,
+                    nro_linea=i,
+                    remito=str(rec.get("remito") or ""),
+                    vendedor=str(rec.get("vendedor") or ""),
+                    producto=str(rec.get("producto") or ""),
+                    sku=str(rec.get("sku") or ""),
+                    marca=str(rec.get("marca") or ""),
+                    tipo_producto=str(rec.get("tipo_producto") or ""),
+                    condicion=str(rec.get("condicion") or ""),
+                    categoria=str(rec.get("categoria") or ""),
+                    linea=str(rec.get("linea") or ""),
+                    cantidad=int(rec.get("cantidad") or 1),
+                    pvp=_decimal(rec.get("pvp")),
+                    costo=_decimal(rec.get("costo")),
+                    diferencia=_decimal(rec.get("diferencia")),
+                    margen_porcentaje=_decimal(rec.get("margen_porcentaje")),
+                    efectivo=_decimal(rec.get("efectivo")),
+                    transferencia=_decimal(rec.get("transferencia")),
+                    tarjeta=_decimal(rec.get("tarjeta")),
+                    usd=_decimal(rec.get("usd")),
+                    cuenta_corriente=_decimal(rec.get("cuenta_corriente")),
+                    otros=_decimal(rec.get("otros")),
+                    total_cobrado=_decimal(rec.get("total_cobrado")),
+                    saldo=_decimal(rec.get("saldo", 0.0)),
+                )
             )
 
         for bal in sheet.get("balances", []):
-            conn.execute(
-                """
-                INSERT INTO sales_balances
-                    (import_id, remito, efectivo, transferencia, tarjeta, usd, otros, total)
-                VALUES (?,?,?,?,?,?,?,?)
-                """,
-                (
-                    import_id, bal["remito"], bal["efectivo"], bal["transferencia"],
-                    bal["tarjeta"], bal["usd"], bal["otros"], bal["total"],
-                ),
+            session.add(
+                SalesBalance(
+                    import_=imp,
+                    remito=str(bal.get("remito") or ""),
+                    efectivo=_decimal(bal.get("efectivo")),
+                    transferencia=_decimal(bal.get("transferencia")),
+                    tarjeta=_decimal(bal.get("tarjeta")),
+                    usd=_decimal(bal.get("usd")),
+                    otros=_decimal(bal.get("otros")),
+                    total=_decimal(bal.get("total")),
+                )
             )
 
-        conn.commit()
+        import_id = int(imp.id)
+        session.commit()
     return import_id
 
 
 def void_import(import_id: int, username: str, reason: str) -> None:
-    now = utc_now()
-    with db_connect() as conn:
-        conn.execute(
-            "UPDATE sales_imports SET status='anulado', voided_at=?, voided_by=?, void_reason=? WHERE id=?",
-            (now, username, reason, import_id),
-        )
-        conn.commit()
+    now = utc_now_dt()
+    with db_session() as session:
+        imp = session.get(SalesImport, import_id)
+        if not imp:
+            return
+        imp.status = "anulado"
+        imp.voided_at = now
+        imp.voided_by_user_id = _user_id_from_username(session, username)
+        imp.void_reason = str(reason or "")
+        session.commit()
 
 
 def get_import_detail(import_id: int) -> dict | None:
-    with db_connect() as conn:
-        row = conn.execute("SELECT * FROM sales_imports WHERE id=?", (import_id,)).fetchone()
-        if not row:
+    with db_session() as session:
+        imp = session.scalar(
+            select(SalesImport)
+            .options(selectinload(SalesImport.records), selectinload(SalesImport.balances))
+            .where(SalesImport.id == import_id)
+        )
+        if not imp:
             return None
-        imp = dict(row)
-        try:
-            imp["warnings"] = json.loads(imp.pop("warnings_json", "[]") or "[]")
-        except Exception:
-            imp["warnings"] = []
-        imp["records"] = [
-            dict(r) for r in conn.execute(
-                "SELECT * FROM sales_records WHERE import_id=? ORDER BY nro_linea", (import_id,)
-            ).fetchall()
-        ]
-        imp["balances"] = [
-            dict(b) for b in conn.execute(
-                "SELECT * FROM sales_balances WHERE import_id=?", (import_id,)
-            ).fetchall()
-        ]
-    return imp
+        return _import_to_dict(imp, session, include_children=True)
 
 
 def list_imports(
@@ -1153,34 +1232,31 @@ def list_imports(
     limit: int = 100,
     offset: int = 0,
 ) -> tuple[list[dict], int]:
-    where: list[str] = []
-    params: list[Any] = []
+    filters: list[Any] = []
     if fecha_desde:
-        where.append("fecha >= ?"); params.append(fecha_desde)
+        value = _parse_date_value(fecha_desde)
+        if value:
+            filters.append(SalesImport.fecha >= value)
     if fecha_hasta:
-        where.append("fecha <= ?"); params.append(fecha_hasta)
+        value = _parse_date_value(fecha_hasta)
+        if value:
+            filters.append(SalesImport.fecha <= value)
     if sucursal:
-        where.append("sucursal = ?"); params.append(sucursal)
+        filters.append(SalesImport.sucursal == sucursal)
     if tipo:
-        where.append("tipo = ?"); params.append(tipo)
+        filters.append(SalesImport.tipo == tipo)
     if status:
-        where.append("status = ?"); params.append(status)
-    clause = ("WHERE " + " AND ".join(where)) if where else ""
-    with db_connect() as conn:
-        total = conn.execute(f"SELECT COUNT(*) FROM sales_imports {clause}", params).fetchone()[0]
-        rows = conn.execute(
-            f"SELECT * FROM sales_imports {clause} ORDER BY fecha DESC, id DESC LIMIT ? OFFSET ?",
-            params + [limit, offset],
-        ).fetchall()
-    result = []
-    for row in rows:
-        d = dict(row)
-        try:
-            d["warnings"] = json.loads(d.pop("warnings_json", "[]") or "[]")
-        except Exception:
-            d["warnings"] = []
-        result.append(d)
-    return result, total
+        filters.append(SalesImport.status == status)
+    with db_session() as session:
+        total = int(session.scalar(select(func.count()).select_from(SalesImport).where(*filters)) or 0)
+        rows = session.scalars(
+            select(SalesImport)
+            .where(*filters)
+            .order_by(SalesImport.fecha.desc(), SalesImport.id.desc())
+            .limit(limit)
+            .offset(offset)
+        ).all()
+        return [_import_to_dict(row, session) for row in rows], total
 
 
 def list_records(
@@ -1196,37 +1272,52 @@ def list_records(
     limit: int = 200,
     offset: int = 0,
 ) -> tuple[list[dict], int]:
-    join = "JOIN sales_imports i ON i.id = r.import_id"
-    where: list[str] = ["i.status = 'activo'"]
-    params: list[Any] = []
+    filters: list[Any] = [SalesImport.status == "activo"]
     if import_id is not None:
-        where.append("r.import_id = ?"); params.append(import_id)
+        filters.append(SalesRecord.import_id == import_id)
     if fecha_desde:
-        where.append("i.fecha >= ?"); params.append(fecha_desde)
+        value = _parse_date_value(fecha_desde)
+        if value:
+            filters.append(SalesImport.fecha >= value)
     if fecha_hasta:
-        where.append("i.fecha <= ?"); params.append(fecha_hasta)
+        value = _parse_date_value(fecha_hasta)
+        if value:
+            filters.append(SalesImport.fecha <= value)
     if sucursal:
-        where.append("i.sucursal = ?"); params.append(sucursal)
+        filters.append(SalesImport.sucursal == sucursal)
     if tipo:
-        where.append("i.tipo = ?"); params.append(tipo)
+        filters.append(SalesImport.tipo == tipo)
     if vendedor:
-        where.append("r.vendedor LIKE ?"); params.append(f"%{vendedor}%")
+        filters.append(SalesRecord.vendedor.ilike(f"%{vendedor}%"))
     if categoria:
-        where.append("r.categoria = ?"); params.append(categoria)
+        filters.append(SalesRecord.categoria == categoria)
     if condicion:
-        where.append("r.condicion = ?"); params.append(condicion)
+        filters.append(SalesRecord.condicion == condicion)
     if q:
-        where.append("(r.producto LIKE ? OR r.sku LIKE ? OR r.marca LIKE ? OR r.remito LIKE ?)")
-        params += [f"%{q}%", f"%{q}%", f"%{q}%", f"%{q}%"]
-    clause = "WHERE " + " AND ".join(where)
-    base = f"FROM sales_records r {join} {clause}"
-    with db_connect() as conn:
-        total = conn.execute(f"SELECT COUNT(*) {base}", params).fetchone()[0]
-        rows = conn.execute(
-            f"SELECT r.*, i.fecha, i.sucursal, i.tipo {base} ORDER BY i.fecha DESC, r.id DESC LIMIT ? OFFSET ?",
-            params + [limit, offset],
-        ).fetchall()
-    return [dict(r) for r in rows], total
+        text = f"%{q}%"
+        filters.append(or_(
+            SalesRecord.producto.ilike(text),
+            SalesRecord.sku.ilike(text),
+            SalesRecord.marca.ilike(text),
+            SalesRecord.remito.ilike(text),
+        ))
+
+    with db_session() as session:
+        total = int(session.scalar(
+            select(func.count())
+            .select_from(SalesRecord)
+            .join(SalesImport, SalesImport.id == SalesRecord.import_id)
+            .where(*filters)
+        ) or 0)
+        rows = session.execute(
+            select(SalesRecord, SalesImport)
+            .join(SalesImport, SalesImport.id == SalesRecord.import_id)
+            .where(*filters)
+            .order_by(SalesImport.fecha.desc(), SalesRecord.id.desc())
+            .limit(limit)
+            .offset(offset)
+        ).all()
+        return [_record_to_dict(record, imp) for record, imp in rows], total
 
 
 def list_balances(
@@ -1237,43 +1328,68 @@ def list_balances(
     limit: int = 200,
     offset: int = 0,
 ) -> tuple[list[dict], int]:
-    join = "JOIN sales_imports i ON i.id = b.import_id"
-    where: list[str] = ["i.status = 'activo'"]
-    params: list[Any] = []
+    filters: list[Any] = [SalesImport.status == "activo"]
     if import_id is not None:
-        where.append("b.import_id = ?"); params.append(import_id)
+        filters.append(SalesBalance.import_id == import_id)
     if fecha_desde:
-        where.append("i.fecha >= ?"); params.append(fecha_desde)
+        value = _parse_date_value(fecha_desde)
+        if value:
+            filters.append(SalesImport.fecha >= value)
     if fecha_hasta:
-        where.append("i.fecha <= ?"); params.append(fecha_hasta)
+        value = _parse_date_value(fecha_hasta)
+        if value:
+            filters.append(SalesImport.fecha <= value)
     if sucursal:
-        where.append("i.sucursal = ?"); params.append(sucursal)
-    clause = "WHERE " + " AND ".join(where)
-    base = f"FROM sales_balances b {join} {clause}"
-    with db_connect() as conn:
-        total = conn.execute(f"SELECT COUNT(*) {base}", params).fetchone()[0]
-        rows = conn.execute(
-            f"SELECT b.*, i.fecha, i.sucursal {base} ORDER BY i.fecha DESC, b.id DESC LIMIT ? OFFSET ?",
-            params + [limit, offset],
-        ).fetchall()
-    return [dict(r) for r in rows], total
+        filters.append(SalesImport.sucursal == sucursal)
+
+    with db_session() as session:
+        total = int(session.scalar(
+            select(func.count())
+            .select_from(SalesBalance)
+            .join(SalesImport, SalesImport.id == SalesBalance.import_id)
+            .where(*filters)
+        ) or 0)
+        rows = session.execute(
+            select(SalesBalance, SalesImport)
+            .join(SalesImport, SalesImport.id == SalesBalance.import_id)
+            .where(*filters)
+            .order_by(SalesImport.fecha.desc(), SalesBalance.id.desc())
+            .limit(limit)
+            .offset(offset)
+        ).all()
+        return [_balance_to_dict(balance, imp) for balance, imp in rows], total
 
 
 def get_stats() -> dict:
-    with db_connect() as conn:
-        total_imports = conn.execute("SELECT COUNT(*) FROM sales_imports WHERE status='activo'").fetchone()[0]
-        total_records = conn.execute(
-            "SELECT COUNT(*) FROM sales_records r JOIN sales_imports i ON i.id=r.import_id WHERE i.status='activo'"
-        ).fetchone()[0]
-        sum_pvp = conn.execute(
-            "SELECT COALESCE(SUM(r.pvp*r.cantidad),0) FROM sales_records r JOIN sales_imports i ON i.id=r.import_id WHERE i.status='activo'"
-        ).fetchone()[0]
-        last_import = conn.execute(
-            "SELECT fecha, sucursal, created_at FROM sales_imports WHERE status='activo' ORDER BY id DESC LIMIT 1"
-        ).fetchone()
+    with db_session() as session:
+        total_imports = int(session.scalar(
+            select(func.count()).select_from(SalesImport).where(SalesImport.status == "activo")
+        ) or 0)
+        total_records = int(session.scalar(
+            select(func.count())
+            .select_from(SalesRecord)
+            .join(SalesImport, SalesImport.id == SalesRecord.import_id)
+            .where(SalesImport.status == "activo")
+        ) or 0)
+        sum_pvp = _num(session.scalar(
+            select(func.coalesce(func.sum(SalesRecord.pvp * SalesRecord.cantidad), 0))
+            .select_from(SalesRecord)
+            .join(SalesImport, SalesImport.id == SalesRecord.import_id)
+            .where(SalesImport.status == "activo")
+        ))
+        last_import = session.scalar(
+            select(SalesImport)
+            .where(SalesImport.status == "activo")
+            .order_by(SalesImport.id.desc())
+            .limit(1)
+        )
     return {
         "total_imports": total_imports,
         "total_records": total_records,
         "total_pvp": sum_pvp,
-        "last_import": dict(last_import) if last_import else None,
+        "last_import": {
+            "fecha": _fmt_date(last_import.fecha),
+            "sucursal": str(last_import.sucursal or ""),
+            "created_at": _fmt_dt(last_import.created_at),
+        } if last_import else None,
     }

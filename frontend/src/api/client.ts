@@ -503,7 +503,11 @@ export async function fetchWarrantySyncStatus(): Promise<WarrantySyncStatus> { r
 export async function fetchWarrantySyncLogs(limit = 30): Promise<WarrantySyncLogsResponse> { return request(`/api/warranties/sync/logs?limit=${encodeURIComponent(String(limit))}`); }
 export async function setupWarrantySheet(): Promise<SetupSheetResult> { return request('/api/warranties/sync/setup-sheet', { method: 'POST' }); }
 export async function pushWarrantiesToSheet(): Promise<WarrantySyncResult> { return request('/api/warranties/sync/push-to-sheet', { method: 'POST' }); }
-export async function pullWarrantiesFromSheet(): Promise<WarrantySyncResult> { return request('/api/warranties/sync/pull-from-sheet', { method: 'POST' }); }
+export async function importWarrantiesFromExcel(file: File): Promise<import('../types').WarrantyImportResult> {
+  const form = new FormData();
+  form.append('file', file);
+  return request('/api/warranties/import/historical-upload', { method: 'POST', body: form });
+}
 export async function fetchWarrantyProductionResetPreview(): Promise<WarrantyResetPreviewResponse> { return request('/api/warranties/production-reset/preview'); }
 export async function downloadWarrantyProductionResetBackup(): Promise<Blob> { return requestBlob('/api/warranties/production-reset/backup', { method: 'POST' }); }
 export async function executeWarrantyProductionReset(payload: { confirmation: string; reset_generated_files?: boolean }): Promise<WarrantyResetResponse> {
@@ -569,11 +573,11 @@ export async function deleteRemito(remitoCode: string): Promise<{ ok: boolean; d
 export async function fetchAvailableWarrantiesForProviderDelivery(): Promise<{ items: import('../types').ProviderDeliveryWarranty[]; total: number }> {
   return request('/api/warranties/remitos/provider-delivery/available-warranties');
 }
-export async function generateProviderDeliveryRemito(payload: import('../types').ProviderDeliveryPayload): Promise<{ ok: boolean; remitos: import('../types').WarrantyRemitoInfo[]; count: number }> {
-  const res = await request<{ ok: boolean; created: import('../types').WarrantyRemitoInfo[] }>(
+export async function generateProviderDeliveryRemito(payload: import('../types').ProviderDeliveryPayload): Promise<{ ok: boolean; remitos: import('../types').WarrantyRemitoInfo[]; count: number; remito_code?: string; pdf_url?: string }> {
+  const res = await request<{ ok: boolean; created: import('../types').WarrantyRemitoInfo[]; remito_code?: string; pdf_url?: string }>(
     '/api/warranties/remitos/provider-delivery/generate', { method: 'POST', body: JSON.stringify(payload) }
   );
-  return { ok: res.ok, remitos: res.created, count: res.created.length };
+  return { ok: res.ok, remitos: res.created, count: res.created.length, remito_code: res.remito_code, pdf_url: res.pdf_url };
 }
 
 export async function fetchBudgetOptions(): Promise<BudgetOptions> { return request('/api/budgets/options'); }

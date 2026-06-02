@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import re
-import sqlite3
 import unicodedata
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -10,16 +8,20 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
+from sqlalchemy import func, select
 
 from .config import get_settings
+from .db import db_session
 from .google_sheets import quote_sheet_name, sheets_service
+from .models.auth import User
+from .models.products import BrandProvider, Product, ProductBrand, ProductSyncLog, Provider
+from .models.system import PriceCostUpdate, PriceCostUpdateCheck, PriceCostUpdateHistory
 from .operational_config import extract_spreadsheet_id, load_operational_config
 
 AR_TZ = ZoneInfo("America/Argentina/Buenos_Aires")
 
 PRODUCT_MASTER_HEADERS = ["MARCA", "TIPO", "DESCRIPCION", "SKU", "PVP", "COSTO VIGENTE"]
 
-# Checks predefinidos por tipo. Definidos acá para evitar import circular con price_cost_updates.
 _CHECKS_BY_TYPE: dict[str, list[tuple[str, str]]] = {
     "price": [
         ("puma", "Puma actualizado"),
@@ -34,14 +36,12 @@ _CHECKS_BY_TYPE: dict[str, list[tuple[str, str]]] = {
 }
 
 
-def db_connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(get_settings().database_path, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def utc_now_dt() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def now_ar_string() -> str:
@@ -200,193 +200,9 @@ def runtime_product_catalog_config() -> dict[str, Any]:
     }
 
 
-def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
-    try:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-    except Exception:
-        pass
-
-
-def _try_create_price_cost_update(
-    conn: sqlite3.Connection,
-    change_type: str,
-    sku: str,
-    producto: str,
-    marca: str,
-    valor_anterior: str,
-    valor_nuevo: str,
-    product_id: int,
-    sync_log_id: int,
-    now: str,
-) -> bool:
-    """Crea una tarea en price_cost_updates desde una sync de catálogo.
-
-    Devuelve True si se creó, False si ya existía una pendiente igual (dedup).
-    """
-    existing = conn.execute(
-        """
-        SELECT id FROM price_cost_updates
-        WHERE sku = ? AND type = ? AND valor_nuevo = ? AND estado IN ('Pendiente', 'En proceso')
-        """,
-        (sku, change_type, valor_nuevo),
-    ).fetchone()
-    if existing:
-        return False
-
-    cursor = conn.execute(
-        """
-        INSERT INTO price_cost_updates (
-            type, producto, sku, marca, valor_anterior, valor_nuevo, estado,
-            created_by, created_by_name, created_at, updated_at,
-            source, source_product_id, source_sync_log_id, auto_created
-        ) VALUES (
-            ?, ?, ?, ?, ?, ?, 'En proceso',
-            'sistema', 'Sincronización de catálogo', ?, ?,
-            'catalog_sync', ?, ?, 1
-        )
-        """,
-        (change_type, producto, sku, marca, valor_anterior, valor_nuevo, now, now, product_id, sync_log_id),
-    )
-    update_id = int(cursor.lastrowid)
-
-    checks = _CHECKS_BY_TYPE[change_type]
-    for key, label in checks:
-        is_planilla = key == "planilla_madre"
-        conn.execute(
-            """
-            INSERT INTO price_cost_update_checks
-                (update_id, check_key, label, checked, checked_by, checked_by_name, checked_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                update_id, key, label,
-                1 if is_planilla else 0,
-                "sistema" if is_planilla else None,
-                "Sincronización de catálogo" if is_planilla else None,
-                now if is_planilla else None,
-            ),
-        )
-
-    conn.execute(
-        """
-        INSERT INTO price_cost_update_history
-            (update_id, created_at, username, display_name, action, detail_json)
-        VALUES (?, ?, 'sistema', 'Sistema', 'auto_creado', ?)
-        """,
-        (update_id, now, json.dumps({"source": "catalog_sync", "sync_log_id": sync_log_id}, ensure_ascii=False)),
-    )
-    return True
-
-
-def ensure_product_catalog_tables(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS products (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sku TEXT NOT NULL,
-            sku_normalized TEXT NOT NULL UNIQUE,
-            marca TEXT NOT NULL DEFAULT '',
-            marca_normalized TEXT NOT NULL DEFAULT '',
-            tipo TEXT NOT NULL DEFAULT '',
-            descripcion TEXT NOT NULL DEFAULT '',
-            pvp REAL,
-            pvp_text TEXT NOT NULL DEFAULT '',
-            costo_vigente REAL,
-            costo_text TEXT NOT NULL DEFAULT '',
-            condicion_producto TEXT NOT NULL DEFAULT '',
-            search_text TEXT NOT NULL DEFAULT '',
-            source_sheet TEXT NOT NULL DEFAULT '',
-            source_row INTEGER,
-            is_active INTEGER NOT NULL DEFAULT 1,
-            last_synced_at TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_products_sku_norm ON products(sku_normalized)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_products_brand ON products(marca_normalized)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_products_type ON products(tipo)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_products_active ON products(is_active)")
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS product_brands (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            normalized_name TEXT NOT NULL UNIQUE,
-            is_active INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_product_brands_active ON product_brands(is_active)")
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS providers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            normalized_name TEXT NOT NULL UNIQUE,
-            contact_name TEXT NOT NULL DEFAULT '',
-            email TEXT NOT NULL DEFAULT '',
-            phone TEXT NOT NULL DEFAULT '',
-            notes TEXT NOT NULL DEFAULT '',
-            is_active INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_providers_active ON providers(is_active)")
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS brand_providers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            brand_id INTEGER NOT NULL,
-            provider_id INTEGER NOT NULL,
-            is_default INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            FOREIGN KEY(brand_id) REFERENCES product_brands(id) ON DELETE CASCADE,
-            FOREIGN KEY(provider_id) REFERENCES providers(id) ON DELETE CASCADE,
-            UNIQUE(brand_id, provider_id)
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_brand_providers_brand ON brand_providers(brand_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_brand_providers_provider ON brand_providers(provider_id)")
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS product_sync_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source TEXT NOT NULL DEFAULT 'google_sheet',
-            status TEXT NOT NULL,
-            started_at TEXT NOT NULL,
-            finished_at TEXT NOT NULL DEFAULT '',
-            actor_username TEXT NOT NULL DEFAULT '',
-            actor_name TEXT NOT NULL DEFAULT '',
-            rows_processed INTEGER NOT NULL DEFAULT 0,
-            rows_created INTEGER NOT NULL DEFAULT 0,
-            rows_updated INTEGER NOT NULL DEFAULT 0,
-            rows_skipped INTEGER NOT NULL DEFAULT 0,
-            brands_created INTEGER NOT NULL DEFAULT 0,
-            errors_json TEXT NOT NULL DEFAULT '[]',
-            spreadsheet_id TEXT NOT NULL DEFAULT '',
-            sheet_name TEXT NOT NULL DEFAULT ''
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_product_sync_logs_started ON product_sync_logs(started_at)")
-    # Migraciones de columnas (idempotentes)
-    _add_column_if_missing(conn, "product_sync_logs", "price_changes_detected", "INTEGER NOT NULL DEFAULT 0")
-    _add_column_if_missing(conn, "product_sync_logs", "cost_changes_detected", "INTEGER NOT NULL DEFAULT 0")
-    _add_column_if_missing(conn, "product_sync_logs", "price_cost_updates_created", "INTEGER NOT NULL DEFAULT 0")
-    _add_column_if_missing(conn, "product_sync_logs", "price_cost_updates_skipped", "INTEGER NOT NULL DEFAULT 0")
-    _add_column_if_missing(conn, "price_cost_updates", "source", "TEXT NOT NULL DEFAULT ''")
-    _add_column_if_missing(conn, "price_cost_updates", "source_product_id", "INTEGER")
-    _add_column_if_missing(conn, "price_cost_updates", "source_sync_log_id", "INTEGER")
-    _add_column_if_missing(conn, "price_cost_updates", "auto_created", "INTEGER NOT NULL DEFAULT 0")
-    conn.commit()
+def ensure_product_catalog_tables(_conn: Any = None) -> None:
+    # Compatibilidad para routers legacy que todavia llaman este helper.
+    return
 
 
 def get_sheet_values(spreadsheet_id: str, sheet_name: str, a1: str = "A:Z") -> list[list[Any]]:
@@ -402,55 +218,63 @@ def get_sheet_values(spreadsheet_id: str, sheet_name: str, a1: str = "A:Z") -> l
     return result.get("values", [])
 
 
-def ensure_brand(conn: sqlite3.Connection, marca: str, now: str) -> tuple[int | None, bool]:
+def _user_id_from_actor(session, actor: Any) -> int | None:
+    username = str(getattr(actor, "username", "") or "").strip().lower()
+    if not username:
+        return None
+    return session.scalar(select(User.id).where(func.lower(User.username) == username))
+
+
+def _ensure_brand(session, marca: str, now: datetime) -> tuple[int | None, bool]:
     clean = clean_text(marca)
     norm = normalize_text(clean)
     if not norm:
         return None, False
-    row = conn.execute("SELECT id FROM product_brands WHERE normalized_name = ?", (norm,)).fetchone()
-    if row:
-        conn.execute("UPDATE product_brands SET name = ?, is_active = 1, updated_at = ? WHERE id = ?", (clean, now, row["id"]))
-        return int(row["id"]), False
-    cur = conn.execute(
-        "INSERT INTO product_brands (name, normalized_name, is_active, created_at, updated_at) VALUES (?, ?, 1, ?, ?)",
-        (clean, norm, now, now),
-    )
-    return int(cur.lastrowid), True
+    brand = session.scalar(select(ProductBrand).where(ProductBrand.normalized_name == norm))
+    if brand:
+        brand.name = clean
+        brand.is_active = True
+        brand.updated_at = now
+        return int(brand.id), False
+    brand = ProductBrand(name=clean, normalized_name=norm, is_active=True, created_at=now, updated_at=now)
+    session.add(brand)
+    session.flush()
+    return int(brand.id), True
 
 
-def row_to_product(row: sqlite3.Row) -> dict[str, Any]:
-    pvp = row["pvp"]
-    costo = row["costo_vigente"]
-    label_parts = [row["descripcion"] or row["sku"]]
-    if row["sku"] and row["sku"] != row["descripcion"]:
-        label_parts.append(row["sku"])
-    if row["marca"]:
-        label_parts.append(row["marca"])
-    if row["pvp_text"]:
-        label_parts.append(row["pvp_text"])
+def row_to_product(product: Product) -> dict[str, Any]:
+    pvp = decimal_to_float(product.pvp)
+    costo = decimal_to_float(product.costo_vigente)
+    label_parts = [product.descripcion or product.sku]
+    if product.sku and product.sku != product.descripcion:
+        label_parts.append(product.sku)
+    if product.marca:
+        label_parts.append(product.marca)
+    if product.pvp_text:
+        label_parts.append(product.pvp_text)
     return {
-        "id": row["id"],
-        "sku": row["sku"],
-        "marca": row["marca"],
-        "tipo": row["tipo"],
-        "descripcion": row["descripcion"],
-        "producto": row["descripcion"],
+        "id": int(product.id),
+        "sku": str(product.sku or ""),
+        "marca": str(product.marca or ""),
+        "tipo": str(product.tipo or ""),
+        "descripcion": str(product.descripcion or ""),
+        "producto": str(product.descripcion or ""),
         "pvp": pvp,
-        "pvp_text": row["pvp_text"],
-        "pvp_texto": row["pvp_text"],
+        "pvp_text": str(product.pvp_text or ""),
+        "pvp_texto": str(product.pvp_text or ""),
         "precio": pvp,
-        "precio_texto": row["pvp_text"],
+        "precio_texto": str(product.pvp_text or ""),
         "costo_vigente": costo,
-        "costo_text": row["costo_text"],
-        "costo_texto": row["costo_text"],
-        "condicion": row["condicion_producto"],
-        "condicion_producto": row["condicion_producto"],
-        "source_row": row["source_row"],
-        "last_synced_at": row["last_synced_at"],
-        "updated_at": row["updated_at"],
-        "is_active": bool(row["is_active"]),
-        "label": " — ".join([p for p in label_parts if p]),
-        "search": row["search_text"],
+        "costo_text": str(product.costo_text or ""),
+        "costo_texto": str(product.costo_text or ""),
+        "condicion": str(product.condicion_producto or ""),
+        "condicion_producto": str(product.condicion_producto or ""),
+        "source_row": product.source_row,
+        "last_synced_at": product.last_synced_at.isoformat() if product.last_synced_at else "",
+        "updated_at": product.updated_at.isoformat() if product.updated_at else "",
+        "is_active": bool(product.is_active),
+        "label": " - ".join([p for p in label_parts if p]),
+        "search": str(product.search_text or ""),
     }
 
 
@@ -458,19 +282,12 @@ def search_products(query: str, limit: int = 20) -> list[dict[str, Any]]:
     q = normalize_text(query)
     if len(q) < 2:
         return []
-    tokens = q.split()
-    with db_connect() as conn:
-        ensure_product_catalog_tables(conn)
-        like_terms = [f"%{token}%" for token in tokens[:5]]
-        where = " AND ".join(["search_text LIKE ?" for _ in like_terms])
-        sql = "SELECT * FROM products WHERE is_active = 1"
-        params: list[Any] = []
-        if where:
-            sql += f" AND {where}"
-            params.extend(like_terms)
-        sql += " LIMIT ?"
-        params.append(max(limit * 4, limit))
-        rows = conn.execute(sql, params).fetchall()
+    tokens = q.split()[:5]
+    with db_session() as session:
+        stmt = select(Product).where(Product.is_active.is_(True))
+        for token in tokens:
+            stmt = stmt.where(Product.search_text.ilike(f"%{token}%"))
+        rows = session.scalars(stmt.limit(max(limit * 4, limit))).all()
     scored: list[tuple[int, dict[str, Any]]] = []
     for row in rows:
         item = row_to_product(row)
@@ -501,19 +318,84 @@ def lookup_product_by_sku_or_text(value: str) -> dict[str, Any] | None:
     key = sku_key(value)
     if not q:
         return None
-    with db_connect() as conn:
-        ensure_product_catalog_tables(conn)
-        row = conn.execute("SELECT * FROM products WHERE sku_normalized = ? AND is_active = 1", (key,)).fetchone()
-        if row:
-            return row_to_product(row)
+    with db_session() as session:
+        product = session.scalar(
+            select(Product).where(Product.sku_normalized == key, Product.is_active.is_(True))
+        )
+        if product:
+            return row_to_product(product)
     results = search_products(value, limit=1)
     return results[0] if results else None
 
 
+def _try_create_price_cost_update(
+    session,
+    change_type: str,
+    sku: str,
+    producto: str,
+    marca: str,
+    valor_anterior: Decimal | None,
+    valor_nuevo: Decimal | None,
+    product_id: int,
+    sync_log_id: int,
+    now: datetime,
+) -> bool:
+    if valor_nuevo is None:
+        return False
+    existing = session.scalar(
+        select(PriceCostUpdate.id).where(
+            PriceCostUpdate.sku == sku,
+            PriceCostUpdate.type == change_type,
+            PriceCostUpdate.valor_nuevo == valor_nuevo,
+            PriceCostUpdate.estado.in_(["Pendiente", "En proceso"]),
+        )
+    )
+    if existing:
+        return False
+    update = PriceCostUpdate(
+        type=change_type,
+        producto=producto,
+        sku=sku,
+        marca=marca,
+        valor_anterior=valor_anterior,
+        valor_nuevo=valor_nuevo,
+        estado="En proceso",
+        created_by_user_id=None,
+        created_at=now,
+        updated_at=now,
+        source="catalog_sync",
+        source_product_id=product_id,
+        source_sync_log_id=sync_log_id,
+        auto_created=True,
+    )
+    session.add(update)
+    session.flush()
+    for key, label in _CHECKS_BY_TYPE[change_type]:
+        is_planilla = key == "planilla_madre"
+        session.add(
+            PriceCostUpdateCheck(
+                update_id=update.id,
+                check_key=key,
+                label=label,
+                checked=is_planilla,
+                checked_by_user_id=None,
+                checked_at=now if is_planilla else None,
+            )
+        )
+    session.add(
+        PriceCostUpdateHistory(
+            update_id=update.id,
+            created_at=now,
+            user_id=None,
+            action="auto_creado",
+            detail={"source": "catalog_sync", "sync_log_id": sync_log_id},
+        )
+    )
+    return True
+
+
 def sync_products_from_sheet(actor: Any) -> dict[str, Any]:
-    started = utc_now_iso()
-    actor_username = str(getattr(actor, "username", "") or "")
-    actor_name = str(getattr(actor, "display_name", "") or actor_username)
+    started_dt = utc_now_dt()
     cfg = runtime_product_catalog_config()
     spreadsheet_id = str(cfg.get("spreadsheet_id") or "")
     sheet_name = str(cfg.get("sheet_name") or "Productos PVP")
@@ -525,17 +407,19 @@ def sync_products_from_sheet(actor: Any) -> dict[str, Any]:
     price_changes_detected = cost_changes_detected = 0
     price_cost_updates_created = price_cost_updates_skipped = 0
     status_value = "success"
-    with db_connect() as conn:
-        ensure_product_catalog_tables(conn)
-        log_cur = conn.execute(
-            """
-            INSERT INTO product_sync_logs (source, status, started_at, actor_username, actor_name, spreadsheet_id, sheet_name)
-            VALUES ('google_sheet', 'running', ?, ?, ?, ?, ?)
-            """,
-            (started, actor_username, actor_name, spreadsheet_id, sheet_name),
+
+    with db_session() as session:
+        log = ProductSyncLog(
+            source="google_sheet",
+            status="running",
+            actor_user_id=_user_id_from_actor(session, actor),
+            started_at=started_dt,
+            spreadsheet_id=spreadsheet_id,
+            sheet_name=sheet_name,
+            errors=[],
         )
-        log_id = int(log_cur.lastrowid)
-        conn.commit()
+        session.add(log)
+        session.commit()
         try:
             values = get_sheet_values(spreadsheet_id, sheet_name, sheet_range)
             if not values:
@@ -543,23 +427,27 @@ def sync_products_from_sheet(actor: Any) -> dict[str, Any]:
             if len(values) < header_row:
                 raise ValueError(f"La hoja '{sheet_name}' no tiene la fila de encabezados configurada ({header_row}).")
             headers = [str(x).strip() for x in values[header_row - 1]]
+
             def configured_alias(key: str, fallback: list[str]) -> list[str]:
                 configured = clean_text(columns_cfg.get(key) or "")
                 return ([configured] if configured else []) + fallback
+
             marca_col = find_column(headers, configured_alias("marca", ["MARCA"]), fallback_index=0)
             tipo_col = find_column(headers, configured_alias("tipo", ["TIPO", "RUBRO", "FAMILIA"]), fallback_index=1)
-            desc_col = find_column(headers, configured_alias("descripcion", ["DESCRIPCION", "DESCRIPCIÓN", "PRODUCTO", "ARTICULO", "ARTÍCULO", "NOMBRE", "MODELO"]), fallback_index=2)
-            sku_col = find_column(headers, configured_alias("sku", ["SKU", "CODIGO", "CÓDIGO", "COD", "CODE", "MODELO"]), fallback_index=3)
-            pvp_col = find_column(headers, configured_alias("pvp", ["PVP", "PRECIO", "PRECIO VENTA", "PRECIO DE VENTA", "PVP FINAL", "PUBLICO", "PÚBLICO"]), fallback_index=4)
+            desc_col = find_column(headers, configured_alias("descripcion", ["DESCRIPCION", "DESCRIPCION", "PRODUCTO", "ARTICULO", "NOMBRE", "MODELO"]), fallback_index=2)
+            sku_col = find_column(headers, configured_alias("sku", ["SKU", "CODIGO", "COD", "CODE", "MODELO"]), fallback_index=3)
+            pvp_col = find_column(headers, configured_alias("pvp", ["PVP", "PRECIO", "PRECIO VENTA", "PRECIO DE VENTA", "PVP FINAL", "PUBLICO"]), fallback_index=4)
             costo_col = find_column(headers, configured_alias("costo_vigente", ["COSTO VIGENTE", "COSTO", "COSTO UNITARIO", "PRECIO COSTO", "COSTO ACTUAL", "COSTO FINAL", "VALOR COSTO", "COSTO NETO", "NETO"]), fallback_index=5)
             if sku_col is None or desc_col is None:
                 raise ValueError("La Planilla Madre debe tener al menos DESCRIPCION y SKU.")
-            now = utc_now_iso()
+
+            now = utc_now_dt()
             for idx, raw in enumerate(values[header_row:], start=header_row + 1):
                 def get(col: int | None) -> str:
                     if col is None or col >= len(raw):
                         return ""
                     return clean_text(raw[col])
+
                 sku = get(sku_col)
                 descripcion = get(desc_col)
                 if not sku and not descripcion:
@@ -567,101 +455,105 @@ def sync_products_from_sheet(actor: Any) -> dict[str, Any]:
                 processed += 1
                 if not sku:
                     skipped += 1
-                    errors.append(f"Fila {idx}: producto sin SKU. Se omitió.")
+                    errors.append(f"Fila {idx}: producto sin SKU. Se omitio.")
                     continue
+
                 sku_norm = sku_key(sku)
                 marca = get(marca_col)
                 tipo = get(tipo_col)
                 pvp_dec = parse_decimal_ar(get(pvp_col))
                 costo_dec = parse_decimal_ar(get(costo_col))
-                pvp_float = decimal_to_float(pvp_dec)
-                costo_float = decimal_to_float(costo_dec)
                 pvp_text = money_text(pvp_dec)
                 costo_text = money_text(costo_dec)
                 condicion = condition_from_text(sku, descripcion)
                 marca_norm = normalize_text(marca)
                 search = normalize_text(" ".join([sku, descripcion, marca, tipo, condicion]))
-                _, brand_created = ensure_brand(conn, marca, now)
+                _, brand_created = _ensure_brand(session, marca, now)
                 if brand_created:
                     brands_created += 1
-                existing = conn.execute(
-                    "SELECT id, pvp, costo_vigente FROM products WHERE sku_normalized = ?",
-                    (sku_norm,),
-                ).fetchone()
-                if existing:
-                    old_pvp: float | None = existing["pvp"]
-                    old_costo: float | None = existing["costo_vigente"]
-                    product_id = int(existing["id"])
-                    conn.execute(
-                        """
-                        UPDATE products
-                        SET sku = ?, marca = ?, marca_normalized = ?, tipo = ?, descripcion = ?, pvp = ?, pvp_text = ?,
-                            costo_vigente = ?, costo_text = ?, condicion_producto = ?, search_text = ?, source_sheet = ?,
-                            source_row = ?, is_active = 1, last_synced_at = ?, updated_at = ?
-                        WHERE id = ?
-                        """,
-                        (sku, marca, marca_norm, tipo, descripcion, pvp_float, pvp_text, costo_float, costo_text, condicion, search, sheet_name, idx, now, now, product_id),
-                    )
+
+                product = session.scalar(select(Product).where(Product.sku_normalized == sku_norm))
+                if product:
+                    old_pvp = product.pvp
+                    old_costo = product.costo_vigente
+                    product.sku = sku
+                    product.marca = marca
+                    product.marca_normalized = marca_norm
+                    product.tipo = tipo
+                    product.descripcion = descripcion
+                    product.pvp = pvp_dec
+                    product.pvp_text = pvp_text
+                    product.costo_vigente = costo_dec
+                    product.costo_text = costo_text
+                    product.condicion_producto = condicion
+                    product.search_text = search
+                    product.source_sheet = sheet_name
+                    product.source_row = idx
+                    product.is_active = True
+                    product.last_synced_at = now
+                    product.updated_at = now
                     updated += 1
-                    # Detectar cambio de PVP (solo si ambos valores son conocidos)
-                    if pvp_float is not None and old_pvp is not None and abs(pvp_float - old_pvp) > 0.005:
+
+                    if pvp_dec is not None and old_pvp is not None and abs(pvp_dec - old_pvp) > Decimal("0.005"):
                         price_changes_detected += 1
-                        if _try_create_price_cost_update(
-                            conn, "price", sku, descripcion, marca,
-                            money_text(old_pvp), pvp_text, product_id, log_id, now,
-                        ):
+                        if _try_create_price_cost_update(session, "price", sku, descripcion, marca, old_pvp, pvp_dec, int(product.id), int(log.id), now):
                             price_cost_updates_created += 1
                         else:
                             price_cost_updates_skipped += 1
-                    # Detectar cambio de Costo Vigente (solo si ambos valores son conocidos)
-                    if costo_float is not None and old_costo is not None and abs(costo_float - old_costo) > 0.005:
+                    if costo_dec is not None and old_costo is not None and abs(costo_dec - old_costo) > Decimal("0.005"):
                         cost_changes_detected += 1
-                        if _try_create_price_cost_update(
-                            conn, "cost", sku, descripcion, marca,
-                            money_text(old_costo), costo_text, product_id, log_id, now,
-                        ):
+                        if _try_create_price_cost_update(session, "cost", sku, descripcion, marca, old_costo, costo_dec, int(product.id), int(log.id), now):
                             price_cost_updates_created += 1
                         else:
                             price_cost_updates_skipped += 1
                 else:
-                    conn.execute(
-                        """
-                        INSERT INTO products (sku, sku_normalized, marca, marca_normalized, tipo, descripcion, pvp, pvp_text,
-                            costo_vigente, costo_text, condicion_producto, search_text, source_sheet, source_row, is_active,
-                            last_synced_at, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-                        """,
-                        (sku, sku_norm, marca, marca_norm, tipo, descripcion, pvp_float, pvp_text, costo_float, costo_text, condicion, search, sheet_name, idx, now, now, now),
+                    product = Product(
+                        sku=sku,
+                        sku_normalized=sku_norm,
+                        marca=marca,
+                        marca_normalized=marca_norm,
+                        tipo=tipo,
+                        descripcion=descripcion,
+                        pvp=pvp_dec,
+                        pvp_text=pvp_text,
+                        costo_vigente=costo_dec,
+                        costo_text=costo_text,
+                        condicion_producto=condicion,
+                        search_text=search,
+                        source_sheet=sheet_name,
+                        source_row=idx,
+                        is_active=True,
+                        last_synced_at=now,
+                        created_at=now,
+                        updated_at=now,
                     )
+                    session.add(product)
                     created += 1
             status_value = "success" if not errors else "partial"
         except Exception as exc:
             status_value = "failed"
             errors.append(str(exc))
-        finished = utc_now_iso()
-        conn.execute(
-            """
-            UPDATE product_sync_logs
-            SET status = ?, finished_at = ?, rows_processed = ?, rows_created = ?, rows_updated = ?, rows_skipped = ?,
-                brands_created = ?, errors_json = ?,
-                price_changes_detected = ?, cost_changes_detected = ?,
-                price_cost_updates_created = ?, price_cost_updates_skipped = ?
-            WHERE id = ?
-            """,
-            (
-                status_value, finished, processed, created, updated, skipped, brands_created,
-                json.dumps(errors, ensure_ascii=False),
-                price_changes_detected, cost_changes_detected,
-                price_cost_updates_created, price_cost_updates_skipped,
-                log_id,
-            ),
-        )
-        conn.commit()
+
+        finished_dt = utc_now_dt()
+        log.status = status_value
+        log.finished_at = finished_dt
+        log.rows_processed = processed
+        log.rows_created = created
+        log.rows_updated = updated
+        log.rows_skipped = skipped
+        log.brands_created = brands_created
+        log.errors = errors
+        log.price_changes_detected = price_changes_detected
+        log.cost_changes_detected = cost_changes_detected
+        log.price_cost_updates_created = price_cost_updates_created
+        log.price_cost_updates_skipped = price_cost_updates_skipped
+        session.commit()
+
     return {
         "ok": status_value in {"success", "partial"},
         "status": status_value,
-        "started_at": started,
-        "finished_at": finished,
+        "started_at": started_dt.isoformat(),
+        "finished_at": finished_dt.isoformat(),
         "rows_processed": processed,
         "rows_created": created,
         "rows_updated": updated,
@@ -681,20 +573,25 @@ def get_provider_for_brand(marca: str) -> dict[str, Any] | None:
     norm = normalize_text(marca)
     if not norm:
         return None
-    with db_connect() as conn:
-        ensure_product_catalog_tables(conn)
-        row = conn.execute(
-            """
-            SELECT p.*
-            FROM product_brands b
-            JOIN brand_providers bp ON bp.brand_id = b.id
-            JOIN providers p ON p.id = bp.provider_id
-            WHERE b.normalized_name = ? AND b.is_active = 1 AND p.is_active = 1
-            ORDER BY bp.is_default DESC, p.name ASC
-            LIMIT 1
-            """,
-            (norm,),
-        ).fetchone()
+    with db_session() as session:
+        row = session.execute(
+            select(Provider)
+            .join(BrandProvider, BrandProvider.provider_id == Provider.id)
+            .join(ProductBrand, ProductBrand.id == BrandProvider.brand_id)
+            .where(
+                ProductBrand.normalized_name == norm,
+                ProductBrand.is_active.is_(True),
+                Provider.is_active.is_(True),
+            )
+            .order_by(BrandProvider.is_default.desc(), Provider.name.asc())
+            .limit(1)
+        ).scalar_one_or_none()
         if not row:
             return None
-        return {"id": row["id"], "name": row["name"], "contact_name": row["contact_name"], "email": row["email"], "phone": row["phone"]}
+        return {
+            "id": int(row.id),
+            "name": str(row.name or ""),
+            "contact_name": str(row.contact_name or ""),
+            "email": str(row.email or ""),
+            "phone": str(row.phone or ""),
+        }

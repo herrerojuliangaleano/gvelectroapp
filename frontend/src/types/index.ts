@@ -701,6 +701,10 @@ export interface BranchInfo {
   type: BranchType;
   parent_branch_id?: string | null;
   parent_branch_name: string;
+  /** Dirección física (donde está la sucursal). Opcional. */
+  direccion?: string;
+  /** Dirección fiscal (para facturación). Puede diferir de la física, típicamente en sucursales WEB. */
+  direccion_fiscal?: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -744,6 +748,7 @@ export interface SystemSummary {
   paths: {
     storage_dir: string;
     database_path: string;
+    postgres_configured?: boolean;
   };
   recent_jobs: JobInfo[];
   recent_events: AuditEvent[];
@@ -785,6 +790,7 @@ export interface SystemAbout {
   system: string;
   storage_dir: string;
   database_path: string;
+  postgres_configured?: boolean;
   frontend_dist_dir: string;
   notes: string[];
   changelog: Array<{ version: string; title: string; items: string[] }>;
@@ -985,6 +991,8 @@ export interface WarrantyProviderResponsePayload {
   correction_note?: string;
   // Corrección por ítem/serie (cuando response_type = correccion).
   item_corrections?: WarrantyItemCorrectionPayload[];
+  // Fecha acordada con el proveedor para el retiro (solo cuando response_type='retiro').
+  fecha_retiro_acordada?: string;
 }
 
 export interface WarrantyProviderCorrectionResolvePayload {
@@ -1096,6 +1104,24 @@ export interface WarrantySyncResult {
   rows_created: number;
   rows_updated: number;
   rows_skipped: number;
+  errors: string[];
+}
+
+export interface WarrantyImportResult {
+  ok: boolean;
+  warranties_created: number;
+  warranties_skipped_empty: number;
+  warranties_skipped_existing: number;
+  items_created: number;
+  remitos_created: number;
+  remitos_skipped_empty: number;
+  remitos_skipped_existing: number;
+  remito_items_created: number;
+  events_created: number;
+  events_skipped_no_guarantee: number;
+  exports_created: number;
+  exports_skipped_existing: number;
+  warnings: string[];
   errors: string[];
 }
 

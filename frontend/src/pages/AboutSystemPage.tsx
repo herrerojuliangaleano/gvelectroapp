@@ -49,7 +49,7 @@ export function AboutSystemPage() {
               <ErpInfoRow label={<span className="inline-flex items-center gap-1.5"><Globe size={11} />Backend</span>} value={about.backend} />
               <ErpInfoRow label={<span className="inline-flex items-center gap-1.5"><Cpu size={11} />Frontend</span>} value={about.frontend} />
               <ErpInfoRow label={<span className="inline-flex items-center gap-1.5"><HardDrive size={11} />Storage</span>} value={about.storage_dir} />
-              <ErpInfoRow label={<span className="inline-flex items-center gap-1.5"><HardDrive size={11} />Base local</span>} value={about.database_path} />
+              <ErpInfoRow label={<span className="inline-flex items-center gap-1.5"><HardDrive size={11} />Base de datos</span>} value={about.database_path} />
             </ErpInfoGrid>
           </ErpCard>
 

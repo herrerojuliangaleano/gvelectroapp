@@ -143,8 +143,10 @@ export default function App() {
       <Route path="/warranties/exportar" element={<Navigate to="/warranties/export" replace />} />
       <Route path="/warranties/sync" element={<ProtectedLayout allowed={() => canSeeWarrantySync(getCurrentUserFromStorage())}><WarrantySyncPage /></ProtectedLayout>} />
       <Route path="/warranties/sincronizacion" element={<Navigate to="/warranties/sync" replace />} />
-      <Route path="/warranties/config" element={<ProtectedLayout allowed={() => canSeeWarrantyConfig(getCurrentUserFromStorage())}><WarrantyConfigPage /></ProtectedLayout>} />
-      <Route path="/warranties/configuracion" element={<Navigate to="/warranties/config" replace />} />
+      {/* DEPRECATED (Fase A consolidación): /warranties/config se embebió como tab "Garantías" en
+          /admin/operational-config. La ruta vieja redirige para no romper bookmarks. */}
+      <Route path="/warranties/config" element={<Navigate to="/admin/operational-config?tab=garantias" replace />} />
+      <Route path="/warranties/configuracion" element={<Navigate to="/admin/operational-config?tab=garantias" replace />} />
       <Route path="/warranties/deposito" element={<ProtectedLayout allowed={() => canSeeDepositReceivePage(getCurrentUserFromStorage())}><WarrantyDepositReceivePage /></ProtectedLayout>} />
       <Route path="/warranties/remitos" element={<ProtectedLayout allowed={() => canUseRemitosHub(getCurrentUserFromStorage())}><WarrantyRemitosPage /></ProtectedLayout>} />
       <Route path="/warranties/remito-historial" element={<ProtectedLayout allowed={() => canSeeRemitoTracking(getCurrentUserFromStorage())}><WarrantyRemitoTrackingPage /></ProtectedLayout>} />
@@ -181,7 +183,8 @@ export default function App() {
       <Route path="/notifications" element={<Navigate to="/notificaciones" replace />} />
       <Route path="/jobs" element={<ProtectedLayout permission="jobs.view"><JobsHistoryPage /></ProtectedLayout>} />
       <Route path="/jobs/:jobId" element={<ProtectedLayout permission="jobs.view"><JobDetailPage /></ProtectedLayout>} />
-      <Route path="/settings" element={<ProtectedLayout permission="settings.view"><SettingsPage /></ProtectedLayout>} />
+      {/* DEPRECATED (Fase A consolidación): /settings se embebió como tab "Sistema" en /admin/operational-config. */}
+      <Route path="/settings" element={<Navigate to="/admin/operational-config?tab=sistema" replace />} />
       <Route path="/admin/operational-config" element={<ProtectedLayout permission="ops_config.view"><OperationalConfigPage /></ProtectedLayout>} />
       <Route path="/admin/companies-branches" element={<ProtectedLayout permission="branches.view"><CompaniesBranchesPage /></ProtectedLayout>} />
       <Route path="/admin/empresas-sucursales" element={<Navigate to="/admin/companies-branches" replace />} />
@@ -194,7 +197,8 @@ export default function App() {
       <Route path="/administracion/fotos" element={<ProtectedLayout permission="employees.photo.approve"><PhotoApprovalPage /></ProtectedLayout>} />
       <Route path="/admin/users" element={<Navigate to="/administracion/usuarios" replace />} />
       <Route path="/admin/roles" element={<ProtectedLayout permission="roles.view"><AdminRolesPage /></ProtectedLayout>} />
-      <Route path="/admin/google" element={<ProtectedLayout permission="google.manage"><GoogleAdminPage /></ProtectedLayout>} />
+      {/* DEPRECATED (Fase A consolidación): /admin/google se embebió como tab "OAuth Google" en /admin/operational-config. */}
+      <Route path="/admin/google" element={<Navigate to="/admin/operational-config?tab=oauth" replace />} />
       <Route path="/admin/backups" element={<ProtectedLayout permission="backups.view"><BackupsPage /></ProtectedLayout>} />
       <Route path="/admin/diagnostico" element={<ProtectedLayout permission="system.diagnostics.view"><SystemDiagnosticsPage /></ProtectedLayout>} />
       <Route path="/admin/diagnostics" element={<Navigate to="/admin/diagnostico" replace />} />

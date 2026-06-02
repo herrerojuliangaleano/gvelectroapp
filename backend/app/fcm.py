@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
-from pathlib import Path
+
+from .config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -16,11 +18,22 @@ def _init():
         import firebase_admin
         from firebase_admin import credentials
 
-        service_account = Path(__file__).parent.parent / "secrets" / "firebase-service-account.json"
-        if not service_account.exists():
-            logger.info("firebase-service-account.json no encontrado — push FCM desactivado")
+        settings = get_settings()
+        service_account_json = settings.firebase_service_account_json
+        service_account = settings.firebase_service_account_file
+        if not service_account_json and not service_account.exists():
+            legacy = settings.legacy_firebase_service_account_file
+            if legacy.exists():
+                service_account = legacy
+
+        if service_account_json:
+            cert = credentials.Certificate(json.loads(service_account_json))
+        elif service_account.exists():
+            cert = credentials.Certificate(str(service_account))
+        else:
+            logger.info("firebase-service-account.json no encontrado - push FCM desactivado")
             return None
-        _app = firebase_admin.initialize_app(credentials.Certificate(str(service_account)))
+        _app = firebase_admin.initialize_app(cert)
     except Exception as exc:
         logger.warning("Firebase Admin no disponible: %s", exc)
         _app = None

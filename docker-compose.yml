@@ -1,14 +1,17 @@
-# ElectroGV — Fase 1 (Docker)
-# Levanta el backend FastAPI en un contenedor reproducible.
-# La base sigue siendo SQLite (Fase 2 agrega PostgreSQL como servicio).
+# ElectroGV — Fase 2 (Docker + PostgreSQL)
+#
+# Servicios:
+#   backend     : FastAPI (uvicorn) usando PostgreSQL.
+#   postgres    : PostgreSQL 16 — bindeado solo a 127.0.0.1 (no expuesto a internet).
+#   adminer     : Dashboard web — solo localhost; en VPS se accede por SSH tunnel.
+#   db-backup   : pg_dump automático nocturno con rotación.
 #
 # Uso:
-#   docker compose up -d --build      → levanta en segundo plano (compila la 1ra vez)
-#   docker compose logs -f            → ver logs en vivo
+#   docker compose up -d --build      → levanta todo
+#   docker compose logs -f            → logs en vivo
 #   docker compose down               → apagar
 #
-# El frontend sigue en su servicio (Vercel) y apunta al backend por su URL/ngrok.
-# Para servir el frontend desde el backend (todo junto), ver la nota al final.
+# Doc completa en docs/fase-1-docker/README.md, docs/fase-2-postgres/ y docs/07-produccion-local-vercel-ngrok.md.
 
 services:
   backend:
@@ -19,22 +22,92 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      # Valores propios del contenedor (tienen prioridad sobre el .env).
+      # Valores del contenedor (tienen prioridad sobre .env).
       STORAGE_DIR: /app/storage
       PORT: "8000"
+      # DATABASE_URL apunta al servicio postgres por la red interna de compose.
+      DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-electrogv}:${POSTGRES_PASSWORD:-electrogv}@postgres:5432/${POSTGRES_DB:-electrogv_dev}"
     ports:
       - "8000:8000"
     volumes:
-      # Persistencia: la base SQLite, uploads, recibos, exports y credenciales
-      # viven en el host (no se pierden al reconstruir la imagen).
       - ./backend/storage:/app/storage
-      # --- Opcional "todo junto" (Fase 1.b) ---
-      # Si compilás el frontend (cd frontend && npm run build), descomentá esto
-      # y el backend sirve el SPA en http://localhost:8000 (ya tiene la lógica).
+      # --- Opcional: servir frontend desde el backend (Fase 1.b) ---
       # - ./frontend/dist:/app/frontend/dist:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status==200 else 1)"]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 25s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: electrogv-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-electrogv}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-electrogv}
+      POSTGRES_DB: ${POSTGRES_DB:-electrogv_dev}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # Bindeado SOLO a localhost (ni la LAN lo ve). En VPS se accede por SSH tunnel.
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-electrogv} -d ${POSTGRES_DB:-electrogv_dev}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  adminer:
+    image: adminer:latest
+    container_name: electrogv-adminer
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+      ADMINER_DESIGN: pepa-linha-dark
+    ports:
+      # Bindeado SOLO a localhost. En VPS: SSH tunnel a 8080.
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  db-backup:
+    image: prodrigestivill/postgres-backup-local:16
+    container_name: electrogv-db-backup
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-electrogv_dev}
+      POSTGRES_USER: ${POSTGRES_USER:-electrogv}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-electrogv}
+      POSTGRES_EXTRA_OPTS: "--format=custom --blobs"
+      SCHEDULE: "@daily"
+      BACKUP_KEEP_DAYS: 7
+      BACKUP_KEEP_WEEKS: 4
+      BACKUP_KEEP_MONTHS: 3
+      HEALTHCHECK_PORT: 8181
+    volumes:
+      - ./backend/backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+    name: electrogv-pgdata

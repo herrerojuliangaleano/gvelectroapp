@@ -27,7 +27,7 @@ con SQLite). El frontend sigue en su servicio (Vercel) y le pega al backend por 
 1. Asegurate de tener el archivo `backend/.env`. Si no existe, copiá la plantilla:
    - `backend/.env.docker.example` → guardalo como `backend/.env`
    - Editá `AUTH_SECRET`, `CORS_ORIGINS` (tu URL de Vercel y de ngrok), etc.
-2. Doble clic en **`iniciar-app.bat`** (en la raíz del proyecto).
+2. Doble clic en **`electrogv.bat`** (en la raíz del proyecto) y elegí la opción `1`.
    - La **primera vez** compila la imagen (puede tardar unos minutos). Las siguientes son rápidas.
 3. Cuando termine, abrí en el navegador: http://localhost:8000/api/health
    - Si ves `{"ok": true, ...}` → está andando. 🎉
@@ -35,9 +35,9 @@ con SQLite). El frontend sigue en su servicio (Vercel) y le pega al backend por 
 ---
 
 ## 3. Uso diario
-- **Encender:** doble clic en `iniciar-app.bat`
-- **Apagar:** doble clic en `apagar-app.bat`
-- **Exponer con ngrok:** doble clic en `iniciar-ngrok.bat` (copiá la URL https y ponela como API del frontend)
+- **Encender DEV:** `electrogv.bat` opción `1`.
+- **Apagar DEV:** `electrogv.bat` opción `5`.
+- **Exponer DEV con ngrok:** `electrogv.bat` opción `4`.
 
 Eso es todo para el día a día.
 
@@ -69,7 +69,7 @@ Todo lo importante vive en **`backend/storage/`** (montado como volumen):
 | Síntoma | Solución |
 |---|---|
 | `docker: command not found` o "Docker no está corriendo" | Abrí Docker Desktop y esperá "Engine running". |
-| El build falla descargando paquetes | Revisá internet; reintentá `iniciar-app.bat`. |
+| El build falla descargando paquetes | Revisá internet; reintentá `electrogv.bat` opción `1`. |
 | Cambié código y no se ve | `docker compose up -d --build` (reconstruye). |
 | Puerto 8000 ocupado | Cerrá lo que use el 8000, o cambiá el mapeo `8000:8000` en `docker-compose.yml`. |
 | Quiero ver qué pasa adentro | `docker compose logs -f` |
@@ -87,4 +87,4 @@ Si querés probar todo con una sola caja (sin Vercel):
 ## 8. Qué viene (Fase 2)
 Agregar **PostgreSQL** como otro servicio del compose y migrar el backend a
 SQLAlchemy + Alembic. El comando para levantar va a seguir siendo el mismo
-(`iniciar-app.bat`), solo que también arrancará la base Postgres.
+(`electrogv.bat` opción `1`), solo que también arrancará la base Postgres.

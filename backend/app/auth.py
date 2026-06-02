@@ -11,6 +11,7 @@ from typing import Annotated, Callable
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from .access import ensure_active_user, user_has
 from .config import get_settings
 from .users import CurrentUser, authenticate_user, get_current_user
 
@@ -73,9 +74,8 @@ def require_user(creds: Annotated[HTTPAuthorizationCredentials | None, Depends(b
 
 def require_permission(permission: str) -> Callable[[CurrentUser], CurrentUser]:
     def dependency(user: Annotated[CurrentUser, Depends(require_current_user)]) -> CurrentUser:
-        if user.must_change_password:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenés que crear tu contraseña antes de continuar")
-        if not user.has(permission):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tenés permiso para realizar esta acción")
+        ensure_active_user(user)
+        if not user_has(user, permission):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tenes permiso para realizar esta accion")
         return user
     return dependency

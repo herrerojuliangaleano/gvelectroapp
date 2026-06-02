@@ -28,7 +28,13 @@ function numbersToList(value: string): number[] {
   return Array.from(new Set(value.split(/[\n,;]/).map((x) => Number.parseInt(x.trim(), 10)).filter((x) => Number.isFinite(x) && x > 0))).sort((a, b) => a - b);
 }
 
-export function WarrantyConfigPage() {
+/**
+ * @deprecated Fase A consolidación: se embebe como tab "Garantías" dentro de
+ * OperationalConfigPage. La ruta /warranties/config ahora redirige a
+ * /admin/operational-config?tab=garantias. Esta página queda exportada solo
+ * para ese embedding. A revisar para borrar tras la auditoría de Fase C.
+ */
+export function WarrantyConfigPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [data, setData] = useState<WarrantyConfigResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -108,9 +114,13 @@ export function WarrantyConfigPage() {
     <section className={cardClass}>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1 text-xs font-black uppercase tracking-wide text-blue-100"><Settings size={14} /> Configuración avanzada</div>
-          <h1 className="mt-3 text-3xl font-black text-white">Garantías</h1>
-          <p className="mt-2 max-w-3xl text-slate-400">Catálogos, revisión, demoras y control operativo del flujo de garantías.</p>
+          {!embedded && (
+            <>
+              <div className="inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1 text-xs font-black uppercase tracking-wide text-blue-100"><Settings size={14} /> Configuración avanzada</div>
+              <h1 className="mt-3 text-3xl font-black text-white">Garantías</h1>
+            </>
+          )}
+          <p className={`${embedded ? '' : 'mt-2'} max-w-3xl text-slate-400`}>Catálogos, revisión, demoras y control operativo del flujo de garantías.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={load} className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-3 text-sm font-bold text-slate-100 hover:bg-slate-900"><RefreshCw size={18} /> Actualizar</button>

@@ -24,7 +24,16 @@ function emptyCompanyForm() {
 }
 
 function emptyBranchForm(companies: CompanyInfo[]) {
-  return { company_id: companies[0]?.id || '', name: '', code: '', type: 'physical' as BranchType, parent_branch_id: '', is_active: true };
+  return {
+    company_id: companies[0]?.id || '',
+    name: '',
+    code: '',
+    type: 'physical' as BranchType,
+    parent_branch_id: '',
+    direccion: '',
+    direccion_fiscal: '',
+    is_active: true,
+  };
 }
 
 export function CompaniesBranchesPage() {
@@ -108,6 +117,8 @@ export function CompaniesBranchesPage() {
       code: branch.code,
       type: branch.type,
       parent_branch_id: branch.parent_branch_id || '',
+      direccion: branch.direccion || '',
+      direccion_fiscal: branch.direccion_fiscal || '',
       is_active: branch.is_active,
     });
     setMessage(null);
@@ -260,6 +271,8 @@ export function CompaniesBranchesPage() {
                 <Input label="Código" value={branchForm.code} onChange={(value) => setBranchForm((current) => ({ ...current, code: value.toUpperCase().replace(/\s+/g, '_') }))} placeholder="Ej: CASEROS_WEB" />
                 <Select label="Tipo" value={branchForm.type} onChange={(value) => setBranchForm((current) => ({ ...current, type: value as BranchType }))} options={(Object.keys(branchTypeLabels) as BranchType[]).map((type) => ({ label: branchTypeLabels[type], value: type }))} />
                 <Select label="Sucursal base" value={branchForm.parent_branch_id} onChange={(value) => setBranchForm((current) => ({ ...current, parent_branch_id: value }))} options={[{ label: 'Sin sucursal base', value: '' }, ...activePhysicalBranches.filter((branch) => branch.id !== editingBranchId).map((branch) => ({ label: `${branch.name} · ${branch.company_name}`, value: branch.id }))]} />
+                <Input label="Dirección física" value={branchForm.direccion} onChange={(value) => setBranchForm((current) => ({ ...current, direccion: value }))} placeholder="Ej: Av. Rivadavia 1234, Caseros" />
+                <Input label="Dirección fiscal" value={branchForm.direccion_fiscal} onChange={(value) => setBranchForm((current) => ({ ...current, direccion_fiscal: value }))} placeholder="Para facturación. Puede diferir de la física (típico en WEB)." />
                 <label className="flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm font-bold text-slate-200">
                   <input type="checkbox" checked={branchForm.is_active} onChange={(event) => setBranchForm((current) => ({ ...current, is_active: event.target.checked }))} /> Activa
                 </label>

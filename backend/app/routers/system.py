@@ -1,21 +1,25 @@
 from __future__ import annotations
 
 import platform
-import sqlite3
 from pathlib import Path
 from datetime import datetime
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import func, or_, select
 
 from ..auth import require_current_user, require_permission
 from ..config import get_settings
+from ..db import db_session
 from ..database import list_audit_events, list_jobs
 from ..google_auth import local_credentials_file, stable_token_file
 from ..operational_config import load_operational_config
 from ..tools.registry import list_tools
 from ..users import CurrentUser, load_users, repair_user_branch_links, repair_user_employees, repair_user_legacy_roles
+from ..models.auth import UserBranch, UserRole
+from ..models.employees import Employee, PayrollReceipt
+from ..models.org import Branch, Company
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 APP_VERSION = "1.5.0-pro-base"
@@ -55,82 +59,108 @@ def _is_inside_window(now: datetime, open_time: str, close_time: str) -> bool:
 
 def _diagnostic_db_counts() -> dict[str, Any]:
     settings = get_settings()
-    db_path = Path(settings.database_path)
-    if not db_path.exists():
-        return {"database_exists": False, "counts": {}, "issues": [{"severity": "critical", "title": "Base de datos no encontrada", "detail": str(db_path), "action": "Iniciar el backend para crear la base."}]}
-
     issues: list[dict[str, Any]] = []
-    counts: dict[str, Any] = {"database_exists": True}
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
+    counts: dict[str, Any] = {"postgres_available": True}
+    receipt_paths: list[str] = []
+    try:
+        with db_session() as session:
+            def count(stmt: Any) -> int:
+                return int(session.scalar(stmt) or 0)
 
-        def scalar(sql: str, params: tuple[Any, ...] = ()) -> int:
-            try:
-                row = conn.execute(sql, params).fetchone()
-                return int(row[0] if row else 0)
-            except Exception:
-                return 0
+            counts["companies"] = count(select(func.count()).select_from(Company))
+            counts["branches"] = count(select(func.count()).select_from(Branch))
+            counts["user_branches"] = count(select(func.count()).select_from(UserBranch))
+            counts["user_roles"] = count(select(func.count()).select_from(UserRole))
+            counts["employees"] = count(select(func.count()).select_from(Employee))
+            counts["employees_without_dni"] = count(
+                select(func.count()).select_from(Employee).where(or_(Employee.dni.is_(None), func.trim(Employee.dni) == ""))
+            )
+            counts["employees_without_photo"] = count(
+                select(func.count()).select_from(Employee).where(
+                    or_(func.trim(Employee.photo_url) == "", Employee.photo_status != "aprobada")
+                )
+            )
+            counts["payroll_total"] = count(select(func.count()).select_from(PayrollReceipt))
+            counts["payroll_pending"] = count(
+                select(func.count()).select_from(PayrollReceipt).where(PayrollReceipt.status.in_(["pendiente", "visto"]))
+            )
+            counts["payroll_signed"] = count(
+                select(func.count()).select_from(PayrollReceipt).where(PayrollReceipt.status == "firmado_conforme")
+            )
+            counts["payroll_observed"] = count(
+                select(func.count()).select_from(PayrollReceipt).where(PayrollReceipt.status == "observado")
+            )
+            counts["payroll_cancelled"] = count(
+                select(func.count()).select_from(PayrollReceipt).where(PayrollReceipt.status == "anulado")
+            )
 
-        counts["companies"] = scalar("SELECT COUNT(*) FROM companies")
-        counts["branches"] = scalar("SELECT COUNT(*) FROM branches")
-        counts["user_branches"] = scalar("SELECT COUNT(*) FROM user_branches")
-        counts["user_roles"] = scalar("SELECT COUNT(*) FROM user_roles")
-        counts["employees"] = scalar("SELECT COUNT(*) FROM employees")
-        counts["employees_without_dni"] = scalar("SELECT COUNT(*) FROM employees WHERE TRIM(COALESCE(dni, '')) = ''")
-        counts["employees_without_photo"] = scalar("SELECT COUNT(*) FROM employees WHERE TRIM(COALESCE(photo_url, '')) = '' OR COALESCE(photo_status, '') NOT IN ('aprobada')")
-        counts["payroll_total"] = scalar("SELECT COUNT(*) FROM payroll_receipts")
-        counts["payroll_pending"] = scalar("SELECT COUNT(*) FROM payroll_receipts WHERE status IN ('pendiente','visto')")
-        counts["payroll_signed"] = scalar("SELECT COUNT(*) FROM payroll_receipts WHERE status = 'firmado_conforme'")
-        counts["payroll_observed"] = scalar("SELECT COUNT(*) FROM payroll_receipts WHERE status = 'observado'")
-        counts["payroll_cancelled"] = scalar("SELECT COUNT(*) FROM payroll_receipts WHERE status = 'anulado'")
+            duplicate_rows = session.execute(
+                select(
+                    PayrollReceipt.employee_id,
+                    PayrollReceipt.period_year,
+                    PayrollReceipt.period_month,
+                    PayrollReceipt.receipt_type,
+                    func.count().label("total"),
+                )
+                .where(PayrollReceipt.status.notin_(["anulado", "reemplazado"]))
+                .group_by(
+                    PayrollReceipt.employee_id,
+                    PayrollReceipt.period_year,
+                    PayrollReceipt.period_month,
+                    PayrollReceipt.receipt_type,
+                )
+                .having(func.count() > 1)
+                .limit(20)
+            ).all()
+            counts["payroll_duplicate_groups"] = len(duplicate_rows)
 
-        if counts["companies"] < 2:
-            issues.append({"severity": "warning", "title": "Empresas incompletas", "detail": "Revisar Electro GV y Electro ABC SRL.", "action": "Abrir Empresas y sucursales."})
-        if counts["branches"] < 8:
-            issues.append({"severity": "warning", "title": "Sucursales operativas incompletas", "detail": "Faltan sucursales físicas o WEB.", "action": "Revisar Empresas y sucursales."})
-        if counts["employees_without_dni"]:
-            issues.append({"severity": "warning", "title": "Empleados sin DNI", "detail": f"{counts['employees_without_dni']} empleado/s requieren DNI para recibos.", "action": "Completar legajos desde Usuarios."})
-        if counts["employees_without_photo"]:
-            issues.append({"severity": "info", "title": "Fotos profesionales pendientes", "detail": f"{counts['employees_without_photo']} empleado/s no tienen foto aprobada.", "action": "Solicitar o aprobar fotos desde Usuarios."})
-        if counts["payroll_observed"]:
-            issues.append({"severity": "warning", "title": "Recibos observados", "detail": f"{counts['payroll_observed']} recibo/s tienen observaciones.", "action": "Revisar Recibos de sueldo."})
+            receipt_paths = [
+                str(value or "")
+                for value in session.scalars(
+                    select(PayrollReceipt.file_path).where(PayrollReceipt.status.notin_(["anulado", "reemplazado"]))
+                ).all()
+            ]
+    except Exception as exc:
+        return {
+            "database_exists": False,
+            "counts": {"postgres_available": False},
+            "issues": [{
+                "severity": "critical",
+                "title": "PostgreSQL no disponible",
+                "detail": str(exc),
+                "action": "Levantar Postgres, correr Alembic y ejecutar el seed inicial.",
+            }],
+        }
 
-        duplicate_rows = conn.execute(
-            """
-            SELECT employee_id, period_year, period_month, receipt_type, COUNT(*) AS total
-            FROM payroll_receipts
-            WHERE status NOT IN ('anulado','reemplazado')
-            GROUP BY employee_id, period_year, period_month, receipt_type
-            HAVING COUNT(*) > 1
-            LIMIT 20
-            """
-        ).fetchall()
-        counts["payroll_duplicate_groups"] = len(duplicate_rows)
-        if duplicate_rows:
-            issues.append({"severity": "warning", "title": "Recibos duplicados", "detail": f"{len(duplicate_rows)} grupo/s duplicados detectados.", "action": "Revisar duplicados antes de nuevas cargas."})
+    if counts["companies"] < 2:
+        issues.append({"severity": "warning", "title": "Empresas incompletas", "detail": "Revisar Electro GV y Electro ABC SRL.", "action": "Abrir Empresas y sucursales."})
+    if counts["branches"] < 8:
+        issues.append({"severity": "warning", "title": "Sucursales operativas incompletas", "detail": "Faltan sucursales fisicas o WEB.", "action": "Revisar Empresas y sucursales."})
+    if counts["employees_without_dni"]:
+        issues.append({"severity": "warning", "title": "Empleados sin DNI", "detail": f"{counts['employees_without_dni']} empleado/s requieren DNI para recibos.", "action": "Completar legajos desde Usuarios."})
+    if counts["employees_without_photo"]:
+        issues.append({"severity": "info", "title": "Fotos profesionales pendientes", "detail": f"{counts['employees_without_photo']} empleado/s no tienen foto aprobada.", "action": "Solicitar o aprobar fotos desde Usuarios."})
+    if counts["payroll_observed"]:
+        issues.append({"severity": "warning", "title": "Recibos observados", "detail": f"{counts['payroll_observed']} recibo/s tienen observaciones.", "action": "Revisar Recibos de sueldo."})
+    if counts["payroll_duplicate_groups"]:
+        issues.append({"severity": "warning", "title": "Recibos duplicados", "detail": f"{counts['payroll_duplicate_groups']} grupo/s duplicados detectados.", "action": "Revisar duplicados antes de nuevas cargas."})
 
-        missing_files = 0
-        storage = Path(settings.storage_dir)
-        try:
-            rows = conn.execute("SELECT file_path FROM payroll_receipts WHERE status NOT IN ('anulado','reemplazado')").fetchall()
-            for row in rows:
-                file_path = str(row["file_path"] or "")
-                if not file_path:
-                    missing_files += 1
-                    continue
-                path = Path(file_path)
-                if not path.is_absolute():
-                    path = storage / file_path
-                if not path.exists():
-                    missing_files += 1
-        except Exception:
-            missing_files = 0
-        counts["payroll_missing_files"] = missing_files
-        if missing_files:
-            issues.append({"severity": "critical", "title": "Archivos de recibos no encontrados", "detail": f"{missing_files} archivo/s no están disponibles en storage.", "action": "Revisar backups o ruta de almacenamiento."})
+    missing_files = 0
+    storage = Path(settings.storage_dir)
+    for file_path in receipt_paths:
+        if not file_path:
+            missing_files += 1
+            continue
+        path = Path(file_path)
+        if not path.is_absolute():
+            path = storage / file_path
+        if not path.exists():
+            missing_files += 1
+    counts["payroll_missing_files"] = missing_files
+    if missing_files:
+        issues.append({"severity": "critical", "title": "Archivos de recibos no encontrados", "detail": f"{missing_files} archivo/s no estan disponibles en storage.", "action": "Revisar backups o ruta de almacenamiento."})
 
     return {"database_exists": True, "counts": counts, "issues": issues}
-
 
 def _user_diagnostic_items() -> tuple[dict[str, int], list[dict[str, Any]]]:
     users = load_users()
@@ -223,7 +253,8 @@ def summary(_user: Annotated[CurrentUser, Depends(require_permission("dashboard.
         },
         "paths": {
             "storage_dir": str(settings.storage_dir),
-            "database_path": str(settings.database_path),
+            "database_path": "PostgreSQL",
+            "postgres_configured": bool(settings.database_url),
         },
         "recent_jobs": jobs,
         "recent_events": events,
@@ -242,7 +273,8 @@ def about(_user: Annotated[CurrentUser, Depends(require_permission("about.view")
         "python": platform.python_version(),
         "system": platform.platform(),
         "storage_dir": str(settings.storage_dir),
-        "database_path": str(settings.database_path),
+        "database_path": "PostgreSQL",
+        "postgres_configured": bool(settings.database_url),
         "frontend_dist_dir": str(settings.frontend_dist_dir),
         "notes": [
             "El frontend queda online en Render.",

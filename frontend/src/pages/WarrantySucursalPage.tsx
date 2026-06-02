@@ -353,6 +353,16 @@ export function WarrantySucursalPage() {
 
       {errorW && <ErpNotice tone="error">{errorW}</ErpNotice>}
 
+      {/* Aviso cuando se está viendo un depósito: el botón "Despachar" no aplica.
+          Pasa típicamente con usuarios admin cuya branch primaria es Chiclana. */}
+      {canGenerateRemito && selectedIsDeposit && (
+        <ErpNotice tone="info" title="Estás viendo un depósito">
+          Desde un depósito no se despacha a depósito. Para generar un remito interno,
+          elegí una sucursal física (Caseros, Lanús, Canning, Norcenter…) en el selector
+          de arriba.
+        </ErpNotice>
+      )}
+
       {urgentCount > 0 && (
         <ErpNotice tone="error" title={urgentCount === 1 ? '1 caso URGENTE' : `${urgentCount} casos URGENTES`}>
           El proveedor solicitó retiro. Despachá a depósito lo antes posible.

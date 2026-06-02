@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -23,7 +22,6 @@ from ..sales_bi import (
     save_import,
     save_temp_file,
     void_import,
-    db_connect,
 )
 from ..users import CurrentUser
 
@@ -101,9 +99,8 @@ def _strip_cost_fields(record: dict, user: CurrentUser) -> dict:
 
 
 def _build_preview(sheet: dict, include_records: int = 10) -> SheetPreview:
-    with db_connect() as conn:
-        conflict = get_active_import(conn, sheet["fecha"], sheet["sucursal"], sheet["tipo"])
-        branch = find_branch(conn, sheet["sucursal"], sheet["tipo"])
+    conflict = get_active_import(sheet["fecha"], sheet["sucursal"], sheet["tipo"])
+    branch = find_branch(sheet["sucursal"], sheet["tipo"])
     return SheetPreview(
         sheet_name=sheet["sheet_name"],
         fecha=sheet["fecha"],
@@ -217,8 +214,7 @@ async def confirm(
             skipped.append({"sheet_name": sheet["sheet_name"], "reason": "Sin fecha detectada."})
             continue
 
-        with db_connect() as conn:
-            conflict = get_active_import(conn, sheet["fecha"], sheet["sucursal"], sheet["tipo"])
+        conflict = get_active_import(sheet["fecha"], sheet["sucursal"], sheet["tipo"])
 
         if conflict:
             if not body.replace:

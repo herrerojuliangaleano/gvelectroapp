@@ -315,3 +315,99 @@ def normalize_role(role: str) -> str:
 
 def has_permission(role_permissions: list[str], permission: str) -> bool:
     return "*" in role_permissions or permission in role_permissions
+
+
+# ── Validador catálogo de permisos (Fase A.5.1 · fundación) ─────────────────
+#
+# Detecta desalineaciones entre ALL_PERMISSIONS (el catálogo en código) y los
+# permisos asignados a roles (en código DEFAULT_ROLES o persistidos en DB).
+# Se ejecuta en startup y deja un warning legible si encuentra problemas.
+# Política: NO falla el arranque — el sistema sigue operando aunque haya
+# desalineación, pero el log y el endpoint de diagnóstico la reportan.
+
+def validate_permissions_catalog(role_permissions_db: dict[str, list[str]] | None = None) -> dict[str, list[str] | bool]:
+    """Audita el catálogo de permisos vs roles.
+
+    Args:
+        role_permissions_db: opcional, dict {role_name: [permission_keys]} con
+            los roles persistidos en DB. Si se omite, solo se auditan los
+            DEFAULT_ROLES en código.
+
+    Returns:
+        dict con keys:
+        - "orphan_in_defaults": claves usadas en DEFAULT_ROLES que NO existen
+          en ALL_PERMISSIONS. Indica permisos que se asignaron pero no se
+          declararon (typos, código stale). **Error real.**
+        - "orphan_in_db": claves en roles persistidos que no están en
+          ALL_PERMISSIONS. Riesgo: permisos huérfanos en usuarios reales.
+          **Error real.**
+        - "unused_explicit": claves en ALL_PERMISSIONS que NO están en ningún
+          rol Y no hay rol con wildcard. **Probable código muerto.**
+        - "unused_wildcard_only": claves no usadas explícitamente pero
+          cubiertas por algún rol con permisos ["*"] (típico SUPERADMIN).
+          **Informativo, no es bug.**
+        - "has_wildcard_role": True si algún rol tiene wildcard "*".
+
+    Solo "orphan_*" son errores reales. "unused_*" son informativos.
+    """
+    valid_keys = set(ALL_PERMISSIONS.keys()) | {"*"}
+
+    used_in_defaults: set[str] = set()
+    orphan_in_defaults: set[str] = set()
+    has_wildcard = False
+    for role_name, role_def in DEFAULT_ROLES.items():
+        perms = role_def.get("permissions") if isinstance(role_def, dict) else None
+        if not isinstance(perms, list):
+            continue
+        for key in perms:
+            key_str = str(key)
+            if key_str == "*":
+                has_wildcard = True
+            used_in_defaults.add(key_str)
+            if key_str not in valid_keys:
+                orphan_in_defaults.add(key_str)
+
+    used_in_db: set[str] = set()
+    orphan_in_db: set[str] = set()
+    for role_name, perms in (role_permissions_db or {}).items():
+        for key in perms or []:
+            key_str = str(key)
+            if key_str == "*":
+                has_wildcard = True
+            used_in_db.add(key_str)
+            if key_str not in valid_keys:
+                orphan_in_db.add(key_str)
+
+    used = used_in_defaults | used_in_db
+    unused = sorted(set(ALL_PERMISSIONS.keys()) - used)
+
+    return {
+        "orphan_in_defaults": sorted(orphan_in_defaults),
+        "orphan_in_db": sorted(orphan_in_db),
+        "unused_explicit": [] if has_wildcard else unused,
+        "unused_wildcard_only": unused if has_wildcard else [],
+        "has_wildcard_role": has_wildcard,
+    }
+
+
+def format_validation_report(report: dict[str, list[str] | bool]) -> str:
+    """Render legible del reporte. Vacío si no hay desalineaciones reales."""
+    lines: list[str] = []
+    orphans_defaults = report.get("orphan_in_defaults") or []
+    orphans_db = report.get("orphan_in_db") or []
+    unused_explicit = report.get("unused_explicit") or []
+    unused_wildcard = report.get("unused_wildcard_only") or []
+    if orphans_defaults:
+        lines.append(f"  [ERROR] Claves en DEFAULT_ROLES sin declarar en ALL_PERMISSIONS ({len(orphans_defaults)}): {', '.join(orphans_defaults)}")
+    if orphans_db:
+        lines.append(f"  [ERROR] Claves en roles persistidos (DB) sin declarar en ALL_PERMISSIONS ({len(orphans_db)}): {', '.join(orphans_db)}")
+    if unused_explicit:
+        lines.append(f"  [WARN] Claves declaradas pero sin uso en ningún rol ({len(unused_explicit)}): {', '.join(unused_explicit)}")
+    if unused_wildcard:
+        lines.append(f"  [INFO] Claves cubiertas solo por rol wildcard '*' ({len(unused_wildcard)}): {', '.join(unused_wildcard[:5])}{'...' if len(unused_wildcard) > 5 else ''}")
+    return "\n".join(lines)
+
+
+def has_real_issues(report: dict[str, list[str] | bool]) -> bool:
+    """True si hay errores reales (no solo informativos)."""
+    return bool(report.get("orphan_in_defaults")) or bool(report.get("orphan_in_db")) or bool(report.get("unused_explicit"))

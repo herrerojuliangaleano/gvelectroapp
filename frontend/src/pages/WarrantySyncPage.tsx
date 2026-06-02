@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
-import { RefreshCw, AlertTriangle, CheckCircle2, ArrowUpToLine, ArrowDownToLine, Clock3, Database, FileSpreadsheet, Wand2, Trash2, Download, ShieldAlert, ChevronDown } from 'lucide-react';
-import { can, downloadWarrantyProductionResetBackup, executeWarrantyProductionReset, fetchWarrantyProductionResetPreview, fetchWarrantySyncLogs, fetchWarrantySyncStatus, pullWarrantiesFromSheet, pushWarrantiesToSheet, setupWarrantySheet } from '../api/client';
-import type { SetupSheetResult, WarrantyResetPreviewResponse, WarrantyResetResponse, WarrantySyncLogInfo, WarrantySyncResult, WarrantySyncStatus } from '../types';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { RefreshCw, AlertTriangle, CheckCircle2, ArrowUpToLine, FileUp, Clock3, Database, FileSpreadsheet, Wand2, Trash2, Download, ShieldAlert, ChevronDown } from 'lucide-react';
+import { can, downloadWarrantyProductionResetBackup, executeWarrantyProductionReset, fetchWarrantyProductionResetPreview, fetchWarrantySyncLogs, fetchWarrantySyncStatus, importWarrantiesFromExcel, pushWarrantiesToSheet, setupWarrantySheet } from '../api/client';
+import type { SetupSheetResult, WarrantyImportResult, WarrantyResetPreviewResponse, WarrantyResetResponse, WarrantySyncLogInfo, WarrantySyncResult, WarrantySyncStatus } from '../types';
 
 function StatusBadge({ status }: { status: string }) {
   const value = (status || '').toLowerCase();
@@ -13,6 +13,7 @@ function StatusBadge({ status }: { status: string }) {
 function SyncTypeLabel({ type }: { type: string }) {
   if (type === 'push_to_sheet') return <span>App → Google Sheet</span>;
   if (type === 'pull_from_sheet') return <span>Google Sheet → App</span>;
+  if (type === 'import_historical_upload') return <span>Importación histórica (Excel)</span>;
   return <span>-</span>;
 }
 
@@ -20,10 +21,12 @@ export function WarrantySyncPage() {
   const [status, setStatus] = useState<WarrantySyncStatus | null>(null);
   const [logs, setLogs] = useState<WarrantySyncLogInfo[]>([]);
   const [loading, setLoading] = useState(true);
-  const [running, setRunning] = useState<'push' | 'pull' | 'setup' | 'backup' | 'reset' | ''>('');
+  const [running, setRunning] = useState<'push' | 'import' | 'setup' | 'backup' | 'reset' | ''>('');
   const [result, setResult] = useState<WarrantySyncResult | null>(null);
+  const [importResult, setImportResult] = useState<WarrantyImportResult | null>(null);
   const [setupResult, setSetupResult] = useState<SetupSheetResult | null>(null);
   const [error, setError] = useState('');
+  const importFileRef = useRef<HTMLInputElement | null>(null);
   const [resetPreview, setResetPreview] = useState<WarrantyResetPreviewResponse | null>(null);
   const [resetResult, setResetResult] = useState<WarrantyResetResponse | null>(null);
   const [resetConfirmation, setResetConfirmation] = useState('');
@@ -84,19 +87,21 @@ export function WarrantySyncPage() {
     }
   }
 
-  async function runPull() {
-    setRunning('pull');
+  async function runImportUpload(file: File) {
+    setRunning('import');
     setError('');
     setResult(null);
+    setImportResult(null);
     setSetupResult(null);
     try {
-      const res = await pullWarrantiesFromSheet();
-      setResult(res);
+      const res = await importWarrantiesFromExcel(file);
+      setImportResult(res);
       await load();
     } catch (err: any) {
-      setError(err?.message || 'No se pudo importar desde Google Sheet.');
+      setError(err?.message || 'No se pudo importar el Excel.');
     } finally {
       setRunning('');
+      if (importFileRef.current) importFileRef.current.value = '';
     }
   }
 
@@ -233,20 +238,64 @@ export function WarrantySyncPage() {
           {!canPush && <p className="mt-3 text-xs text-slate-500">No tenés permiso para ejecutar esta acción.</p>}
         </div>
 
-        <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5">
+        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-5">
           <div className="flex items-start gap-3">
-            <div className="rounded-xl bg-amber-500/15 p-3 text-amber-200"><ArrowDownToLine size={22} /></div>
+            <div className="rounded-xl bg-amber-500/15 p-3 text-amber-200"><FileUp size={22} /></div>
             <div>
-              <h2 className="text-xl font-black text-white">Actualizar desde Google Sheet</h2>
-              <p className="mt-1 text-sm text-slate-400">Importación legacy desde 00_RAW_GARANTIAS. El espejo nuevo es principalmente de lectura/reporting.</p>
+              <h2 className="text-xl font-black text-white">Importar histórico desde Excel</h2>
+              <p className="mt-1 text-sm text-slate-400">
+                Subí un <code className="rounded bg-slate-800 px-1 text-amber-300">.xlsx</code> con la estructura del espejo (pestañas <code className="rounded bg-slate-800 px-1 text-amber-300">GARANTIAS</code>, <code className="rounded bg-slate-800 px-1 text-amber-300">GARANTIA_ITEMS</code>, <code className="rounded bg-slate-800 px-1 text-amber-300">REMITOS</code>, <code className="rounded bg-slate-800 px-1 text-amber-300">EVENTOS</code>, <code className="rounded bg-slate-800 px-1 text-amber-300">LOTES_ENV</code>). Idempotente: no pisa garantías ni remitos ya cargados.
+              </p>
+              <p className="mt-2 text-xs text-amber-200/80"><AlertTriangle size={12} className="mb-0.5 mr-1 inline" /> Pensado para una migración inicial. Para el día a día usá la carga desde la UI.</p>
             </div>
           </div>
-          <button onClick={runPull} disabled={!canPull || !!running} className="mt-5 w-full rounded-xl bg-amber-500 px-4 py-3 text-sm font-black text-slate-950 hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50">
-            {running === 'pull' ? 'Importando...' : 'Actualizar desde Google Sheet'}
+          <input
+            ref={importFileRef}
+            type="file"
+            accept=".xlsx"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) runImportUpload(f);
+            }}
+          />
+          <button onClick={() => importFileRef.current?.click()} disabled={!canPull || !!running} className="mt-5 w-full rounded-xl bg-amber-500 px-4 py-3 text-sm font-black text-slate-950 hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50">
+            {running === 'import' ? 'Importando Excel...' : 'Elegir archivo .xlsx'}
           </button>
           {!canPull && <p className="mt-3 text-xs text-slate-500">No tenés permiso para ejecutar esta acción.</p>}
         </div>
       </div>
+
+      {importResult && (
+        <div className={`rounded-2xl border p-5 ${importResult.ok ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-red-500/30 bg-red-500/10'}`}>
+          <div className="flex items-center gap-2 text-lg font-black text-white">
+            {importResult.ok ? <CheckCircle2 size={20} /> : <AlertTriangle size={20} />}
+            Resultado de la importación
+          </div>
+          <div className="mt-3 grid gap-3 text-sm text-slate-200 sm:grid-cols-2 lg:grid-cols-4">
+            <div><span className="text-slate-400">Garantías nuevas:</span> <b className="text-emerald-200">{importResult.warranties_created}</b></div>
+            <div><span className="text-slate-400">Ya existían:</span> <b>{importResult.warranties_skipped_existing}</b></div>
+            <div><span className="text-slate-400">Ítems creados:</span> <b>{importResult.items_created}</b></div>
+            <div><span className="text-slate-400">Eventos:</span> <b>{importResult.events_created}</b></div>
+            <div><span className="text-slate-400">Remitos nuevos:</span> <b>{importResult.remitos_created}</b> (omitidos: {importResult.remitos_skipped_existing})</div>
+            <div><span className="text-slate-400">Líneas de remito:</span> <b>{importResult.remito_items_created}</b></div>
+            <div><span className="text-slate-400">Lotes ENV:</span> <b>{importResult.exports_created}</b></div>
+            <div><span className="text-slate-400">Eventos sin garantía:</span> <b>{importResult.events_skipped_no_guarantee}</b></div>
+          </div>
+          {importResult.warnings?.length > 0 && (
+            <div className="mt-4 space-y-1 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">
+              <div className="text-xs font-bold uppercase tracking-wide text-amber-300">Avisos ({importResult.warnings.length})</div>
+              {importResult.warnings.slice(0, 8).map((item, index) => <div key={`${item}-${index}`}>• {item}</div>)}
+            </div>
+          )}
+          {importResult.errors?.length > 0 && (
+            <div className="mt-4 space-y-1 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">
+              <div className="text-xs font-bold uppercase tracking-wide text-red-300">Errores ({importResult.errors.length})</div>
+              {importResult.errors.slice(0, 8).map((item, index) => <div key={`${item}-${index}`}>• {item}</div>)}
+            </div>
+          )}
+        </div>
+      )}
 
       {canReset && resetPreview && (
         <>

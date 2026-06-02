@@ -83,8 +83,17 @@ class Settings(BaseModel):
     budget_shipping_options_json: str | None = os.getenv("BUDGET_SHIPPING_OPTIONS_JSON") or None
 
     @property
-    def database_path(self) -> Path:
-        return self.storage_dir / "electrogv.sqlite3"
+    def database_url(self) -> str:
+        """URL de conexión a PostgreSQL (Fase 2).
+
+        Convención (12-factor): la define el entorno. En Docker la inyecta
+        docker-compose; en otro contexto, ponela en backend/.env.
+        Fallback solo para desarrollo sin Docker.
+        """
+        return os.getenv(
+            "DATABASE_URL",
+            "postgresql+psycopg://electrogv:electrogv@localhost:5432/electrogv_dev",
+        )
 
     @property
     def logs_dir(self) -> Path:
@@ -109,16 +118,8 @@ class Settings(BaseModel):
 
     @property
     def private_dir(self) -> Path:
-        # Ruta definitiva para modo laptop: credenciales, token, usuarios, roles.
+        # Ruta definitiva para modo laptop: credenciales y token OAuth.
         return self.storage_dir / "private"
-
-    @property
-    def users_file(self) -> Path:
-        return self.private_dir / "users.json"
-
-    @property
-    def roles_file(self) -> Path:
-        return self.private_dir / "roles.json"
 
     @property
     def audit_log_file(self) -> Path:
@@ -162,6 +163,18 @@ class Settings(BaseModel):
         return self._env_json_value("GOOGLE_TOKEN_JSON")
 
     @property
+    def firebase_service_account_file(self) -> Path:
+        return _path_from_env(os.getenv("FIREBASE_SERVICE_ACCOUNT_FILE"), self.backend_dir) or (self.private_dir / "firebase-service-account.json")
+
+    @property
+    def legacy_firebase_service_account_file(self) -> Path:
+        return self.backend_dir / "secrets" / "firebase-service-account.json"
+
+    @property
+    def firebase_service_account_json(self) -> str | None:
+        return self._env_json_value("FIREBASE_SERVICE_ACCOUNT_JSON")
+
+    @property
     def warranty_spreadsheet(self) -> str | None:
         if self.warranty_spreadsheet_id:
             return self.warranty_spreadsheet_id.strip()
@@ -185,6 +198,7 @@ class Settings(BaseModel):
             self.private_dir,
             self.google_credentials_file.parent,
             self.google_token_file.parent,
+            self.firebase_service_account_file.parent,
         ]:
             path.mkdir(parents=True, exist_ok=True)
 

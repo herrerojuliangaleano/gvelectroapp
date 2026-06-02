@@ -8,21 +8,43 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .database import init_db
 from .routers import (
     admin, auth, backups, budgets, config, employees, google_admin,
     jobs, notifications, operational_config, organization, payroll,
     price_cost_updates, products, remitos, sales_bi, sales_web, system, tools, warranties,
 )
-from .users import ensure_auth_files
 
 settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    init_db()
-    ensure_auth_files()
+    # Auditoría del catálogo de permisos vs roles persistidos (Fase A.5.1).
+    # No falla el arranque; solo deja un log legible si hay errores reales.
+    try:
+        import logging
+        from sqlalchemy import select as _select
+        from .db import db_session
+        from .models.auth import Role
+        from .permissions import (
+            format_validation_report,
+            has_real_issues,
+            validate_permissions_catalog,
+        )
+        with db_session() as session:
+            rows = session.scalars(_select(Role)).all()
+            roles_in_db = {r.name: list(r.permissions or []) for r in rows}
+        report = validate_permissions_catalog(roles_in_db)
+        if has_real_issues(report):
+            logging.getLogger("electrogv.permissions").warning(
+                "Catálogo de permisos con desalineaciones:\n%s",
+                format_validation_report(report),
+            )
+    except Exception as exc:
+        import logging
+        logging.getLogger("electrogv.permissions").warning(
+            "No se pudo validar el catálogo de permisos en startup: %s", exc
+        )
     yield
 
 

@@ -16,7 +16,7 @@ def actor_dict(user: CurrentUser | None) -> dict[str, Any]:
 def _sync_audit_to_sheet(event_type: str, detail: dict[str, Any]) -> None:
     """Copia opcional de auditoría a Google Sheets.
 
-    La fuente principal sigue siendo SQLite local. Esta sincronización es best-effort:
+    La fuente principal es PostgreSQL. Esta sincronización es best-effort:
     si Google falla, no rompe la operación del usuario.
     """
     try:

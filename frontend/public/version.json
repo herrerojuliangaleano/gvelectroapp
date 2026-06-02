@@ -1,7 +1,7 @@
 {
-    "minVersionCode":  6,
+    "minVersionCode":  8,
     "versionName":  "1.0",
-    "required":  false,
-    "changelog":  "",
+    "required":  true,
+    "changelog":  "Actualizacion obligatoria: entorno dev/prod separado y APK publicado desde Vercel.",
     "apkUrl":  "/downloads/electrogv.apk"
 }

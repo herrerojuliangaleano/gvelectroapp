@@ -2,10 +2,12 @@ import {
   AlertTriangle,
   Archive,
   CheckCircle2,
+  ClipboardCheck,
   Cloud,
   Database,
   ExternalLink,
   FileSpreadsheet,
+  KeyRound,
   Lock,
   PackageSearch,
   RefreshCw,
@@ -19,6 +21,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   can,
   fetchOperationalConfig,
@@ -31,12 +34,28 @@ import {
   validateOperationalSection,
 } from '../api/client';
 import type { OperationalConfigPayload, OperationalConfigResponse, OperationalConfigValidationResult, ProductCatalogStatus } from '../types';
+// Páginas embebidas como tabs (Fase A consolidación).
+import { SettingsPage } from './SettingsPage';
+import { GoogleAdminPage } from './GoogleAdminPage';
+import { WarrantyConfigPage } from './WarrantyConfigPage';
 
 const inputClass = 'w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-blue-400 disabled:cursor-not-allowed disabled:opacity-60';
 const labelClass = 'mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400';
 const cardClass = 'rounded-3xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl';
 
-type ConfigTab = 'resumen' | 'google' | 'productos' | 'garantias' | 'ventas' | 'presupuestos' | 'precios_costos' | 'recibos' | 'herramientas' | 'auditoria';
+type ConfigTab =
+  | 'resumen'
+  | 'sistema'      // Embebe SettingsPage (flags + push)
+  | 'google'       // URLs Sheets (operational)
+  | 'oauth'        // Embebe GoogleAdminPage (credenciales OAuth, SUPERADMIN)
+  | 'productos'
+  | 'garantias'    // Embebe WarrantyConfigPage (config específica del módulo)
+  | 'ventas'
+  | 'presupuestos'
+  | 'precios_costos'
+  | 'recibos'
+  | 'herramientas'
+  | 'auditoria';
 
 function splitList(text: string): string[] { return text.split(',').map((x) => x.trim()).filter(Boolean); }
 function joinList(list: string[] | undefined): string { return (list || []).join(', '); }
@@ -73,7 +92,20 @@ export function OperationalConfigPage() {
   const [data, setData] = useState<OperationalConfigResponse | null>(null);
   const [config, setConfig] = useState<OperationalConfigPayload | null>(null);
   const [productStatus, setProductStatus] = useState<ProductCatalogStatus | null>(null);
-  const [tab, setTab] = useState<ConfigTab>('resumen');
+  // Tab persistido en URL (?tab=X) para deep-link desde sidebar / redirects.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = (searchParams.get('tab') as ConfigTab) || 'resumen';
+  const [tab, setTabRaw] = useState<ConfigTab>(initialTab);
+  const setTab = (next: ConfigTab) => {
+    setTabRaw(next);
+    if (next === 'resumen') {
+      const params = new URLSearchParams(searchParams);
+      params.delete('tab');
+      setSearchParams(params, { replace: true });
+    } else {
+      setSearchParams({ tab: next }, { replace: true });
+    }
+  };
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
@@ -186,7 +218,9 @@ export function OperationalConfigPage() {
 
   const tabs = useMemo(() => [
     ['resumen', 'Resumen', <SlidersHorizontal size={16} />],
-    ['google', 'Google', <Cloud size={16} />],
+    ['sistema', 'Sistema', <Settings size={16} />],
+    ['google', 'Sheets', <Cloud size={16} />],
+    ['oauth', 'OAuth Google', <KeyRound size={16} />],
     ['productos', 'Productos', <PackageSearch size={16} />],
     ['garantias', 'Garantías', <ShieldCheck size={16} />],
     ['ventas', 'Ventas', <Truck size={16} />],
@@ -194,7 +228,7 @@ export function OperationalConfigPage() {
     ['precios_costos', 'Precios y costos', <Database size={16} />],
     ['recibos', 'Recibos', <Archive size={16} />],
     ['herramientas', 'Herramientas', <Wrench size={16} />],
-    ['auditoria', 'Auditoría', <Settings size={16} />],
+    ['auditoria', 'Auditoría', <ClipboardCheck size={16} />],
   ] as Array<[ConfigTab, string, ReactNode]>, []);
 
   if (loading) return <div className="text-slate-300">Cargando configuración operativa...</div>;
@@ -277,19 +311,26 @@ export function OperationalConfigPage() {
       </div>
     </section>}
 
-    {tab === 'garantias' && <section className={cardClass}>
-      <SectionTitle title="Garantías" subtitle="Hoja espejo para gerencia. La operación principal queda en la base de la app." actions={<div className="flex gap-2"><button onClick={() => testSection('warranties')} disabled={testing === 'warranties'} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-bold text-slate-200">Probar conexión</button>{warrantiesUrl && <button onClick={() => openUrl(warrantiesUrl)} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-bold text-slate-200"><ExternalLink size={16} className="inline" /> Abrir Sheet</button>}</div>} />
-      <div className="mt-5 grid gap-4 lg:grid-cols-2">
-        <Field label="URL Google Sheet garantías"><input disabled={readOnly} className={inputClass} value={config.warranties.spreadsheet_url || ''} onChange={(e) => patch('warranties.spreadsheet_url', e.target.value)} /></Field>
-        <Field label="ID spreadsheet"><input disabled={readOnly} className={inputClass} value={config.warranties.spreadsheet_id || ''} onChange={(e) => patch('warranties.spreadsheet_id', e.target.value)} /></Field>
-        <Field label="Hoja raw garantías"><input disabled={readOnly} className={inputClass} value={config.warranties.raw_sheet || ''} onChange={(e) => patch('warranties.raw_sheet', e.target.value)} /></Field>
-        <Field label="Hoja contadores"><input disabled={readOnly} className={inputClass} value={config.warranties.counter_sheet || ''} onChange={(e) => patch('warranties.counter_sheet', e.target.value)} /></Field>
-        <Field label="Estado inicial"><input disabled={readOnly} className={inputClass} value={config.warranties.estado_default || '1 - INGRESO'} onChange={(e) => patch('warranties.estado_default', e.target.value)} /></Field>
-        <Field label="Sucursales"><input disabled={readOnly} className={inputClass} value={joinList(config.warranties.sucursales)} onChange={(e) => patch('warranties.sucursales', splitList(e.target.value))} /></Field>
-        <Field label="Depósitos"><input disabled={readOnly} className={inputClass} value={joinList(config.warranties.depositos)} onChange={(e) => patch('warranties.depositos', splitList(e.target.value))} /></Field>
-      </div>
-      <div className="mt-4 rounded-2xl border border-blue-500/20 bg-blue-500/10 p-4 text-sm text-blue-100">Los productos de Garantías se toman desde el catálogo local sincronizado en la sección Productos.</div>
-    </section>}
+    {tab === 'garantias' && (
+      // Fase A consolidación: la config completa de garantías (estados, sucursales,
+      // depósitos, delay_ranges, required_review_fields, métricas) vive en
+      // WarrantyConfigPage. Se embebe acá para no duplicar formulario.
+      <section className={cardClass}>
+        <WarrantyConfigPage embedded />
+      </section>
+    )}
+
+    {tab === 'sistema' && (
+      <section className={cardClass}>
+        <SettingsPage embedded />
+      </section>
+    )}
+
+    {tab === 'oauth' && (
+      <section className={cardClass}>
+        <GoogleAdminPage embedded />
+      </section>
+    )}
 
     {tab === 'ventas' && <section className={cardClass}>
       <SectionTitle title="Ventas" subtitle="Parámetros operativos de carga y alcance comercial." actions={<button onClick={() => testSection('sales')} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-bold text-slate-200">Verificar</button>} />

@@ -161,7 +161,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
           { to: '/warranties/remito-historial', icon: <History size={14} />,           label: 'Historial de remitos',    visible: canSeeRemitoTracking(user) },
           // ── Administración del módulo ──
           { to: '/warranties/sync',       icon: <Cloud size={14} />,             label: 'Sincronización',          visible: canSeeWarrantySync(user) },
-          { to: '/warranties/config',     icon: <SlidersHorizontal size={14} />, label: 'Configuración',           visible: canSeeWarrantyConfig(user) },
+          // /warranties/config se consolidó en /admin/operational-config?tab=garantias (Fase A).
+          { to: '/admin/operational-config?tab=garantias', icon: <SlidersHorizontal size={14} />, label: 'Configuración',           visible: canSeeWarrantyConfig(user) },
         ] },
       ] },
       { title: 'Gestión interna', items: [
@@ -184,11 +185,11 @@ export function AppLayout({ children }: { children: ReactNode }) {
         { to: '/administracion/fotos', icon: <Camera size={16} />, label: 'Fotos profesionales', permission: 'employees.photo.approve' },
         { to: '/admin/roles', icon: <KeyRound size={16} />, label: 'Roles y permisos', permission: 'roles.view' },
         { to: '/admin/companies-branches', icon: <Building2 size={16} />, label: 'Empresas y sucursales', permission: 'branches.view' },
-        { to: '/admin/operational-config', icon: <SlidersHorizontal size={16} />, label: 'Config. operativa', permission: 'ops_config.view' },
-        { to: '/admin/google', icon: <Cloud size={16} />, label: 'Google', permission: 'google.manage' },
+        { to: '/admin/operational-config', icon: <SlidersHorizontal size={16} />, label: 'Configuración', permission: 'ops_config.view' },
+        // /admin/google se consolidó como tab "OAuth Google" en operational-config (Fase A).
+        // /settings se consolidó como tab "Sistema" en operational-config (Fase A).
         { to: '/admin/backups', icon: <Archive size={16} />, label: 'Backups', permission: 'backups.view' },
         { to: '/admin/diagnostico', icon: <Activity size={16} />, label: 'Diagnóstico', permission: 'system.diagnostics.view' },
-        { to: '/settings', icon: <Settings size={16} />, label: 'Config. técnica', permission: 'settings.view' },
       ] },
       { title: 'Cuenta', items: [
         { to: '/me', icon: <User size={16} />, label: 'Mi usuario', permission: 'profile.view' },
@@ -305,12 +306,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
           <span>Sin conexión a internet. Algunas acciones pueden fallar hasta que se restablezca.</span>
         </div>
       )}
-      {online && status && !status.available && (
-        <div className="erp-global-banner" role="status" aria-live="polite">
-          <span aria-hidden="true">●</span>
-          <span>{status.mode === 'maintenance' ? 'Sistema en mantenimiento — operaciones restringidas.' : 'Sistema cerrado en este momento.'}</span>
-        </div>
-      )}
+      {/* Banner "sistema cerrado / mantenimiento" eliminado: la info ya está
+          visible en el topbar (chip de estado) y en el sidebar ("Sistema cerrado"),
+          y aparecía siempre fuera del horario 09:00–16:00 generando ruido visual
+          permanente. Solo se mantiene el banner offline (arriba) que sí es crítico. */}
       {/* Header móvil estilo ERP (lg:hidden) */}
       <header className="erp-mobile-header lg:hidden" role="banner">
         <button

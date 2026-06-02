@@ -1,265 +1,31 @@
 from __future__ import annotations
 
-import json
-import re
-import sqlite3
 import threading
-import uuid
-from datetime import datetime, timezone
-from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from dataclasses import dataclass, field
 from typing import Any
 
-from .config import get_settings
 from .permissions import DEFAULT_ROLES, has_permission, normalize_role
-from .security import hash_password, verify_password
+from .security import verify_password
+# Fase 2.5 — usuarios + roles + alcance pasan a Postgres.
+from . import users_db
+# Fase 2.5b — empleados portados a Postgres.
+from . import employees_db
 
 _store_lock = threading.RLock()
 
 
-def _db_connect() -> sqlite3.Connection:
-    settings = get_settings()
-    settings.ensure_dirs()
-    conn = sqlite3.connect(settings.database_path, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def _db_ready(conn: sqlite3.Connection) -> bool:
-    try:
-        conn.execute("SELECT 1 FROM branches LIMIT 1")
-        return True
-    except Exception:
-        return False
-
-
-def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
-    """Agrega una columna si no existe (migración aditiva idempotente)."""
-    existing = {str(r["name"]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-    if column not in existing:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
-
-
-def _normalize_branch_token(value: str) -> str:
-    raw = str(value or "").upper()
-    # Soporta textos viejos tipo "1 - CANNING", "Canning WEB" o "CANNING_WEB".
-    raw = re.sub(r"^\s*\d+\s*[-.]\s*", "", raw)
-    raw = raw.replace("Á", "A").replace("É", "E").replace("Í", "I").replace("Ó", "O").replace("Ú", "U").replace("Ñ", "N")
-    return re.sub(r"[^A-Z0-9]+", "", raw)
-
-
-def _row_to_branch_assignment(row: sqlite3.Row, is_primary: bool = False) -> dict[str, Any]:
-    return {
-        "id": row["id"],
-        "name": row["name"],
-        "code": row["code"],
-        "type": row["type"],
-        "company_id": row["company_id"],
-        "company_name": row["company_name"] or "",
-        "parent_branch_id": row["parent_branch_id"],
-        "parent_branch_name": row["parent_branch_name"] or "",
-        "is_primary": bool(is_primary),
-    }
-
-
-def _fetch_branch_rows(branch_ids: list[str]) -> dict[str, sqlite3.Row]:
-    clean = [str(b).strip() for b in branch_ids if str(b or "").strip()]
-    if not clean:
-        return {}
-    try:
-        with _db_connect() as conn:
-            if not _db_ready(conn):
-                return {}
-            placeholders = ",".join("?" for _ in clean)
-            rows = conn.execute(
-                f"""
-                SELECT b.*, c.name AS company_name, parent.name AS parent_branch_name
-                FROM branches b
-                LEFT JOIN companies c ON c.id = b.company_id
-                LEFT JOIN branches parent ON parent.id = b.parent_branch_id
-                WHERE b.id IN ({placeholders})
-                """,
-                clean,
-            ).fetchall()
-            return {row["id"]: row for row in rows}
-    except Exception:
-        return {}
-
-
-def _branch_is_web_candidate(row: sqlite3.Row) -> bool:
-    name_token = _normalize_branch_token(str(row["name"] or ""))
-    code_token = _normalize_branch_token(str(row["code"] or ""))
-    return str(row["type"] or "").lower() == "web" or name_token.endswith("WEB") or code_token.endswith("WEB")
-
-
-def _guess_branch_id_from_legacy(sucursal: str, role: str = "") -> str:
-    token = _normalize_branch_token(sucursal)
-    if not token:
-        return ""
-
-    prefer_web = "WEB" in token or "WEB" in _normalize_branch_token(role)
-
-    try:
-        with _db_connect() as conn:
-            if not _db_ready(conn):
-                return ""
-            rows = conn.execute("SELECT id, name, code, type, parent_branch_id FROM branches WHERE is_active = 1").fetchall()
-    except Exception:
-        return ""
-
-    exact_matches: list[sqlite3.Row] = []
-    soft_matches: list[sqlite3.Row] = []
-    for row in rows:
-        row_tokens = {
-            _normalize_branch_token(str(row["id"] or "")),
-            _normalize_branch_token(str(row["name"] or "")),
-            _normalize_branch_token(str(row["code"] or "")),
-        }
-        if token in row_tokens:
-            exact_matches.append(row)
-            continue
-
-        # Si el texto viejo era "CANNING" y el rol es vendedor web, buscamos también "Canning - WEB".
-        if prefer_web:
-            base_tokens = {value.removesuffix("WEB") for value in row_tokens}
-            if token in base_tokens:
-                soft_matches.append(row)
-        else:
-            # Para textos viejos con espacios/guiones raros, permitimos coincidencia parcial conservadora.
-            if any(value and (token == value or token in value or value in token) for value in row_tokens):
-                soft_matches.append(row)
-
-    candidates = (exact_matches + soft_matches) if prefer_web else (exact_matches or soft_matches)
-    if not candidates:
-        return ""
-    if prefer_web:
-        web = [row for row in candidates if _branch_is_web_candidate(row)]
-        if web:
-            return str(web[0]["id"])
-    physical = [row for row in candidates if str(row["type"] or "").lower() == "physical"]
-    return str((physical[0] if physical else candidates[0])["id"])
-
-def _user_branch_rows_from_db(username: str) -> list[tuple[sqlite3.Row, bool]]:
-    try:
-        with _db_connect() as conn:
-            if not _db_ready(conn):
-                return []
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS user_branches (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT NOT NULL,
-                    branch_id TEXT NOT NULL,
-                    is_primary INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    UNIQUE(username, branch_id),
-                    FOREIGN KEY(branch_id) REFERENCES branches(id)
-                )
-                """
-            )
-            rows = conn.execute(
-                """
-                SELECT b.*, c.name AS company_name, parent.name AS parent_branch_name, ub.is_primary AS ub_is_primary
-                FROM user_branches ub
-                JOIN branches b ON b.id = ub.branch_id
-                LEFT JOIN companies c ON c.id = b.company_id
-                LEFT JOIN branches parent ON parent.id = b.parent_branch_id
-                WHERE ub.username = ?
-                ORDER BY ub.is_primary DESC, c.name COLLATE NOCASE, b.name COLLATE NOCASE
-                """,
-                (username,),
-            ).fetchall()
-            return [(row, bool(row["ub_is_primary"])) for row in rows]
-    except Exception:
-        return []
-
-
-def _sync_user_branches(username: str, branch_ids: list[str], primary_branch_id: str = "") -> None:
-    clean: list[str] = []
-    seen: set[str] = set()
-    for branch_id in branch_ids:
-        branch_id = str(branch_id or "").strip()
-        if branch_id and branch_id not in seen:
-            clean.append(branch_id)
-            seen.add(branch_id)
-    primary = primary_branch_id if primary_branch_id in seen else (clean[0] if clean else "")
-    try:
-        with _db_connect() as conn:
-            if not _db_ready(conn):
-                return
-            rows = _fetch_branch_rows(clean)
-            valid = [branch_id for branch_id in clean if branch_id in rows]
-            primary = primary if primary in valid else (valid[0] if valid else "")
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS user_branches (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT NOT NULL,
-                    branch_id TEXT NOT NULL,
-                    is_primary INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    UNIQUE(username, branch_id),
-                    FOREIGN KEY(branch_id) REFERENCES branches(id)
-                )
-                """
-            )
-            conn.execute("DELETE FROM user_branches WHERE username = ?", (username,))
-            now = datetime.now(timezone.utc).isoformat()
-            for branch_id in valid:
-                conn.execute(
-                    "INSERT OR REPLACE INTO user_branches (username, branch_id, is_primary, created_at) VALUES (?, ?, ?, ?)",
-                    (username, branch_id, 1 if branch_id == primary else 0, now),
-                )
-            conn.commit()
-    except Exception:
-        # No bloqueamos la creación de usuarios si la DB todavía no está inicializada.
-        return
-
-
 def _branch_assignments_for_record(record: "UserRecord") -> list[dict[str, Any]]:
-    db_rows = _user_branch_rows_from_db(record.username)
-    if db_rows:
-        assignments = [_row_to_branch_assignment(row, is_primary) for row, is_primary in db_rows]
-        if assignments and not any(item.get("is_primary") for item in assignments):
-            assignments[0]["is_primary"] = True
-        return assignments
+    """Devuelve la lista de sucursales asignadas (alcance) para el UserRecord.
 
-    branch_ids: list[str] = []
-    for branch_id in [record.branch_id, *record.branch_ids]:
-        branch_id = str(branch_id or "").strip()
-        if branch_id and branch_id not in branch_ids:
-            branch_ids.append(branch_id)
-    if not branch_ids and record.sucursal:
-        guessed = _guess_branch_id_from_legacy(record.sucursal, record.role)
-        if guessed:
-            branch_ids.append(guessed)
-
-    rows = _fetch_branch_rows(branch_ids)
-    result: list[dict[str, Any]] = []
-    for index, branch_id in enumerate(branch_ids):
-        row = rows.get(branch_id)
-        if row:
-            result.append(_row_to_branch_assignment(row, is_primary=(branch_id == record.branch_id or (not record.branch_id and index == 0))))
-    if result and not any(item["is_primary"] for item in result):
-        result[0]["is_primary"] = True
-    return result
-
-
-def _ensure_user_roles_table(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS user_roles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL,
-            role TEXT NOT NULL,
-            is_primary INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            UNIQUE(username, role)
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_user_roles_username ON user_roles(username)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_user_roles_role ON user_roles(role)")
+    Si `_record_from_payload` ya cargó `_pg_branches` desde Postgres, lo usa.
+    En caso contrario consulta Postgres por username (caso raro: records
+    construidos manualmente).
+    """
+    cached = getattr(record, "_pg_branches", None)
+    if cached is not None:
+        return list(cached)
+    payload = users_db.get_user_pg(record.username)
+    return list(payload.get("branches") or []) if payload else []
 
 
 def _clean_role_keys(role_keys: list[str], roles_catalog: dict[str, dict[str, Any]] | None = None) -> list[str]:
@@ -272,55 +38,9 @@ def _clean_role_keys(role_keys: list[str], roles_catalog: dict[str, dict[str, An
     return clean
 
 
-def _user_roles_from_db(username: str) -> list[str]:
-    try:
-        with _db_connect() as conn:
-            _ensure_user_roles_table(conn)
-            rows = conn.execute(
-                """
-                SELECT role, is_primary
-                FROM user_roles
-                WHERE username = ?
-                ORDER BY is_primary DESC, role COLLATE NOCASE
-                """,
-                (username,),
-            ).fetchall()
-            return [normalize_role(str(row["role"] or "")) for row in rows if str(row["role"] or "").strip()]
-    except Exception:
-        return []
-
-
-def _sync_user_roles(username: str, role_keys: list[str], primary_role: str = "") -> list[str]:
-    roles_catalog = load_roles()
-    clean = _clean_role_keys(role_keys, roles_catalog)
-    primary = normalize_role(primary_role)
-    if primary and primary in roles_catalog and primary not in clean:
-        clean.insert(0, primary)
-    if not clean and primary and primary in roles_catalog:
-        clean = [primary]
-    if not clean:
-        clean = ["VENDEDOR"] if "VENDEDOR" in roles_catalog else list(roles_catalog.keys())[:1]
-    primary = primary if primary in clean else clean[0]
-    try:
-        with _db_connect() as conn:
-            _ensure_user_roles_table(conn)
-            conn.execute("DELETE FROM user_roles WHERE username = ?", (username,))
-            now = datetime.now(timezone.utc).isoformat()
-            for role in clean:
-                conn.execute(
-                    "INSERT OR REPLACE INTO user_roles (username, role, is_primary, created_at) VALUES (?, ?, ?, ?)",
-                    (username, role, 1 if role == primary else 0, now),
-                )
-            conn.commit()
-    except Exception:
-        pass
-    return clean
-
-
 def _roles_for_record(record: "UserRecord") -> list[str]:
     roles_catalog = load_roles()
-    db_roles = _clean_role_keys(_user_roles_from_db(record.username), roles_catalog)
-    source = db_roles or _clean_role_keys(list(record.roles or []), roles_catalog)
+    source = _clean_role_keys(list(record.roles or []), roles_catalog)
     primary = normalize_role(record.role)
     if primary and primary in roles_catalog and primary not in source:
         source.insert(0, primary)
@@ -348,264 +68,23 @@ def _permissions_for_roles(role_keys: list[str], roles_catalog: dict[str, dict[s
     return sorted(permissions)
 
 
-def _ensure_employees_table(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS employees (
-            id TEXT PRIMARY KEY,
-            username TEXT UNIQUE,
-            dni TEXT UNIQUE,
-            first_name TEXT NOT NULL DEFAULT '',
-            last_name TEXT NOT NULL DEFAULT '',
-            display_name TEXT NOT NULL DEFAULT '',
-            phone TEXT NOT NULL DEFAULT '',
-            personal_email TEXT NOT NULL DEFAULT '',
-            position TEXT NOT NULL DEFAULT '',
-            company_id TEXT NOT NULL DEFAULT '',
-            branch_id TEXT NOT NULL DEFAULT '',
-            photo_url TEXT NOT NULL DEFAULT '',
-            photo_status TEXT NOT NULL DEFAULT 'sin_foto',
-            status TEXT NOT NULL DEFAULT 'activo',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    # Fase 0 — Empleados como entidad propia. Campos laborales/legales adicionales.
-    # Todos aditivos y opcionales: empleados existentes no se ven afectados.
-    _ensure_column(conn, "employees", "work_branch_id", "TEXT NOT NULL DEFAULT ''")
-    _ensure_column(conn, "employees", "department", "TEXT NOT NULL DEFAULT ''")
-    _ensure_column(conn, "employees", "address", "TEXT NOT NULL DEFAULT ''")
-    _ensure_column(conn, "employees", "birthdate", "TEXT NOT NULL DEFAULT ''")
-    _ensure_column(conn, "employees", "gender", "TEXT NOT NULL DEFAULT ''")
-    _ensure_column(conn, "employees", "civil_status", "TEXT NOT NULL DEFAULT ''")
-    _ensure_column(conn, "employees", "contract_type", "TEXT NOT NULL DEFAULT ''")
-    _ensure_column(conn, "employees", "hire_date", "TEXT NOT NULL DEFAULT ''")
-    _ensure_column(conn, "employees", "manager_employee_id", "TEXT NOT NULL DEFAULT ''")
-    _ensure_column(conn, "employees", "photo_uploaded_at", "TEXT NOT NULL DEFAULT ''")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_employees_username ON employees(username)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_employees_dni ON employees(dni)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_employees_company ON employees(company_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_employees_branch ON employees(branch_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_employees_work_branch ON employees(work_branch_id)")
-    # Historial de estado laboral (alta / licencia / baja) con motivo y fechas.
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS employee_status_history (
-            id TEXT PRIMARY KEY,
-            employee_id TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT '',
-            previous_status TEXT NOT NULL DEFAULT '',
-            motivo TEXT NOT NULL DEFAULT '',
-            categoria TEXT NOT NULL DEFAULT '',
-            fecha_desde TEXT NOT NULL DEFAULT '',
-            fecha_hasta TEXT NOT NULL DEFAULT '',
-            observaciones TEXT NOT NULL DEFAULT '',
-            actor_username TEXT NOT NULL DEFAULT '',
-            actor_name TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_emp_status_hist_emp ON employee_status_history(employee_id)")
-
-
-def _clean_dni(value: str | None) -> str:
-    return re.sub(r"\D+", "", str(value or ""))
-
-
-def _split_display_name(value: str) -> tuple[str, str]:
-    parts = [p for p in str(value or "").strip().split() if p]
-    if not parts:
-        return "", ""
-    if len(parts) == 1:
-        return parts[0], ""
-    return " ".join(parts[:-1]), parts[-1]
-
-
-def _row_has(row: sqlite3.Row, key: str) -> bool:
-    try:
-        return key in row.keys()
-    except Exception:
-        return False
-
-
-def _rv(row: sqlite3.Row, key: str, default: str = "") -> str:
-    return str(row[key]) if _row_has(row, key) and row[key] is not None else default
-
-
-def _employee_public_from_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
-    if row is None:
-        return None
-    full_name = str(row["display_name"] or "").strip() or " ".join([str(row["first_name"] or "").strip(), str(row["last_name"] or "").strip()]).strip()
-    return {
-        "id": str(row["id"] or ""),
-        "username": str(row["username"] or ""),
-        "dni": str(row["dni"] or ""),
-        "first_name": str(row["first_name"] or ""),
-        "last_name": str(row["last_name"] or ""),
-        "display_name": full_name,
-        "phone": str(row["phone"] or ""),
-        "personal_email": str(row["personal_email"] or ""),
-        "position": str(row["position"] or ""),
-        "department": _rv(row, "department"),
-        "address": _rv(row, "address"),
-        "birthdate": _rv(row, "birthdate"),
-        "gender": _rv(row, "gender"),
-        "civil_status": _rv(row, "civil_status"),
-        "contract_type": _rv(row, "contract_type"),
-        "hire_date": _rv(row, "hire_date"),
-        "manager_employee_id": _rv(row, "manager_employee_id"),
-        "company_id": str(row["company_id"] or ""),
-        "company_name": str(row["company_name"] or ""),
-        "branch_id": str(row["branch_id"] or ""),
-        "branch_name": str(row["branch_name"] or ""),
-        "branch_type": str(row["branch_type"] or ""),
-        "work_branch_id": _rv(row, "work_branch_id"),
-        "work_branch_name": _rv(row, "work_branch_name"),
-        "photo_url": str(row["photo_url"] or ""),
-        "photo_status": str(row["photo_status"] or "sin_foto"),
-        "photo_uploaded_at": _rv(row, "photo_uploaded_at"),
-        "status": str(row["status"] or "activo"),
-        "created_at": str(row["created_at"] or ""),
-        "updated_at": str(row["updated_at"] or ""),
-    }
-
-
 def _fetch_employee_by_username(username: str) -> dict[str, Any] | None:
-    try:
-        with _db_connect() as conn:
-            _ensure_employees_table(conn)
-            row = conn.execute(
-                """
-                SELECT e.*, c.name AS company_name, b.name AS branch_name, b.type AS branch_type
-                FROM employees e
-                LEFT JOIN companies c ON c.id = e.company_id
-                LEFT JOIN branches b ON b.id = e.branch_id
-                WHERE e.username = ?
-                """,
-                (username,),
-            ).fetchone()
-            return _employee_public_from_row(row)
-    except Exception:
-        return None
+    """[Fase 2.5b] Lee el empleado vinculado a un usuario desde Postgres."""
+    return employees_db.get_employee_by_username_pg(username)
 
 
-def _employee_defaults_from_user(record: "UserRecord") -> dict[str, Any]:
-    first, last = _split_display_name(record.display_name)
-    return {
-        "first_name": first,
-        "last_name": last,
-        "display_name": record.display_name,
-        "company_id": record.company_id,
-        "branch_id": record.branch_id,
-        "status": "activo" if record.is_active else "inactivo",
-    }
-
-
-def upsert_employee_for_user(username: str, payload: dict[str, Any] | None = None, user_record: "UserRecord" | None = None) -> dict[str, Any] | None:
-    data = dict(payload or {})
-    if user_record is not None:
-        defaults = _employee_defaults_from_user(user_record)
-        for key, value in defaults.items():
-            if not str(data.get(key) or "").strip():
-                data[key] = value
-
-    dni = _clean_dni(data.get("dni"))
-    first_name = str(data.get("first_name") or "").strip()
-    last_name = str(data.get("last_name") or "").strip()
-    display_name = str(data.get("display_name") or "").strip() or " ".join([first_name, last_name]).strip() or (user_record.display_name if user_record else username)
-    if not first_name and not last_name:
-        first_name, last_name = _split_display_name(display_name)
-
-    try:
-        with _db_connect() as conn:
-            _ensure_employees_table(conn)
-            now = datetime.now(timezone.utc).isoformat()
-            existing = conn.execute("SELECT * FROM employees WHERE username = ?", (username,)).fetchone()
-            employee_id = str(existing["id"] if existing else data.get("id") or uuid.uuid4())
-            dni_value: str | None = dni or None
-            if dni_value:
-                duplicate = conn.execute("SELECT username FROM employees WHERE dni = ? AND username IS NOT ?", (dni_value, username)).fetchone()
-                if duplicate:
-                    raise ValueError(f"El DNI {dni_value} ya está asignado a otro empleado")
-            fields = {
-                "id": employee_id,
-                "username": username,
-                "dni": dni_value,
-                "first_name": first_name,
-                "last_name": last_name,
-                "display_name": display_name,
-                "phone": str(data.get("phone") or "").strip(),
-                "personal_email": str(data.get("personal_email") or "").strip(),
-                "position": str(data.get("position") or "").strip(),
-                "company_id": str(data.get("company_id") or "").strip(),
-                "branch_id": str(data.get("branch_id") or "").strip(),
-                "photo_url": str(data.get("photo_url") or (existing["photo_url"] if existing else "") or "").strip(),
-                "photo_status": str(data.get("photo_status") or (existing["photo_status"] if existing else "sin_foto") or "sin_foto").strip(),
-                "status": str(data.get("status") or ("activo" if (user_record.is_active if user_record else True) else "inactivo")).strip(),
-                "created_at": str(existing["created_at"] if existing else now),
-                "updated_at": now,
-            }
-            conn.execute(
-                """
-                INSERT INTO employees (id, username, dni, first_name, last_name, display_name, phone, personal_email, position, company_id, branch_id, photo_url, photo_status, status, created_at, updated_at)
-                VALUES (:id, :username, :dni, :first_name, :last_name, :display_name, :phone, :personal_email, :position, :company_id, :branch_id, :photo_url, :photo_status, :status, :created_at, :updated_at)
-                ON CONFLICT(username) DO UPDATE SET
-                    dni=excluded.dni, first_name=excluded.first_name, last_name=excluded.last_name, display_name=excluded.display_name,
-                    phone=excluded.phone, personal_email=excluded.personal_email, position=excluded.position, company_id=excluded.company_id, branch_id=excluded.branch_id,
-                    photo_url=excluded.photo_url, photo_status=excluded.photo_status, status=excluded.status, updated_at=excluded.updated_at
-                """,
-                fields,
-            )
-            conn.commit()
-            row = conn.execute(
-                """
-                SELECT e.*, c.name AS company_name, b.name AS branch_name, b.type AS branch_type
-                FROM employees e
-                LEFT JOIN companies c ON c.id = e.company_id
-                LEFT JOIN branches b ON b.id = e.branch_id
-                WHERE e.username = ?
-                """,
-                (username,),
-            ).fetchone()
-            return _employee_public_from_row(row)
-    except sqlite3.IntegrityError as exc:
-        raise ValueError("No se pudo guardar el empleado. Revisá que el DNI no esté repetido.") from exc
+def upsert_employee_for_user(
+    username: str,
+    payload: dict[str, Any] | None = None,
+    user_record: "UserRecord" | None = None,
+) -> dict[str, Any] | None:
+    """[Fase 2.5b] Crea/actualiza el empleado del usuario en Postgres."""
+    return employees_db.upsert_employee_for_user_pg(username, payload, user_record)
 
 
 def repair_user_employees() -> dict[str, int]:
-    with _store_lock:
-        users = load_users()
-        created = 0
-        updated = 0
-        total = 0
-        for record in users.values():
-            total += 1
-            before = _fetch_employee_by_username(record.username)
-            payload = _employee_defaults_from_user(record)
-            if before:
-                # Conservamos datos sensibles/manuales como DNI, teléfono y puesto; solo completamos organización si falta.
-                payload.update({
-                    "dni": before.get("dni") or "",
-                    "first_name": before.get("first_name") or payload.get("first_name") or "",
-                    "last_name": before.get("last_name") or payload.get("last_name") or "",
-                    "display_name": before.get("display_name") or payload.get("display_name") or "",
-                    "phone": before.get("phone") or "",
-                    "personal_email": before.get("personal_email") or "",
-                    "position": before.get("position") or "",
-                    "company_id": before.get("company_id") or payload.get("company_id") or "",
-                    "branch_id": before.get("branch_id") or payload.get("branch_id") or "",
-                    "photo_url": before.get("photo_url") or "",
-                    "photo_status": before.get("photo_status") or "sin_foto",
-                    "status": "activo" if record.is_active else "inactivo",
-                })
-                updated += 1
-            else:
-                created += 1
-            upsert_employee_for_user(record.username, payload, record)
-        return {"created": created, "updated": updated, "total": total}
+    """[Fase 2.5b] Asegura que cada usuario tenga un Employee en Postgres."""
+    return employees_db.repair_user_employees_pg()
 
 
 @dataclass
@@ -693,110 +172,18 @@ class CurrentUser:
         }
 
 
-def _read_json(path: Path, default: Any) -> Any:
-    if not path.exists():
-        return default
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return default
-
-
-def _write_json(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
-
-
-def ensure_auth_files() -> None:
-    settings = get_settings()
-    settings.ensure_dirs()
-    with _store_lock:
-        if not settings.roles_file.exists():
-            _write_json(settings.roles_file, {"roles": DEFAULT_ROLES})
-        else:
-            data = _read_json(settings.roles_file, {"roles": {}})
-            roles = data.setdefault("roles", {})
-            changed = False
-            for role, info in DEFAULT_ROLES.items():
-                if role not in roles:
-                    roles[role] = info
-                    changed = True
-                    continue
-                current = roles.get(role) if isinstance(roles.get(role), dict) else {}
-                current_permissions = current.setdefault("permissions", [])
-                if role in ("DEPOSITO", "CADETE_DEPOSITO") and isinstance(current_permissions, list) and "*" not in current_permissions:
-                    # Roles de depósito: mantener permisos Y label sincronizados exactamente con DEFAULT_ROLES.
-                    target_permissions = list(info.get("permissions", []))
-                    if current_permissions != target_permissions:
-                        current["permissions"] = target_permissions
-                        changed = True
-                    # Forzar label actualizado (ej: "Depósito" → "Encargado de Depósito")
-                    target_label = info.get("label", role) if isinstance(info, dict) else role
-                    if current.get("label") != target_label:
-                        current["label"] = target_label
-                        changed = True
-                elif isinstance(current_permissions, list) and "*" not in current_permissions:
-                    for permission in info.get("permissions", []):
-                        if permission not in current_permissions:
-                            current_permissions.append(permission)
-                            changed = True
-                if not current.get("label") and isinstance(info, dict):
-                    current["label"] = info.get("label", role)
-                    changed = True
-                if not current.get("level") and isinstance(info, dict):
-                    current["level"] = info.get("level", 0)
-                    changed = True
-                roles[role] = current
-            if changed:
-                _write_json(settings.roles_file, data)
-
-        if not settings.users_file.exists():
-            password = settings.admin_password if settings.admin_password != "cambiar-esta-clave" else "admin"
-            _write_json(
-                settings.users_file,
-                {
-                    "users": [
-                        {
-                            "username": settings.admin_user,
-                            "display_name": "Administrador",
-                            "role": "SUPERADMIN",
-                            "roles": ["SUPERADMIN"],
-                            "sucursal": "",
-                            "company_id": "",
-                            "branch_id": "",
-                            "branch_ids": [],
-                            "password_hash": hash_password(password),
-                            "is_active": True,
-                            "must_change_password": False,
-                        }
-                    ]
-                },
-            )
-
-
 def load_roles() -> dict[str, dict[str, Any]]:
-    ensure_auth_files()
-    data = _read_json(get_settings().roles_file, {"roles": DEFAULT_ROLES})
-    roles = data.get("roles", {}) if isinstance(data, dict) else {}
-    normalized: dict[str, dict[str, Any]] = {}
-    for key, info in roles.items():
-        role = normalize_role(key)
-        if not isinstance(info, dict):
-            continue
-        perms = info.get("permissions", [])
-        if not isinstance(perms, list):
-            perms = []
-        normalized[role] = {
-            "label": str(info.get("label") or role),
-            "level": int(info.get("level") or 0),
-            "permissions": [str(p) for p in perms],
-        }
-    return normalized
+    """Lee los roles desde Postgres. Si la tabla está vacía cae al catálogo legacy
+    `DEFAULT_ROLES` (caso bootstrap antes del seed)."""
+    roles = users_db.load_roles_pg()
+    if roles:
+        # Normalizar nombre por seguridad.
+        return {normalize_role(name): info for name, info in roles.items()}
+    return {name: dict(info) for name, info in DEFAULT_ROLES.items()}
 
 
 def save_roles(roles: dict[str, dict[str, Any]]) -> None:
+    """Guarda los roles en Postgres, filtrando permisos contra el catálogo del código."""
     from .permissions import ALL_PERMISSIONS
 
     clean: dict[str, dict[str, Any]] = {}
@@ -808,149 +195,72 @@ def save_roles(roles: dict[str, dict[str, Any]]) -> None:
             "level": int(info.get("level") or 0) if isinstance(info, dict) else 0,
             "permissions": [str(p) for p in permissions if str(p) in ALL_PERMISSIONS or str(p) == "*"],
         }
-    _write_json(get_settings().roles_file, {"roles": clean})
+    users_db.save_roles_pg(clean)
+
+
+def _record_from_payload(payload: dict[str, Any]) -> UserRecord:
+    """Convierte el dict que devuelve users_db en un UserRecord, cacheando las
+    branches resueltas como atributo `_pg_branches` para que `public()` no
+    re-consulte."""
+    primary_role = normalize_role(str(payload.get("role") or "VENDEDOR"))
+    role_keys = _clean_role_keys([primary_role, *[str(r) for r in payload.get("roles", [])]])
+    rec = UserRecord(
+        username=str(payload.get("username") or ""),
+        display_name=str(payload.get("display_name") or payload.get("username") or ""),
+        role=primary_role,
+        roles=role_keys,
+        sucursal=str(payload.get("sucursal") or ""),
+        company_id=str(payload.get("company_id") or ""),
+        branch_id=str(payload.get("branch_id") or ""),
+        branch_ids=[str(b) for b in payload.get("branch_ids", []) if b],
+        password_hash=str(payload.get("password_hash") or ""),
+        is_active=bool(payload.get("is_active", True)),
+        must_change_password=bool(payload.get("must_change_password", False)) or not bool(payload.get("password_hash")),
+    )
+    # Cache de branches resueltas (con name/code/company): evita re-query en public().
+    object.__setattr__(rec, "_pg_branches", list(payload.get("branches") or []))
+    return rec
 
 
 def load_users() -> dict[str, UserRecord]:
-    ensure_auth_files()
-    data = _read_json(get_settings().users_file, {"users": []})
-    raw_users = data.get("users", []) if isinstance(data, dict) else []
-    users: dict[str, UserRecord] = {}
-    for item in raw_users:
-        if not isinstance(item, dict):
-            continue
-        username = str(item.get("username") or "").strip()
-        if not username:
-            continue
-        password_hash = str(item.get("password_hash") or "")
-        must_change_password = bool(item.get("must_change_password", False)) or not bool(password_hash)
-        raw_branch_ids = item.get("branch_ids", [])
-        if not isinstance(raw_branch_ids, list):
-            raw_branch_ids = []
-        raw_roles = item.get("roles", [])
-        if not isinstance(raw_roles, list):
-            raw_roles = []
-        primary_role = normalize_role(str(item.get("role") or "VENDEDOR"))
-        role_keys = _clean_role_keys([primary_role, *[str(r) for r in raw_roles]])
-        users[username] = UserRecord(
-            username=username,
-            display_name=str(item.get("display_name") or username),
-            role=primary_role,
-            roles=role_keys,
-            sucursal=str(item.get("sucursal") or "").strip(),
-            company_id=str(item.get("company_id") or "").strip(),
-            branch_id=str(item.get("branch_id") or "").strip(),
-            branch_ids=[str(b).strip() for b in raw_branch_ids if str(b or "").strip()],
-            password_hash=password_hash,
-            is_active=bool(item.get("is_active", True)),
-            must_change_password=must_change_password,
-        )
-    return users
+    """Lee usuarios desde Postgres (users + user_roles + user_branches + branches)."""
+    payloads = users_db.load_users_pg()
+    return {username: _record_from_payload(p) for username, p in payloads.items()}
 
 
 def save_users(users: dict[str, UserRecord]) -> None:
-    ordered = sorted(users.values(), key=lambda user: user.username.lower())
-    _write_json(get_settings().users_file, {"users": [asdict(user) for user in ordered]})
+    """Sincroniza el dict completo de usuarios contra Postgres.
+
+    Pensado para los flujos legacy que reciben el dict de `load_users`,
+    modifican algún campo y lo guardan. No pisa el password si el record no lo
+    trae cargado distinto del actual; esa lógica vive en `upsert_user`.
+    """
+    for username, rec in users.items():
+        users_db.upsert_user_pg(
+            username=username,
+            display_name=rec.display_name,
+            role=rec.role,
+            is_active=rec.is_active,
+            password=None,  # no tocar password en save_users (eso se hace explícito)
+            company_id=rec.company_id,
+            branch_id=rec.branch_id,
+            branch_ids=list(rec.branch_ids),
+            roles=list(rec.roles),
+        )
 
 
 def repair_user_branch_links() -> dict[str, int]:
-    """Repara vínculos viejos de usuarios contra la nueva estructura de sucursales.
-
-    Es intencionalmente conservador: solo completa branch_id/branch_ids cuando puede
-    resolver una sucursal real. También sincroniza la tabla user_branches, que es la
-    fuente nueva para alcance operativo multi-sucursal.
-    """
-    with _store_lock:
-        users = load_users()
-        changed = 0
-        synced = 0
-        for username, record in users.items():
-            branch_ids: list[str] = []
-            for branch_id in [record.branch_id, *record.branch_ids]:
-                branch_id = str(branch_id or "").strip()
-                if branch_id and branch_id not in branch_ids:
-                    branch_ids.append(branch_id)
-
-            valid = _valid_branch_ids(branch_ids)
-            primary = record.branch_id if record.branch_id in valid else (valid[0] if valid else "")
-
-            if not valid and record.sucursal:
-                guessed = _guess_branch_id_from_legacy(record.sucursal, record.role)
-                if guessed:
-                    valid = [guessed]
-                    primary = guessed
-
-            if valid:
-                rows = _fetch_branch_rows([primary]) if primary else {}
-                primary_row = rows.get(primary) if primary else None
-                new_sucursal = str(primary_row["name"] if primary_row else record.sucursal or "").strip()
-                new_company_id = str(primary_row["company_id"] if primary_row else record.company_id or "").strip()
-
-                if record.branch_id != primary or record.branch_ids != valid or record.sucursal != new_sucursal or record.company_id != new_company_id:
-                    record.branch_id = primary
-                    record.branch_ids = valid
-                    record.sucursal = new_sucursal
-                    record.company_id = new_company_id
-                    changed += 1
-                _sync_user_branches(username, valid, primary)
-                synced += 1
-
-        if changed:
-            save_users(users)
-        return {"changed": changed, "synced": synced, "total": len(users)}
+    """No-op desde Fase 2.5. Postgres es fuente única para `user_branches`,
+    así que no hay JSON ni tablas paralelas que sincronizar."""
+    total = len(load_users())
+    return {"changed": 0, "synced": total, "total": total}
 
 
 def repair_user_legacy_roles() -> dict[str, int]:
-    """Sincroniza roles viejos contra el sistema nuevo de múltiples roles.
-
-    Mantiene users.role como rol principal/legacy, crea registros en user_roles y,
-    si aparece un rol heredado desconocido, lo conserva en el catálogo con permisos
-    mínimos para que no desaparezca visualmente del panel.
-    """
-    with _store_lock:
-        users = load_users()
-        roles_catalog = load_roles()
-        created_roles = 0
-        changed_users = 0
-        synced = 0
-
-        # Alias seguros para nombres viejos frecuentes. No renombramos el rol del usuario:
-        # solo evitamos que quede fuera del catálogo y sin permisos efectivos.
-        fallback_permissions = ["profile.view", "about.view", "system.status.view"]
-        for record in users.values():
-            primary = normalize_role(record.role or "VENDEDOR")
-            if primary and primary not in roles_catalog:
-                roles_catalog[primary] = {
-                    "label": f"Rol heredado: {primary}",
-                    "level": 0,
-                    "permissions": fallback_permissions[:],
-                }
-                created_roles += 1
-                save_roles(roles_catalog)
-
-            cleaned = _clean_role_keys([primary, *list(record.roles or []), *_user_roles_from_db(record.username)], roles_catalog)
-            if primary and primary in roles_catalog and primary not in cleaned:
-                cleaned.insert(0, primary)
-            if not cleaned:
-                cleaned = ["VENDEDOR"] if "VENDEDOR" in roles_catalog else list(roles_catalog.keys())[:1]
-                primary = cleaned[0]
-
-            if primary and cleaned[0] != primary and primary in cleaned:
-                cleaned = [primary] + [role for role in cleaned if role != primary]
-
-            if record.role != primary or record.roles != cleaned:
-                record.role = primary
-                record.roles = cleaned
-                changed_users += 1
-
-            _sync_user_roles(record.username, cleaned, primary)
-            synced += 1
-
-        if created_roles:
-            save_roles(roles_catalog)
-        if changed_users:
-            save_users(users)
-        return {"created_roles": created_roles, "changed_users": changed_users, "synced": synced, "total": len(users)}
+    """No-op desde Fase 2.5. Postgres es fuente única para `user_roles` y
+    `roles`. Se mantiene la firma para no romper a `routers/admin.py`."""
+    total = len(load_users())
+    return {"created_roles": 0, "changed_users": 0, "synced": total, "total": total}
 
 
 def get_user(username: str) -> UserRecord | None:
@@ -958,105 +268,34 @@ def get_user(username: str) -> UserRecord | None:
 
 
 def get_employee_by_username(username: str) -> dict[str, Any] | None:
-    return _fetch_employee_by_username(username)
+    """[Fase 2.5b] Empleado vinculado al usuario (Postgres)."""
+    return employees_db.get_employee_by_username_pg(username)
 
 
 def set_employee_photo(username: str, photo_url: str, photo_status: str = "pendiente_aprobacion") -> dict[str, Any]:
-    record = get_user(username)
-    if not record:
-        raise ValueError("Usuario no encontrado")
-    current = _fetch_employee_by_username(username) or {}
-    payload = dict(current)
-    payload["photo_url"] = str(photo_url or "").strip()
-    payload["photo_status"] = str(photo_status or "pendiente_aprobacion").strip()
-    payload.setdefault("display_name", record.display_name)
-    payload.setdefault("company_id", record.company_id)
-    payload.setdefault("branch_id", record.branch_id)
-    employee = upsert_employee_for_user(username, payload, record)
-    if not employee:
-        raise ValueError("No se pudo actualizar la foto del empleado")
-    return employee
+    """[Fase 2.5b] Sube/actualiza foto del empleado en Postgres."""
+    return employees_db.set_employee_photo_pg(username, photo_url, photo_status)
 
 
 def set_employee_photo_status(username: str, photo_status: str) -> dict[str, Any]:
-    record = get_user(username)
-    if not record:
-        raise ValueError("Usuario no encontrado")
-    current = _fetch_employee_by_username(username)
-    if not current:
-        current = upsert_employee_for_user(username, {}, record)
-    payload = dict(current or {})
-    payload["photo_status"] = str(photo_status or "sin_foto").strip()
-    employee = upsert_employee_for_user(username, payload, record)
-    if not employee:
-        raise ValueError("No se pudo actualizar el estado de foto")
-    return employee
+    """[Fase 2.5b] Cambia el estado de la foto del empleado (Postgres)."""
+    return employees_db.set_employee_photo_status_pg(username, photo_status)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Fase 0 — Empleados como entidad propia (standalone, vínculo opcional con usuario)
+# Fase 2.5b — Empleados portados a Postgres. Las funciones públicas delegan al
+# módulo `employees_db`. Se mantienen los nombres y firmas para no romper a los
+# routers (employees.py, warranties.py, etc.).
 # ──────────────────────────────────────────────────────────────────────────────
 
-_EMP_SELECT = """
-    SELECT e.*, c.name AS company_name, b.name AS branch_name, b.type AS branch_type,
-           wb.name AS work_branch_name
-    FROM employees e
-    LEFT JOIN companies c ON c.id = e.company_id
-    LEFT JOIN branches b ON b.id = e.branch_id
-    LEFT JOIN branches wb ON wb.id = e.work_branch_id
-"""
-
-# Estados laborales canónicos. 'activo'/'inactivo' quedan como alias heredados.
-EMPLOYEE_STATUSES = {"alta", "licencia", "baja"}
-EMPLOYEE_STATUS_ALIASES = {"activo": "alta", "inactivo": "baja", "": "alta"}
-
-
-def _normalize_emp_status(value: str | None) -> str:
-    raw = str(value or "").strip().lower()
-    if raw in EMPLOYEE_STATUSES:
-        return raw
-    return EMPLOYEE_STATUS_ALIASES.get(raw, raw or "alta")
-
-
-def _user_summary_for_employee(username: str) -> dict[str, Any] | None:
-    if not str(username or "").strip():
-        return None
-    record = load_users().get(username)
-    if not record:
-        return None
-    return {
-        "username": record.username,
-        "display_name": record.display_name,
-        "role": record.role,
-        "roles": _roles_for_record(record),
-        "is_active": record.is_active,
-    }
-
-
-def _employee_full_public(row: sqlite3.Row | None) -> dict[str, Any] | None:
-    public = _employee_public_from_row(row)
-    if public is None:
-        return None
-    public["status"] = _normalize_emp_status(public.get("status"))
-    public["user"] = _user_summary_for_employee(public.get("username") or "")
-    public["has_user"] = bool(public.get("username"))
-    return public
-
-
-def _fetch_employee_row_by_id(conn: sqlite3.Connection, employee_id: str) -> sqlite3.Row | None:
-    return conn.execute(_EMP_SELECT + " WHERE e.id = ?", (employee_id,)).fetchone()
+# Alias de compatibilidad con consumidores que importen estos símbolos.
+EMPLOYEE_STATUSES = employees_db.EMPLOYEE_STATUSES
+EMPLOYEE_STATUS_ALIASES = employees_db.EMPLOYEE_STATUS_ALIASES
+_normalize_emp_status = employees_db._normalize_emp_status
 
 
 def get_employee_by_id(employee_id: str) -> dict[str, Any] | None:
-    eid = str(employee_id or "").strip()
-    if not eid:
-        return None
-    try:
-        with _db_connect() as conn:
-            _ensure_employees_table(conn)
-            return _employee_full_public(_fetch_employee_row_by_id(conn, eid))
-    except Exception:
-        return None
+    return employees_db.get_employee_by_id_pg(employee_id)
 
 
 def list_employees(
@@ -1067,275 +306,37 @@ def list_employees(
     has_user: str = "",
     limit: int = 500,
 ) -> list[dict[str, Any]]:
-    """Lista empleados (incluye los que NO tienen usuario)."""
-    try:
-        with _db_connect() as conn:
-            _ensure_employees_table(conn)
-            rows = conn.execute(_EMP_SELECT + " ORDER BY e.last_name COLLATE NOCASE, e.first_name COLLATE NOCASE").fetchall()
-    except Exception:
-        return []
-    items = [p for p in (_employee_full_public(r) for r in rows) if p]
-
-    q_key = re.sub(r"\s+", " ", str(q or "").strip().lower())
-    status_key = _normalize_emp_status(status) if str(status or "").strip() else ""
-    wb_key = str(work_branch_id or "").strip()
-    hu_key = str(has_user or "").strip().lower()
-
-    def matches(emp: dict[str, Any]) -> bool:
-        if status_key and _normalize_emp_status(emp.get("status")) != status_key:
-            return False
-        if wb_key and str(emp.get("work_branch_id") or "") != wb_key:
-            return False
-        if hu_key in {"true", "1", "yes", "si"} and not emp.get("has_user"):
-            return False
-        if hu_key in {"false", "0", "no"} and emp.get("has_user"):
-            return False
-        if q_key:
-            hay = " ".join([
-                str(emp.get("display_name") or ""), str(emp.get("dni") or ""),
-                str(emp.get("position") or ""), str(emp.get("username") or ""),
-                str(emp.get("personal_email") or ""), str(emp.get("branch_name") or ""),
-                str(emp.get("work_branch_name") or ""),
-            ]).lower()
-            if not all(tok in hay for tok in q_key.split(" ")):
-                return False
-        return True
-
-    return [e for e in items if matches(e)][: max(1, int(limit or 500))]
-
-
-_EMP_EDITABLE_FIELDS = (
-    "first_name", "last_name", "display_name", "phone", "personal_email", "position",
-    "department", "address", "birthdate", "gender", "civil_status", "contract_type",
-    "hire_date", "manager_employee_id", "company_id", "branch_id", "work_branch_id",
-)
-
-
-def _emp_clean_payload(data: dict[str, Any]) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for key in _EMP_EDITABLE_FIELDS:
-        if key in data and data[key] is not None:
-            out[key] = str(data[key]).strip()
-    return out
+    return employees_db.list_employees_pg(
+        q=q, status=status, work_branch_id=work_branch_id, has_user=has_user, limit=limit,
+    )
 
 
 def create_standalone_employee(payload: dict[str, Any], actor: Any = None) -> dict[str, Any]:
-    """Crea un empleado SIN usuario asociado (username = NULL)."""
-    data = dict(payload or {})
-    dni = _clean_dni(data.get("dni"))
-    fields = _emp_clean_payload(data)
-    first = fields.get("first_name", "")
-    last = fields.get("last_name", "")
-    display = fields.get("display_name") or " ".join([first, last]).strip()
-    if not display:
-        raise ValueError("Indicá al menos el nombre del empleado")
-    if not first and not last:
-        first, last = _split_display_name(display)
-    now = datetime.now(timezone.utc).isoformat()
-    employee_id = str(data.get("id") or uuid.uuid4())
-    with _store_lock:
-        with _db_connect() as conn:
-            _ensure_employees_table(conn)
-            if dni:
-                dup = conn.execute("SELECT id FROM employees WHERE dni = ?", (dni,)).fetchone()
-                if dup:
-                    raise ValueError(f"El DNI {dni} ya está asignado a otro empleado")
-            row_fields = {
-                "id": employee_id,
-                "username": None,
-                "dni": dni or None,
-                "first_name": first,
-                "last_name": last,
-                "display_name": display,
-                "phone": fields.get("phone", ""),
-                "personal_email": fields.get("personal_email", ""),
-                "position": fields.get("position", ""),
-                "department": fields.get("department", ""),
-                "address": fields.get("address", ""),
-                "birthdate": fields.get("birthdate", ""),
-                "gender": fields.get("gender", ""),
-                "civil_status": fields.get("civil_status", ""),
-                "contract_type": fields.get("contract_type", ""),
-                "hire_date": fields.get("hire_date", ""),
-                "manager_employee_id": fields.get("manager_employee_id", ""),
-                "company_id": fields.get("company_id", ""),
-                "branch_id": fields.get("branch_id", ""),
-                "work_branch_id": fields.get("work_branch_id", ""),
-                "photo_url": "",
-                "photo_status": "sin_foto",
-                "status": _normalize_emp_status(data.get("status")),
-                "created_at": now,
-                "updated_at": now,
-            }
-            cols = ", ".join(row_fields.keys())
-            placeholders = ", ".join(f":{k}" for k in row_fields.keys())
-            try:
-                conn.execute(f"INSERT INTO employees ({cols}) VALUES ({placeholders})", row_fields)
-            except sqlite3.IntegrityError as exc:
-                raise ValueError("No se pudo crear el empleado. Revisá que el DNI no esté repetido.") from exc
-            conn.commit()
-            return _employee_full_public(_fetch_employee_row_by_id(conn, employee_id))
+    return employees_db.create_standalone_employee_pg(payload, actor=actor)
 
 
 def update_employee_by_id(employee_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    eid = str(employee_id or "").strip()
-    data = dict(payload or {})
-    fields = _emp_clean_payload(data)
-    now = datetime.now(timezone.utc).isoformat()
-    with _store_lock:
-        with _db_connect() as conn:
-            _ensure_employees_table(conn)
-            existing = conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone()
-            if not existing:
-                raise ValueError("Empleado no encontrado")
-            updates: dict[str, Any] = dict(fields)
-            if "dni" in data:
-                dni = _clean_dni(data.get("dni"))
-                if dni:
-                    dup = conn.execute("SELECT id FROM employees WHERE dni = ? AND id != ?", (dni, eid)).fetchone()
-                    if dup:
-                        raise ValueError(f"El DNI {dni} ya está asignado a otro empleado")
-                updates["dni"] = dni or None
-            if "status" in data:
-                updates["status"] = _normalize_emp_status(data.get("status"))
-            if not updates:
-                return _employee_full_public(_fetch_employee_row_by_id(conn, eid))
-            updates["updated_at"] = now
-            assignments = ", ".join(f"{k} = :{k}" for k in updates)
-            updates["__id"] = eid
-            try:
-                conn.execute(f"UPDATE employees SET {assignments} WHERE id = :__id", updates)
-            except sqlite3.IntegrityError as exc:
-                raise ValueError("No se pudo guardar. Revisá que el DNI no esté repetido.") from exc
-            conn.commit()
-            return _employee_full_public(_fetch_employee_row_by_id(conn, eid))
+    return employees_db.update_employee_by_id_pg(employee_id, payload)
 
 
 def link_employee_user(employee_id: str, username: str) -> dict[str, Any]:
-    """Vincula un usuario existente a un empleado (1:1 opcional)."""
-    eid = str(employee_id or "").strip()
-    uname = str(username or "").strip()
-    if not uname:
-        raise ValueError("Indicá el usuario a vincular")
-    if not get_user(uname):
-        raise ValueError("El usuario no existe")
-    now = datetime.now(timezone.utc).isoformat()
-    with _store_lock:
-        with _db_connect() as conn:
-            _ensure_employees_table(conn)
-            emp = conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone()
-            if not emp:
-                raise ValueError("Empleado no encontrado")
-            other = conn.execute("SELECT id FROM employees WHERE username = ? AND id != ?", (uname, eid)).fetchone()
-            if other:
-                raise ValueError(f"El usuario {uname} ya está vinculado a otro empleado")
-            conn.execute("UPDATE employees SET username = ?, updated_at = ? WHERE id = ?", (uname, now, eid))
-            conn.commit()
-            return _employee_full_public(_fetch_employee_row_by_id(conn, eid))
+    return employees_db.link_employee_user_pg(employee_id, username)
 
 
 def unlink_employee_user(employee_id: str) -> dict[str, Any]:
-    eid = str(employee_id or "").strip()
-    now = datetime.now(timezone.utc).isoformat()
-    with _store_lock:
-        with _db_connect() as conn:
-            _ensure_employees_table(conn)
-            emp = conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone()
-            if not emp:
-                raise ValueError("Empleado no encontrado")
-            conn.execute("UPDATE employees SET username = NULL, updated_at = ? WHERE id = ?", (now, eid))
-            conn.commit()
-            return _employee_full_public(_fetch_employee_row_by_id(conn, eid))
+    return employees_db.unlink_employee_user_pg(employee_id)
 
 
 def change_employee_status(employee_id: str, payload: dict[str, Any], actor: Any = None) -> dict[str, Any]:
-    """Cambia el estado laboral (alta/licencia/baja) y registra el historial."""
-    eid = str(employee_id or "").strip()
-    new_status = _normalize_emp_status((payload or {}).get("status"))
-    if new_status not in EMPLOYEE_STATUSES:
-        raise ValueError("Estado laboral inválido. Usá: alta, licencia o baja.")
-    now = datetime.now(timezone.utc).isoformat()
-    with _store_lock:
-        with _db_connect() as conn:
-            _ensure_employees_table(conn)
-            emp = conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone()
-            if not emp:
-                raise ValueError("Empleado no encontrado")
-            previous = _normalize_emp_status(emp["status"])
-            conn.execute("UPDATE employees SET status = ?, updated_at = ? WHERE id = ?", (new_status, now, eid))
-            conn.execute(
-                """
-                INSERT INTO employee_status_history
-                    (id, employee_id, status, previous_status, motivo, categoria, fecha_desde, fecha_hasta, observaciones, actor_username, actor_name, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    str(uuid.uuid4()), eid, new_status, previous,
-                    str((payload or {}).get("motivo") or "").strip(),
-                    str((payload or {}).get("categoria") or "").strip(),
-                    str((payload or {}).get("fecha_desde") or "").strip(),
-                    str((payload or {}).get("fecha_hasta") or "").strip(),
-                    str((payload or {}).get("observaciones") or "").strip(),
-                    getattr(actor, "username", "") or "",
-                    getattr(actor, "display_name", "") or "",
-                    now,
-                ),
-            )
-            conn.commit()
-            return _employee_full_public(_fetch_employee_row_by_id(conn, eid))
+    return employees_db.change_employee_status_pg(employee_id, payload, actor=actor)
 
 
 def list_employee_status_history(employee_id: str) -> list[dict[str, Any]]:
-    eid = str(employee_id or "").strip()
-    try:
-        with _db_connect() as conn:
-            _ensure_employees_table(conn)
-            rows = conn.execute(
-                "SELECT * FROM employee_status_history WHERE employee_id = ? ORDER BY created_at DESC, id DESC",
-                (eid,),
-            ).fetchall()
-    except Exception:
-        return []
-    return [
-        {
-            "id": str(r["id"]), "status": str(r["status"] or ""), "previous_status": str(r["previous_status"] or ""),
-            "motivo": str(r["motivo"] or ""), "categoria": str(r["categoria"] or ""),
-            "fecha_desde": str(r["fecha_desde"] or ""), "fecha_hasta": str(r["fecha_hasta"] or ""),
-            "observaciones": str(r["observaciones"] or ""),
-            "actor_username": str(r["actor_username"] or ""), "actor_name": str(r["actor_name"] or ""),
-            "created_at": str(r["created_at"] or ""),
-        }
-        for r in rows
-    ]
+    return employees_db.list_employee_status_history_pg(employee_id)
 
 
 def search_users_for_link(q: str = "", limit: int = 20) -> list[dict[str, Any]]:
-    """Usuarios candidatos para vincular a un empleado (no vinculados a otro con DNI)."""
-    q_key = str(q or "").strip().lower()
-    linked: set[str] = set()
-    try:
-        with _db_connect() as conn:
-            _ensure_employees_table(conn)
-            for r in conn.execute("SELECT username, dni FROM employees WHERE username IS NOT NULL AND TRIM(COALESCE(dni,'')) != ''").fetchall():
-                linked.add(str(r["username"]))
-    except Exception:
-        pass
-    out: list[dict[str, Any]] = []
-    for record in load_users().values():
-        if record.username in linked:
-            continue
-        hay = f"{record.username} {record.display_name}".lower()
-        if q_key and not all(tok in hay for tok in q_key.split()):
-            continue
-        out.append({
-            "username": record.username,
-            "display_name": record.display_name,
-            "role": record.role,
-            "is_active": record.is_active,
-        })
-        if len(out) >= max(1, int(limit or 20)):
-            break
-    return out
+    return employees_db.search_users_for_link_pg(q=q, limit=limit)
 
 
 def get_current_user(username: str) -> CurrentUser | None:
@@ -1380,11 +381,6 @@ def authenticate_user(username: str, password: str) -> CurrentUser | None:
     return get_current_user(user.username)
 
 
-def _valid_branch_ids(branch_ids: list[str]) -> list[str]:
-    rows = _fetch_branch_rows(branch_ids)
-    return [branch_id for branch_id in branch_ids if branch_id in rows]
-
-
 def upsert_user(
     username: str,
     display_name: str,
@@ -1398,151 +394,90 @@ def upsert_user(
     role_keys: list[str] | None = None,
     employee: dict[str, Any] | None = None,
 ) -> UserRecord:
-    username = username.strip()
-    if not username:
-        raise ValueError("El usuario es obligatorio")
+    """Crea o actualiza un usuario en Postgres (auth) y cascada a la tabla
+    `employees` en Postgres si vienen datos de empleado."""
     role = normalize_role(role)
     roles_catalog = load_roles()
     if role not in roles_catalog:
         raise ValueError(f"Rol inexistente: {role}")
-    selected_roles = _clean_role_keys([role, *[str(r) for r in (role_keys or [])]], roles_catalog)
-    if not selected_roles:
-        selected_roles = [role]
-    if role not in selected_roles:
-        selected_roles.insert(0, role)
+
+    # Cleanear lista de roles (asegurar que el principal esté).
+    desired_role_keys = _clean_role_keys([role, *[str(r) for r in (role_keys or [])]], roles_catalog)
+    if not desired_role_keys:
+        desired_role_keys = [role]
 
     with _store_lock:
-        users = load_users()
-        existing = users.get(username)
-        if existing is None:
-            password_hash = hash_password(password) if password else ""
-            must_change_password = not bool(password)
-            old_branch_ids: list[str] = []
-            old_branch_id = ""
-            old_company_id = ""
-            old_sucursal = ""
-            old_roles = selected_roles[:]
-        else:
-            password_hash = hash_password(password) if password else existing.password_hash
-            must_change_password = existing.must_change_password if not password else False
-            old_branch_ids = list(existing.branch_ids)
-            old_branch_id = existing.branch_id
-            old_company_id = existing.company_id
-            old_sucursal = existing.sucursal
-            old_roles = _roles_for_record(existing)
-
-        if role_keys is None and existing is not None:
-            selected_roles = [role] + [old_role for old_role in old_roles if old_role != role]
-        role = selected_roles[0]
-
-        selected_branch_ids: list[str]
-        if branch_ids is not None:
-            selected_branch_ids = [str(b).strip() for b in branch_ids if str(b or "").strip()]
-        else:
-            selected_branch_ids = old_branch_ids[:]
-        selected_primary = str(branch_id or old_branch_id or "").strip()
-        if selected_primary and selected_primary not in selected_branch_ids:
-            selected_branch_ids.insert(0, selected_primary)
-        if not selected_branch_ids and sucursal:
-            guessed = _guess_branch_id_from_legacy(sucursal, role)
-            if guessed:
-                selected_branch_ids = [guessed]
-                selected_primary = guessed
-        valid = _valid_branch_ids(selected_branch_ids)
-        if selected_branch_ids and not valid:
-            raise ValueError("Las sucursales seleccionadas no existen o están mal configuradas")
-        if selected_primary and selected_primary not in valid:
-            selected_primary = valid[0] if valid else ""
-
-        rows = _fetch_branch_rows([selected_primary]) if selected_primary else {}
-        primary_row = rows.get(selected_primary) if selected_primary else None
-        final_sucursal = primary_row["name"] if primary_row else str(sucursal if sucursal is not None else old_sucursal).strip()
-        final_company_id = primary_row["company_id"] if primary_row else str(company_id if company_id is not None else old_company_id).strip()
-
-        users[username] = UserRecord(
+        payload = users_db.upsert_user_pg(
             username=username,
-            display_name=display_name.strip() or username,
+            display_name=display_name,
             role=role,
-            roles=selected_roles,
-            sucursal=final_sucursal,
-            company_id=final_company_id,
-            branch_id=selected_primary,
-            branch_ids=valid,
-            password_hash=password_hash,
             is_active=is_active,
-            must_change_password=must_change_password,
+            password=password,
+            company_id=company_id,
+            branch_id=branch_id,
+            branch_ids=list(branch_ids) if branch_ids is not None else [],
+            roles=desired_role_keys,
         )
-        save_users(users)
-        _sync_user_branches(username, valid, selected_primary)
-        _sync_user_roles(username, selected_roles, role)
+        record = _record_from_payload(payload)
+
+        # Cascada a empleados en Postgres: mantiene un stub por cada usuario.
         employee_payload = dict(employee or {})
-        if employee is not None or get_settings().database_path:
-            employee_payload.setdefault("company_id", final_company_id)
-            employee_payload.setdefault("branch_id", selected_primary)
-            employee_payload.setdefault("display_name", display_name.strip() or username)
-            upsert_employee_for_user(username, employee_payload, users[username])
-        return users[username]
+        if employee is not None or True:  # siempre intentamos crear/actualizar el stub
+            employee_payload.setdefault("company_id", record.company_id)
+            employee_payload.setdefault("branch_id", record.branch_id)
+            employee_payload.setdefault("display_name", record.display_name)
+            try:
+                upsert_employee_for_user(record.username, employee_payload, record)
+            except Exception:
+                # Si falla la cascada de empleado, no rompemos la creación del usuario.
+                pass
+
+        return record
 
 
 def set_user_active(username: str, is_active: bool) -> UserRecord:
-    with _store_lock:
-        users = load_users()
-        if username not in users:
-            raise ValueError("Usuario no encontrado")
-        users[username].is_active = is_active
-        save_users(users)
-        try:
-            current_employee = _fetch_employee_by_username(username)
-            if current_employee:
-                current_employee["status"] = "activo" if is_active else "inactivo"
-                upsert_employee_for_user(username, current_employee, users[username])
-        except Exception:
-            pass
-        return users[username]
+    payload = users_db.set_user_active_pg(username, is_active)
+    if payload is None:
+        raise ValueError("Usuario no encontrado")
+    record = _record_from_payload(payload)
+    # Cascada a employees en Postgres: mantener status alta/baja.
+    try:
+        current_employee = _fetch_employee_by_username(record.username)
+        if current_employee:
+            current_employee["status"] = "activo" if is_active else "inactivo"
+            upsert_employee_for_user(record.username, current_employee, record)
+    except Exception:
+        pass
+    return record
 
 
 def reset_user_password(username: str) -> UserRecord:
-    with _store_lock:
-        users = load_users()
-        if username not in users:
-            raise ValueError("Usuario no encontrado")
-        users[username].password_hash = ""
-        users[username].must_change_password = True
-        save_users(users)
-        return users[username]
+    payload = users_db.reset_user_password_pg(username)
+    if payload is None:
+        raise ValueError("Usuario no encontrado")
+    return _record_from_payload(payload)
 
 
 def delete_user(username: str) -> None:
-    with _store_lock:
-        users = load_users()
-        if username not in users:
-            raise ValueError("Usuario no encontrado")
-        del users[username]
-        save_users(users)
-        try:
-            with _db_connect() as conn:
-                _ensure_employees_table(conn)
-                conn.execute("UPDATE employees SET username = NULL, status = 'inactivo', updated_at = ? WHERE username = ?", (datetime.now(timezone.utc).isoformat(), username))
-                conn.execute("DELETE FROM user_branches WHERE username = ?", (username,))
-                try:
-                    _ensure_user_roles_table(conn)
-                    conn.execute("DELETE FROM user_roles WHERE username = ?", (username,))
-                except Exception:
-                    pass
-                conn.commit()
-        except Exception:
-            pass
+    ok = users_db.delete_user_pg(username)
+    if not ok:
+        raise ValueError("Usuario no encontrado")
+    # Cascada a employees en Postgres: desvincular y marcar baja.
+    try:
+        current_employee = _fetch_employee_by_username(username)
+        if current_employee:
+            employee_id = current_employee.get("id")
+            employees_db.unlink_employee_user_pg(employee_id)
+            employees_db.update_employee_by_id_pg(employee_id, {"status": "baja"})
+    except Exception:
+        pass
 
 
 def set_own_password(username: str, new_password: str) -> UserRecord:
     password = (new_password or "").strip()
     if len(password) < 6:
         raise ValueError("La contraseña debe tener al menos 6 caracteres")
-    with _store_lock:
-        users = load_users()
-        if username not in users:
-            raise ValueError("Usuario no encontrado")
-        users[username].password_hash = hash_password(password)
-        users[username].must_change_password = False
-        save_users(users)
-        return users[username]
+    payload = users_db.set_user_password_pg(username, password)
+    if payload is None:
+        raise ValueError("Usuario no encontrado")
+    return _record_from_payload(payload)

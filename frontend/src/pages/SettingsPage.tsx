@@ -64,7 +64,14 @@ function PushPanel() {
   );
 }
 
-export function SettingsPage() {
+/**
+ * @deprecated Fase A consolidación: se embebe como tab "Sistema" dentro de
+ * OperationalConfigPage. La ruta /settings ahora redirige a
+ * /admin/operational-config?tab=sistema. Esta página queda exportada solo para
+ * ese embedding (no acceder directo). A revisar para borrar tras la auditoría
+ * de Fase C si nada externo la consume.
+ */
+export function SettingsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [status, setStatus] = useState<ConfigStatus | null>(null);
   const [error, setError] = useState('');
 
@@ -74,10 +81,12 @@ export function SettingsPage() {
 
   return (
     <div className="erp-stack-6">
-      <ErpPageHeader
-        title="Configuración técnica"
-        description="Estado operativo del backend, credenciales y control general de apagado."
-      />
+      {!embedded && (
+        <ErpPageHeader
+          title="Configuración técnica"
+          description="Estado operativo del backend, credenciales y control general de apagado."
+        />
+      )}
 
       {error && <ErpNotice tone="error">{error}</ErpNotice>}
 
