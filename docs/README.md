@@ -17,6 +17,7 @@ Code puedan entender la aplicacion sin depender de memoria oral.
 8. [07 - Produccion local con Vercel + ngrok](07-produccion-local-vercel-ngrok.md)
 9. [08 - Android con Capacitor](08-android-capacitor.md)
 10. [09 - Import histórico de garantías desde Excel](09-import-historico-excel.md)
+11. [10 - Módulo Comercial · Fase 1 (PSI con cruce al GFK)](10-modulo-comercial-fase1.md)
 
 ## Documentacion por fases
 
@@ -41,6 +42,7 @@ Code puedan entender la aplicacion sin depender de memoria oral.
 | Produccion inicial Vercel + ngrok | [07-produccion-local-vercel-ngrok.md](07-produccion-local-vercel-ngrok.md) |
 | Android / Capacitor | [08-android-capacitor.md](08-android-capacitor.md) |
 | Import histórico de garantías (Excel → Postgres) | [09-import-historico-excel.md](09-import-historico-excel.md) |
+| Módulo Comercial · PSI + cruce al GFK (Fase 1) | [10-modulo-comercial-fase1.md](10-modulo-comercial-fase1.md) |
 | Docker local | [fase-1-docker/README.md](fase-1-docker/README.md) |
 | Modelo de datos futuro en Postgres | [fase-2-postgres/01-modelo-datos.md](fase-2-postgres/01-modelo-datos.md) |
 | Administracion de base de datos | [fase-2-postgres/02-administracion-db.md](fase-2-postgres/02-administracion-db.md) |
