@@ -1913,3 +1913,31 @@ export interface PSIReportQuery {
   mode?:           PSIMode;
   force_refresh?:  boolean;
 }
+
+export interface PSIAdjustPayload {
+  product_id:     number;
+  sucursal:       string;
+  cantidad_delta: number;
+  periodo_inicio: string;
+  periodo_fin:    string;
+  fecha_mode:     'manual' | 'random';
+  fecha_manual?:  string | null;
+  reason?:        string;
+}
+
+export interface PSIAdjustResponse {
+  id:                       number;
+  status:                   string;
+  inserted_date:            string;
+  sucursal:                 string;
+  cantidad_delta:           number;
+  applied_to_book?:         string | null;
+  applied_to_sheet_range?:  string | null;
+  message:                  string;
+}
+
+export interface PSIRevertResponse {
+  id:      number;
+  status:  string;
+  message: string;
+}

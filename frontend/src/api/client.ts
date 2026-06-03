@@ -875,3 +875,11 @@ export async function fetchPSIReport(query: import('../types').PSIReportQuery = 
   if (query.force_refresh)  params.force_refresh  = 'true';
   return request(`/api/psi/report${buildQs(params)}`);
 }
+
+export async function createPSIAdjustment(payload: import('../types').PSIAdjustPayload): Promise<import('../types').PSIAdjustResponse> {
+  return request('/api/psi/adjust', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function revertPSIAdjustment(id: number): Promise<import('../types').PSIRevertResponse> {
+  return request(`/api/psi/adjust/${id}/revert`, { method: 'POST' });
+}

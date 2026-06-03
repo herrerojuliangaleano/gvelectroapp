@@ -354,3 +354,209 @@ def psi_report(
             months_used=[f"{y:04d}-{m:02d}" for (y, m) in months_used],
         ),
     )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# POST /api/psi/adjust — crear ajuste + escribir al libro mensual
+# ──────────────────────────────────────────────────────────────────────────
+
+class PSIAdjustPayload(BaseModel):
+    product_id:     int = Field(gt=0)
+    sucursal:       str = Field(min_length=1)
+    cantidad_delta: int
+    periodo_inicio: str
+    periodo_fin:    str
+    fecha_mode:     Literal["manual", "random"] = "random"
+    fecha_manual:   Optional[str] = None
+    reason:         str = ""
+
+
+class PSIAdjustResponse(BaseModel):
+    id:                     int
+    status:                 str
+    inserted_date:          str
+    sucursal:               str
+    cantidad_delta:         int
+    applied_to_book:        Optional[str] = None
+    applied_to_sheet_range: Optional[str] = None
+    message:                str
+
+
+def _pick_random_date(periodo_inicio: date, periodo_fin: date) -> date:
+    """Random date dentro del rango, excluyendo domingos."""
+    import random
+    days = (periodo_fin - periodo_inicio).days
+    candidates: list[date] = []
+    for i in range(days + 1):
+        d = periodo_inicio + timedelta(days=i)
+        if d.weekday() != 6:
+            candidates.append(d)
+    if not candidates:
+        return periodo_inicio
+    return random.choice(candidates)
+
+
+def _resolve_user_id(session: Any, user: Any) -> Optional[int]:
+    from ...models.auth import User
+    from sqlalchemy import func as _func, select as _select
+    uname = str(getattr(user, "username", "") or "").strip().lower()
+    if not uname:
+        return None
+    return session.scalar(_select(User.id).where(_func.lower(User.username) == uname))
+
+
+@router.post("/adjust", response_model=PSIAdjustResponse)
+def psi_adjust(
+    payload: PSIAdjustPayload,
+    user: Annotated[Any, Depends(require_permission("psi.adjust"))],
+):
+    """Crea un ajuste manual y lo escribe al libro mensual en una sola op."""
+    from ...models.products import Product
+    from ...commercial import cache_invalidate
+    from ...commercial.adjustments_writer import write_adjustment_to_monthly_book
+
+    if payload.cantidad_delta == 0:
+        raise HTTPException(400, "cantidad_delta no puede ser 0")
+    if payload.sucursal not in PSI_SUCURSALES:
+        raise HTTPException(400, f"sucursal inválida. Esperaba una de {PSI_SUCURSALES}")
+    pi = _parse_date(payload.periodo_inicio, "periodo_inicio")
+    pf = _parse_date(payload.periodo_fin, "periodo_fin")
+    if pf < pi:
+        raise HTTPException(400, "periodo_fin no puede ser menor que periodo_inicio")
+
+    if payload.fecha_mode == "manual":
+        if not payload.fecha_manual:
+            raise HTTPException(400, "fecha_manual requerida cuando fecha_mode=manual")
+        inserted = _parse_date(payload.fecha_manual, "fecha_manual")
+        if not (pi <= inserted <= pf):
+            raise HTTPException(400, f"fecha_manual debe estar entre {pi} y {pf}")
+    else:
+        inserted = _pick_random_date(pi, pf)
+
+    with db_session() as session:
+        product = session.get(Product, payload.product_id)
+        if not product or not product.is_active:
+            raise HTTPException(404, "Producto no encontrado o inactivo")
+
+        actor_id = _resolve_user_id(session, user)
+
+        valor_estimado: float | None = None
+        try:
+            if product.pvp is not None:
+                valor_estimado = float(product.pvp) * payload.cantidad_delta
+        except Exception:
+            valor_estimado = None
+
+        adj = SalesPsiAdjustment(
+            product_id=int(product.id),
+            sku_snapshot=str(product.sku or ""),
+            marca_snapshot=str(product.marca or ""),
+            tipo_snapshot=str(product.tipo or ""),
+            condicion_snapshot=str(product.condicion_producto or ""),
+            descripcion_snapshot=str(product.descripcion or ""),
+            periodo_semana=_monday_of(inserted),
+            inserted_date=inserted,
+            sucursal=payload.sucursal,
+            cantidad_delta=int(payload.cantidad_delta),
+            valor_estimado=valor_estimado,
+            reason=str(payload.reason or "").strip(),
+            fecha_mode=payload.fecha_mode,
+            status="pending",
+            created_by_user_id=actor_id,
+        )
+        session.add(adj)
+        session.flush()
+        adjustment_id = int(adj.id)
+
+        try:
+            book_id, sheet_range = write_adjustment_to_monthly_book(
+                adjustment_id=adjustment_id,
+                inserted_date=inserted,
+                sucursal=payload.sucursal,
+                descripcion=adj.descripcion_snapshot,
+                sku=adj.sku_snapshot,
+                cantidad_delta=adj.cantidad_delta,
+                valor_estimado=adj.valor_estimado,
+            )
+        except HTTPException:
+            adj.status = "failed"
+            session.commit()
+            raise
+
+        adj.status = "applied_to_sheet"
+        adj.applied_at = datetime.utcnow()
+        adj.applied_to_book = book_id
+        adj.applied_to_sheet_range = sheet_range
+        adj.applied_by_user_id = actor_id
+        session.commit()
+
+        cache_invalidate(f"ventas:{inserted.year}:{inserted.month:02d}")
+
+        return PSIAdjustResponse(
+            id=adjustment_id,
+            status="applied_to_sheet",
+            inserted_date=inserted.strftime("%Y-%m-%d"),
+            sucursal=payload.sucursal,
+            cantidad_delta=adj.cantidad_delta,
+            applied_to_book=book_id,
+            applied_to_sheet_range=sheet_range,
+            message=f"Ajuste aplicado al libro mensual ({sheet_range})",
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# POST /api/psi/adjust/{id}/revert — revertir ajuste
+# ──────────────────────────────────────────────────────────────────────────
+
+class PSIRevertResponse(BaseModel):
+    id:     int
+    status: str
+    message: str
+
+
+@router.post("/adjust/{adjustment_id}/revert", response_model=PSIRevertResponse)
+def psi_adjust_revert(
+    adjustment_id: int,
+    user: Annotated[Any, Depends(require_permission("psi.adjust"))],
+):
+    """Borra la fila del ajuste del libro mensual y marca el ajuste como reverted."""
+    from ...commercial import cache_invalidate
+    from ...commercial.adjustments_writer import revert_adjustment_in_monthly_book
+
+    with db_session() as session:
+        adj = session.get(SalesPsiAdjustment, adjustment_id)
+        if not adj:
+            raise HTTPException(404, "Ajuste no encontrado")
+        if adj.status == "reverted":
+            return PSIRevertResponse(id=adjustment_id, status="reverted", message="Ya estaba revertido")
+        if adj.status != "applied_to_sheet" or not adj.applied_to_book:
+            raise HTTPException(
+                400,
+                f"Solo se pueden revertir ajustes en estado 'applied_to_sheet'. Status actual: {adj.status}",
+            )
+
+        actor_id = _resolve_user_id(session, user)
+        found = revert_adjustment_in_monthly_book(
+            adjustment_id=adjustment_id,
+            book_id=adj.applied_to_book,
+            sucursal=adj.sucursal,
+        )
+
+        adj.status = "reverted"
+        adj.reverted_at = datetime.utcnow()
+        adj.reverted_by_user_id = actor_id
+        session.commit()
+
+        cache_invalidate(f"ventas:{adj.inserted_date.year}:{adj.inserted_date.month:02d}")
+
+        if not found:
+            return PSIRevertResponse(
+                id=adjustment_id,
+                status="reverted",
+                message="No encontré la fila en el sheet (puede haberse borrado a mano). Marcado como reverted igual.",
+            )
+        return PSIRevertResponse(
+            id=adjustment_id,
+            status="reverted",
+            message="Fila eliminada del libro mensual. Ajuste revertido.",
+        )

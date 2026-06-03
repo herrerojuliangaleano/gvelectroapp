@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, BarChart3, ChevronDown, Filter, Package, PackageX,
-  RefreshCw, Search, Tag, TrendingUp,
+  AlertTriangle, BarChart3, CheckCircle2, ChevronDown, Filter, History, Package,
+  PackageX, RefreshCw, Search, Settings2, Tag, Trash2, TrendingUp, X,
 } from 'lucide-react';
-import { can, fetchPSIOptions, fetchPSIReport } from '../api/client';
+import {
+  can, createPSIAdjustment, fetchPSIOptions, fetchPSIReport, revertPSIAdjustment,
+} from '../api/client';
 import type {
-  PSICondicionFilter, PSIOptionsResponse, PSIReportResponse, PSIReportRow,
+  PSIAdjustmentInfo, PSICondicionFilter, PSIMode, PSIOptionsResponse,
+  PSIReportResponse, PSIReportRow,
 } from '../types';
 
 const inputClass =
@@ -153,6 +156,12 @@ export function PSIPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [showNoCatalogados, setShowNoCatalogados] = useState(true);
+  const [mode, setMode] = useState<PSIMode>('default');
+
+  // Modal de ajuste
+  const [adjustRow, setAdjustRow] = useState<PSIReportRow | null>(null);
+  // Drawer de historial
+  const [historialRow, setHistorialRow] = useState<PSIReportRow | null>(null);
 
   const canExport = can('psi.export');
   const canAdjust = can('psi.adjust');
@@ -164,7 +173,7 @@ export function PSIPage() {
     try {
       const data = await fetchPSIReport({
         marcas, tipos, condicion, periodo_inicio: periodoInicio, periodo_fin: periodoFin,
-        force_refresh: forceRefresh,
+        mode, force_refresh: forceRefresh,
       });
       setReport(data);
     } catch (err) {
@@ -175,11 +184,14 @@ export function PSIPage() {
   }
 
   useEffect(() => { load(false); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Recargar cuando cambia el modo (default ↔ advanced)
+  useEffect(() => { load(false); }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function applyFilters() { load(false); }
   function clearFilters() {
     setMarcas([]); setTipos([]); setCondicion('TODO');
     const r = defaultRange(); setPeriodoInicio(r.inicio); setPeriodoFin(r.fin);
+    setMode('default');
   }
 
   const items: PSIReportRow[] = report?.items || [];
@@ -274,6 +286,20 @@ export function PSIPage() {
           <button onClick={clearFilters} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-bold text-slate-200 hover:bg-slate-900">
             Limpiar
           </button>
+          {canAdjust && (
+            <button
+              type="button"
+              onClick={() => setMode((m) => (m === 'advanced' ? 'default' : 'advanced'))}
+              className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold ${
+                mode === 'advanced'
+                  ? 'border-amber-500/60 bg-amber-500/15 text-amber-200'
+                  : 'border-slate-700 bg-slate-950 text-slate-200 hover:bg-slate-900'
+              }`}
+              title="Mostrar todos los productos del catálogo filtrado (incluso sin stock/ventas) para poder ajustar cualquiera"
+            >
+              <Settings2 size={14} /> {mode === 'advanced' ? 'Ajustes avanzados: ON' : 'Ajustes avanzados'}
+            </button>
+          )}
           {report?.data_freshness?.months_used?.length ? (
             <span className="ml-auto text-xs text-slate-500">
               Meses leídos: <b className="text-slate-300">{report.data_freshness.months_used.join(', ')}</b>
@@ -313,6 +339,7 @@ export function PSIPage() {
                 <th className="px-3 py-2 text-right">Stock</th>
                 <th className="px-3 py-2 text-right">Sell out</th>
                 <th className="px-3 py-2 text-right">Δ ajuste</th>
+                {canAdjust && <th className="px-3 py-2 text-center">Acciones</th>}
               </tr>
             </thead>
             <tbody>
@@ -331,16 +358,31 @@ export function PSIPage() {
                   </td>
                   <td className={`px-3 py-2 text-right font-bold ${r.stock <= 0 ? 'text-red-300' : 'text-slate-200'}`}>{r.stock}</td>
                   <td className="px-3 py-2 text-right font-bold text-emerald-200">
-                    {r.sell_out}
-                    {r.has_pending_adjustment && <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-400" title="Tiene ajuste pendiente" />}
+                    {r.historial_ajustes.length > 0 ? (
+                      <button onClick={() => setHistorialRow(r)} className="hover:underline" title="Ver historial de ajustes">
+                        {r.sell_out}
+                        {r.has_pending_adjustment && <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-400" />}
+                      </button>
+                    ) : r.sell_out}
                   </td>
                   <td className={`px-3 py-2 text-right ${r.ajuste_delta > 0 ? 'text-emerald-300' : r.ajuste_delta < 0 ? 'text-red-300' : 'text-slate-600'}`}>
                     {r.ajuste_delta !== 0 ? (r.ajuste_delta > 0 ? `+${r.ajuste_delta}` : r.ajuste_delta) : '—'}
                   </td>
+                  {canAdjust && (
+                    <td className="px-3 py-2 text-center">
+                      <button
+                        onClick={() => setAdjustRow(r)}
+                        className="rounded-lg border border-slate-700 px-2 py-1 text-xs font-bold text-slate-300 hover:bg-slate-800"
+                        title="Crear ajuste"
+                      >
+                        +/−
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
               {!loading && items.length === 0 && (
-                <tr><td colSpan={8} className="px-3 py-12 text-center text-slate-500">
+                <tr><td colSpan={canAdjust ? 9 : 8} className="px-3 py-12 text-center text-slate-500">
                   No hay productos para los filtros aplicados.
                 </td></tr>
               )}
@@ -404,6 +446,265 @@ export function PSIPage() {
           {!canExport && <span className="ml-3 text-slate-600">· Export PDF no disponible (Fase 1 — Sprint 4)</span>}
         </div>
       )}
+
+      {/* Modal de ajuste */}
+      {adjustRow && (
+        <AdjustModal
+          row={adjustRow}
+          periodoInicio={periodoInicio}
+          periodoFin={periodoFin}
+          onClose={() => setAdjustRow(null)}
+          onSuccess={() => { setAdjustRow(null); load(true); }}
+        />
+      )}
+
+      {/* Drawer de historial */}
+      {historialRow && (
+        <HistorialDrawer
+          row={historialRow}
+          onClose={() => setHistorialRow(null)}
+          onReverted={() => { setHistorialRow(null); load(true); }}
+        />
+      )}
+    </div>
+  );
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Modal de ajuste
+// ──────────────────────────────────────────────────────────────────────────
+
+const SUCURSALES = ['CASEROS', 'SUR', 'NORTE', 'CANNING'];
+
+function AdjustModal({
+  row, periodoInicio, periodoFin, onClose, onSuccess,
+}: {
+  row: PSIReportRow;
+  periodoInicio: string;
+  periodoFin: string;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [sucursal, setSucursal] = useState<string>('CASEROS');
+  const [delta, setDelta] = useState<number>(1);
+  const [fechaMode, setFechaMode] = useState<'manual' | 'random'>('random');
+  const [fechaManual, setFechaManual] = useState<string>('');
+  const [reason, setReason] = useState<string>('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const sellOutNew = row.sell_out + delta;
+  const valid = delta !== 0 && (fechaMode === 'random' || (!!fechaManual && fechaManual >= periodoInicio && fechaManual <= periodoFin));
+
+  async function handleSave() {
+    setSaving(true); setError('');
+    try {
+      await createPSIAdjustment({
+        product_id: row.product_id,
+        sucursal,
+        cantidad_delta: delta,
+        periodo_inicio: periodoInicio,
+        periodo_fin: periodoFin,
+        fecha_mode: fechaMode,
+        fecha_manual: fechaMode === 'manual' ? fechaManual : null,
+        reason: reason.trim(),
+      });
+      onSuccess();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo guardar el ajuste.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-lg rounded-3xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-black text-white">Ajustar sell out</h2>
+            <p className="mt-1 text-sm text-slate-400">
+              <span className="font-mono">{row.sku}</span> · {row.descripcion}
+            </p>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"><X size={18} /></button>
+        </div>
+
+        <div className="mt-4 rounded-xl bg-slate-950/60 p-3 text-sm">
+          <div className="flex items-baseline justify-between">
+            <span className="text-slate-400">Sell out actual</span>
+            <span className="text-2xl font-black text-slate-200">{row.sell_out}</span>
+          </div>
+          <div className="mt-1 flex items-baseline justify-between">
+            <span className="text-slate-400">Nuevo</span>
+            <span className={`text-2xl font-black ${delta > 0 ? 'text-emerald-300' : delta < 0 ? 'text-red-300' : 'text-slate-500'}`}>
+              {sellOutNew}
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3">
+          <div>
+            <label className={labelClass}>Cantidad del ajuste (delta)</label>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => setDelta(delta - 1)} className="rounded-xl border border-slate-700 px-3 py-2 text-lg font-black text-slate-200 hover:bg-slate-800">−</button>
+              <input
+                type="number"
+                value={delta}
+                onChange={(e) => setDelta(parseInt(e.target.value || '0', 10) || 0)}
+                className={`${inputClass} text-center text-lg font-bold`}
+              />
+              <button type="button" onClick={() => setDelta(delta + 1)} className="rounded-xl border border-slate-700 px-3 py-2 text-lg font-black text-slate-200 hover:bg-slate-800">+</button>
+            </div>
+          </div>
+
+          <div>
+            <label className={labelClass}>Sucursal del ajuste</label>
+            <select value={sucursal} onChange={(e) => setSucursal(e.target.value)} className={inputClass}>
+              {SUCURSALES.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <label className={labelClass}>Fecha que va al GFK</label>
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm text-slate-200">
+                <input type="radio" name="fmode" checked={fechaMode === 'random'} onChange={() => setFechaMode('random')} />
+                <span>Aleatoria dentro del rango (<b className="text-slate-300">{periodoInicio} → {periodoFin}</b>)</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm text-slate-200">
+                <input type="radio" name="fmode" checked={fechaMode === 'manual'} onChange={() => setFechaMode('manual')} />
+                <span>Elegir manualmente:</span>
+                <input
+                  type="date"
+                  value={fechaManual}
+                  min={periodoInicio}
+                  max={periodoFin}
+                  onChange={(e) => setFechaManual(e.target.value)}
+                  disabled={fechaMode !== 'manual'}
+                  className={`${inputClass} flex-1`}
+                />
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <label className={labelClass}>Motivo (opcional)</label>
+            <input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="venta web no registrada, etc."
+              className={inputClass}
+            />
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-100/90">
+          <AlertTriangle size={12} className="mr-1 inline" />
+          Esta acción escribe una fila al libro mensual del rango (TipoVenta=AJUSTE, Remito=PSI-id). Es reversible.
+        </div>
+
+        {error && (
+          <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">{error}</div>
+        )}
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-bold text-slate-200 hover:bg-slate-900">Cancelar</button>
+          <button
+            onClick={handleSave}
+            disabled={saving || !valid}
+            className="inline-flex items-center gap-2 rounded-xl bg-blue-500 px-4 py-2 text-sm font-black text-white hover:bg-blue-400 disabled:opacity-60"
+          >
+            {saving ? 'Guardando...' : 'Guardar y aplicar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Drawer de historial
+// ──────────────────────────────────────────────────────────────────────────
+
+function HistorialDrawer({ row, onClose, onReverted }: { row: PSIReportRow; onClose: () => void; onReverted: () => void }) {
+  const [reverting, setReverting] = useState<number | null>(null);
+  const [error, setError] = useState('');
+  const canAdjust = can('psi.adjust');
+
+  async function handleRevert(adj: PSIAdjustmentInfo) {
+    if (!window.confirm(`¿Revertir el ajuste de ${adj.delta > 0 ? '+' : ''}${adj.delta} unidades del ${adj.fecha}?`)) return;
+    setReverting(adj.id); setError('');
+    try {
+      await revertPSIAdjustment(adj.id);
+      onReverted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo revertir.');
+    } finally {
+      setReverting(null);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 flex justify-end bg-black/40">
+      <div className="w-full max-w-md overflow-y-auto border-l border-slate-700 bg-slate-950 p-5 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="flex items-center gap-2 text-lg font-black text-white">
+              <History size={18} /> Historial de ajustes
+            </h3>
+            <p className="mt-1 text-xs text-slate-400 font-mono">{row.sku}</p>
+            <p className="text-xs text-slate-500">{row.descripcion}</p>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"><X size={18} /></button>
+        </div>
+
+        {error && (
+          <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">{error}</div>
+        )}
+
+        <div className="mt-4 space-y-3">
+          {row.historial_ajustes.length === 0 && (
+            <p className="text-sm text-slate-500">Sin ajustes en este rango.</p>
+          )}
+          {row.historial_ajustes.map((adj) => {
+            const statusColor =
+              adj.status === 'applied_to_sheet' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
+              : adj.status === 'pending' ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+              : adj.status === 'reverted' ? 'border-slate-700 bg-slate-900 text-slate-400 line-through opacity-70'
+              : 'border-red-500/40 bg-red-500/10 text-red-200';
+            const canRevertThis = canAdjust && adj.status === 'applied_to_sheet';
+            return (
+              <div key={adj.id} className={`rounded-2xl border p-3 ${statusColor}`}>
+                <div className="flex items-baseline justify-between">
+                  <div className="text-sm font-bold">
+                    {adj.delta > 0 ? `+${adj.delta}` : adj.delta} unidades
+                  </div>
+                  <span className="text-xs uppercase tracking-wide">
+                    {adj.status === 'applied_to_sheet' ? <CheckCircle2 size={12} className="inline" /> : null} {adj.status}
+                  </span>
+                </div>
+                <div className="mt-1 text-xs">
+                  {adj.fecha} · {adj.sucursal} · {adj.fecha_mode}
+                </div>
+                {adj.reason && <div className="mt-1 text-xs italic opacity-90">"{adj.reason}"</div>}
+                <div className="mt-1 text-[10px] opacity-60">id #{adj.id}{adj.created_by ? ` · ${adj.created_by}` : ''}</div>
+                {canRevertThis && (
+                  <button
+                    onClick={() => handleRevert(adj)}
+                    disabled={reverting === adj.id}
+                    className="mt-2 inline-flex items-center gap-1 rounded-lg border border-red-500/40 px-2 py-1 text-xs font-bold text-red-200 hover:bg-red-500/10 disabled:opacity-60"
+                  >
+                    <Trash2 size={12} /> {reverting === adj.id ? 'Revirtiendo...' : 'Revertir'}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
