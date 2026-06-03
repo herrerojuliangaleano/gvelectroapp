@@ -4,7 +4,7 @@ import {
   Link2, Package, PackageX, RefreshCw, Search, Settings2, Tag, Trash2, TrendingUp, X,
 } from 'lucide-react';
 import {
-  can, createPSIAdjustment, createPSIAlias, exportPSIPdf, exportPSIXlsx, fetchPSIOptions, fetchPSIReport,
+  applyPendingPSIAdjustments, can, createPSIAdjustment, createPSIAlias, exportPSIPdf, exportPSIXlsx, fetchPSIOptions, fetchPSIReport,
   revertPSIAdjustment, searchPSIProducts,
 } from '../api/client';
 import {
@@ -169,6 +169,9 @@ export function PSIPage() {
   const [showNoCatalogados, setShowNoCatalogados] = useState(true);
   const [mode, setMode] = useState<PSIMode>('default');
   const [excludeZeroActivity, setExcludeZeroActivity] = useState(false);
+  const [localStockAdjustments, setLocalStockAdjustments] = useState<Record<number, number>>({});
+  const [savingPending, setSavingPending] = useState(false);
+  const [success, setSuccess] = useState('');
 
   // Modal de ajuste
   const [adjustRow, setAdjustRow] = useState<PSIReportRow | null>(null);
@@ -185,6 +188,7 @@ export function PSIPage() {
   useEffect(() => { fetchPSIOptions().then(setOptions).catch(() => {}); }, []);
 
   async function load(forceRefresh = false) {
+    if (forceRefresh) setLocalStockAdjustments({});
     setLoading(true); setError('');
     try {
       const data = await fetchPSIReport({
@@ -203,15 +207,80 @@ export function PSIPage() {
   // Recargar cuando cambia el modo o el filtro 0/0.
   useEffect(() => { load(false); }, [mode, excludeZeroActivity]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function applyFilters() { load(false); }
+  function applyFilters() {
+    setLocalStockAdjustments({});
+    load(false);
+  }
   function clearFilters() {
     setMarcas([]); setTipos([]); setCondicion('TODO');
     const r = defaultRange(); setPeriodoInicio(r.inicio); setPeriodoFin(r.fin);
     setMode('default');
     setExcludeZeroActivity(false);
+    setLocalStockAdjustments({});
   }
 
-  const items: PSIReportRow[] = report?.items || [];
+  function applyLocalStockAdjustment(productId: number, delta: number) {
+    setLocalStockAdjustments((current) => {
+      const nextDelta = (current[productId] || 0) + delta;
+      const next = { ...current };
+      if (nextDelta === 0) delete next[productId];
+      else next[productId] = nextDelta;
+      return next;
+    });
+  }
+
+  const stockAdjustmentList = useMemo(
+    () => Object.entries(localStockAdjustments).map(([productId, delta]) => ({ product_id: Number(productId), delta })),
+    [localStockAdjustments],
+  );
+
+  const items: PSIReportRow[] = useMemo(() => {
+    const rows = (report?.items || []).map((r) => {
+      const delta = localStockAdjustments[r.product_id] || 0;
+      if (!delta) return r;
+      return {
+        ...r,
+        stock: r.stock + delta,
+        stock_adjustment_delta: r.stock_adjustment_delta + delta,
+        has_pending_adjustment: true,
+      };
+    });
+    if (!excludeZeroActivity) return rows;
+    return rows.filter((r) => !(r.stock === 0 && r.sell_out === 0));
+  }, [report, localStockAdjustments, excludeZeroActivity]);
+
+  const displayedTotals = useMemo(() => {
+    const base = report?.totals || { stock: 0, sell_out: 0, ajustes_pendientes: 0, productos_visibles: 0, productos_no_catalogados: 0 };
+    return {
+      ...base,
+      stock: items.reduce((sum, r) => sum + r.stock, 0),
+      sell_out: items.reduce((sum, r) => sum + r.sell_out, 0),
+      productos_visibles: items.length,
+    };
+  }, [report, items]);
+
+  async function handleSavePendingToGfk() {
+    if (!report || report.totals.ajustes_pendientes <= 0) return;
+    setSavingPending(true); setError(''); setSuccess('');
+    try {
+      const productIds = items.filter((r) => r.ajuste_delta !== 0).map((r) => r.product_id);
+      if (productIds.length === 0) {
+        setError('No hay ajustes pendientes visibles para guardar con estos filtros.');
+        return;
+      }
+      const result = await applyPendingPSIAdjustments({
+        periodo_inicio: periodoInicio,
+        periodo_fin: periodoFin,
+        product_ids: productIds,
+      });
+      setSuccess(result.message);
+      await load(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudieron guardar los ajustes en GFK');
+    } finally {
+      setSavingPending(false);
+    }
+  }
 
   return (
     <div className="erp-stack-6">
@@ -222,6 +291,11 @@ export function PSIPage() {
             <button onClick={() => load(true)} disabled={loading} className={erpBtnGhost}>
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refrescar (sin cache)
             </button>
+            {canAdjust && report && report.totals.ajustes_pendientes > 0 && (
+              <button onClick={handleSavePendingToGfk} disabled={savingPending} className={erpBtnPrimary}>
+                <CheckCircle2 size={14} /> {savingPending ? 'Guardando...' : `Guardar en GFK (${report.totals.ajustes_pendientes})`}
+              </button>
+            )}
             {canExport && report && (report.items.length > 0) && (
               <button type="button" onClick={() => setExportOpen(true)} className={erpBtnPrimary}>
                 <FileDown size={14} /> Exportar
@@ -232,6 +306,7 @@ export function PSIPage() {
       />
 
       {error && <ErpNotice tone="error">{error}</ErpNotice>}
+      {success && <ErpNotice tone="success">{success}</ErpNotice>}
 
       {report?.data_freshness?.no_gfk_available && (
         <ErpNotice tone="warning" title="No hay archivo GFK que cubra este rango">
@@ -242,10 +317,10 @@ export function PSIPage() {
       {/* KPIs */}
       {report && (
         <section className="erp-kpi-row" aria-label="Resumen del PSI">
-          <ErpKpiCard label="Productos visibles" value={report.totals.productos_visibles} icon={<Package size={13} />} />
-          <ErpKpiCard label="Stock total"        value={report.totals.stock} />
-          <ErpKpiCard label="Sell out (rango)"   value={report.totals.sell_out} variant="default" detail={report.data_freshness.gfk_files_used.length ? `GFK consultados: ${report.data_freshness.gfk_files_used.map((f) => `#${f.correlativo}`).join(', ')}` : undefined} />
-          <ErpKpiCard label="Ajustes pendientes" value={report.totals.ajustes_pendientes} variant={report.totals.ajustes_pendientes > 0 ? 'alert' : 'default'} icon={<AlertTriangle size={13} />} />
+          <ErpKpiCard label="Productos visibles" value={displayedTotals.productos_visibles} icon={<Package size={13} />} />
+          <ErpKpiCard label="Stock total"        value={displayedTotals.stock} />
+          <ErpKpiCard label="Sell out (rango)"   value={displayedTotals.sell_out} variant="default" detail={report.data_freshness.gfk_files_used.length ? `GFK consultados: ${report.data_freshness.gfk_files_used.map((f) => `#${f.correlativo}`).join(', ')}` : undefined} />
+          <ErpKpiCard label="Ajustes pendientes" value={displayedTotals.ajustes_pendientes} variant={displayedTotals.ajustes_pendientes > 0 ? 'alert' : 'default'} icon={<AlertTriangle size={13} />} />
         </section>
       )}
 
@@ -312,7 +387,7 @@ export function PSIPage() {
       {/* Tabla principal */}
       <ErpCard
         title="Productos"
-        subtitle={report?.totals.productos_visibles ? `${report.totals.productos_visibles} producto${report.totals.productos_visibles === 1 ? '' : 's'} visible${report.totals.productos_visibles === 1 ? '' : 's'}` : undefined}
+        subtitle={displayedTotals.productos_visibles ? `${displayedTotals.productos_visibles} producto${displayedTotals.productos_visibles === 1 ? '' : 's'} visible${displayedTotals.productos_visibles === 1 ? '' : 's'}` : undefined}
       >
         <div className="overflow-x-auto">
           <table className="erp-table">
@@ -352,8 +427,21 @@ export function PSIPage() {
                       </button>
                     ) : r.sell_out}
                   </td>
-                  <td style={{ textAlign: 'right' }} className={`tabular-nums ${r.ajuste_delta > 0 ? 'text-[color:var(--success-2)]' : r.ajuste_delta < 0 ? 'text-[color:var(--danger-2)]' : 'text-[color:var(--text-4)]'}`}>
-                    {r.ajuste_delta !== 0 ? (r.ajuste_delta > 0 ? `+${r.ajuste_delta}` : r.ajuste_delta) : '—'}
+                  <td style={{ textAlign: 'right' }} className="tabular-nums text-[color:var(--text-4)]">
+                    {r.ajuste_delta !== 0 || r.stock_adjustment_delta !== 0 ? (
+                      <span className="inline-flex flex-col items-end gap-0.5">
+                        {r.ajuste_delta !== 0 && (
+                          <span className={r.ajuste_delta > 0 ? 'text-[color:var(--success-2)]' : 'text-[color:var(--danger-2)]'}>
+                            Venta {r.ajuste_delta > 0 ? `+${r.ajuste_delta}` : r.ajuste_delta}
+                          </span>
+                        )}
+                        {r.stock_adjustment_delta !== 0 && (
+                          <span className={r.stock_adjustment_delta > 0 ? 'text-amber-300' : 'text-orange-300'}>
+                            Stock {r.stock_adjustment_delta > 0 ? `+${r.stock_adjustment_delta}` : r.stock_adjustment_delta}
+                          </span>
+                        )}
+                      </span>
+                    ) : '—'}
                   </td>
                   {canAdjust && (
                     <td style={{ textAlign: 'center' }}>
@@ -454,7 +542,8 @@ export function PSIPage() {
           periodoInicio={periodoInicio}
           periodoFin={periodoFin}
           onClose={() => setAdjustRow(null)}
-          onSuccess={() => { setAdjustRow(null); load(true); }}
+          onStockAdjustment={applyLocalStockAdjustment}
+          onSuccess={() => { setAdjustRow(null); load(false); }}
         />
       )}
 
@@ -463,7 +552,7 @@ export function PSIPage() {
         <HistorialDrawer
           row={historialRow}
           onClose={() => setHistorialRow(null)}
-          onReverted={() => { setHistorialRow(null); load(true); }}
+          onReverted={() => { setHistorialRow(null); load(false); }}
         />
       )}
 
@@ -484,6 +573,7 @@ export function PSIPage() {
             periodo_inicio: periodoInicio, periodo_fin: periodoFin, mode,
             exclude_zero_activity: excludeZeroActivity,
           }}
+          stockAdjustments={stockAdjustmentList}
           onClose={() => setExportOpen(false)}
         />
       )}
@@ -562,20 +652,20 @@ function DeltaStepper({
 
 
 function AdjustModal({
-  row, periodoInicio, periodoFin, onClose, onSuccess,
+  row, periodoInicio, periodoFin, onClose, onSuccess, onStockAdjustment,
 }: {
   row: PSIReportRow;
   periodoInicio: string;
   periodoFin: string;
   onClose: () => void;
   onSuccess: () => void;
+  onStockAdjustment: (productId: number, delta: number) => void;
 }) {
   const [target, setTarget] = useState<PSITarget>('sell_out');
   const [sucursal, setSucursal] = useState<string>('CASEROS');
   // En modo 'sell_out' o 'stock' usamos `delta`. En 'both' se usan independientes:
-  //   ventaDelta → suma a sell_out (y se escribe al GFK)
-  //   stockDelta → suma al stock (negativo descuenta). Default −ventaDelta cuando el
-  //                gerente activa 'Ambos' (caso típico "vendí N más, descontar N").
+  //   ventaDelta → suma a sell_out como pendiente.
+  //   stockDelta → suma al stock solo en memoria (temporal).
   const [delta, setDelta] = useState<number>(1);
   const [ventaDelta, setVentaDelta] = useState<number>(1);
   const [stockDelta, setStockDelta] = useState<number>(-1);
@@ -584,6 +674,7 @@ function AdjustModal({
   const [reason, setReason] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const involvesSale = target === 'sell_out' || target === 'both';
 
   // Previews
   const sellOutNew = target === 'stock' ? row.sell_out
@@ -595,7 +686,7 @@ function AdjustModal({
 
   // Validación según target
   const valid =
-    (fechaMode === 'random' || (!!fechaManual && fechaManual >= periodoInicio && fechaManual <= periodoFin)) &&
+    (!involvesSale || fechaMode === 'random' || (!!fechaManual && fechaManual >= periodoInicio && fechaManual <= periodoFin)) &&
     (target === 'both' ? (ventaDelta !== 0 || stockDelta !== 0) : delta !== 0);
 
   async function handleSave() {
@@ -611,19 +702,23 @@ function AdjustModal({
         reason: reason.trim(),
       } as const;
 
+      let needsReload = false;
       if (target === 'both') {
-        // Disparamos 2 ajustes (uno para venta, otro para stock) si ambos != 0.
-        // Uno solo si alguno es 0.
         if (ventaDelta !== 0) {
           await createPSIAdjustment({ ...base, target: 'sell_out', cantidad_delta: ventaDelta });
+          needsReload = true;
         }
         if (stockDelta !== 0) {
-          await createPSIAdjustment({ ...base, target: 'stock', cantidad_delta: stockDelta });
+          onStockAdjustment(row.product_id, stockDelta);
         }
+      } else if (target === 'stock') {
+        onStockAdjustment(row.product_id, delta);
       } else {
         await createPSIAdjustment({ ...base, target, cantidad_delta: delta });
+        needsReload = true;
       }
-      onSuccess();
+      if (needsReload) onSuccess();
+      else onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo guardar el ajuste.');
     } finally {
@@ -636,7 +731,7 @@ function AdjustModal({
       <div className="w-full max-w-lg rounded-3xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-lg font-black text-white">Ajustar sell out</h2>
+            <h2 className="text-lg font-black text-white">Ajustar PSI</h2>
             <p className="mt-1 text-sm text-slate-400">
               <span className="font-mono">{row.sku}</span> · {row.descripcion}
             </p>
@@ -649,9 +744,9 @@ function AdjustModal({
           <label className={labelClass}>Tipo de ajuste</label>
           <div className="grid grid-cols-3 gap-2">
             {([
-              { value: 'sell_out', label: 'Venta', desc: 'Solo sell out (al GFK)' },
-              { value: 'stock',    label: 'Stock', desc: 'Solo stock (Postgres)' },
-              { value: 'both',     label: 'Ambos', desc: 'Venta +Δ y stock −Δ' },
+              { value: 'sell_out', label: 'Venta', desc: 'Pendiente hasta guardar' },
+              { value: 'stock',    label: 'Stock', desc: 'Temporal, no se guarda' },
+              { value: 'both',     label: 'Ambos', desc: 'Venta pendiente + stock temporal' },
             ] as { value: PSITarget; label: string; desc: string }[]).map((opt) => (
               <button
                 key={opt.value}
@@ -720,35 +815,39 @@ function AdjustModal({
             />
           )}
 
-          <div>
-            <label className={labelClass}>Sucursal del ajuste</label>
-            <select value={sucursal} onChange={(e) => setSucursal(e.target.value)} className={inputClass}>
-              {SUCURSALES.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
+          {involvesSale && (
+            <>
+              <div>
+                <label className={labelClass}>Sucursal del ajuste</label>
+                <select value={sucursal} onChange={(e) => setSucursal(e.target.value)} className={inputClass}>
+                  {SUCURSALES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
 
-          <div>
-            <label className={labelClass}>Fecha que va al GFK</label>
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-sm text-slate-200">
-                <input type="radio" name="fmode" checked={fechaMode === 'random'} onChange={() => setFechaMode('random')} />
-                <span>Aleatoria dentro del rango (<b className="text-slate-300">{periodoInicio} → {periodoFin}</b>)</span>
-              </label>
-              <label className="flex items-center gap-2 text-sm text-slate-200">
-                <input type="radio" name="fmode" checked={fechaMode === 'manual'} onChange={() => setFechaMode('manual')} />
-                <span>Elegir manualmente:</span>
-                <input
-                  type="date"
-                  value={fechaManual}
-                  min={periodoInicio}
-                  max={periodoFin}
-                  onChange={(e) => setFechaManual(e.target.value)}
-                  disabled={fechaMode !== 'manual'}
-                  className={`${inputClass} flex-1`}
-                />
-              </label>
-            </div>
-          </div>
+              <div>
+                <label className={labelClass}>Fecha que va al GFK al guardar</label>
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 text-sm text-slate-200">
+                    <input type="radio" name="fmode" checked={fechaMode === 'random'} onChange={() => setFechaMode('random')} />
+                    <span>Aleatoria dentro del rango (<b className="text-slate-300">{periodoInicio} → {periodoFin}</b>)</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-slate-200">
+                    <input type="radio" name="fmode" checked={fechaMode === 'manual'} onChange={() => setFechaMode('manual')} />
+                    <span>Elegir manualmente:</span>
+                    <input
+                      type="date"
+                      value={fechaManual}
+                      min={periodoInicio}
+                      max={periodoFin}
+                      onChange={(e) => setFechaManual(e.target.value)}
+                      disabled={fechaMode !== 'manual'}
+                      className={`${inputClass} flex-1`}
+                    />
+                  </label>
+                </div>
+              </div>
+            </>
+          )}
 
           <div>
             <label className={labelClass}>Motivo (opcional)</label>
@@ -764,8 +863,8 @@ function AdjustModal({
         <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-100/90">
           <AlertTriangle size={12} className="mr-1 inline" />
           {target === 'stock'
-            ? 'Solo se registra en la base. El stock efectivo del PSI se ajusta; el sheet de Stock no se toca. Es reversible.'
-            : 'Escribe una fila al GFK que cubre la fecha del ajuste (TipoVendedor=AJUSTE, Nombre=PSI-id). Es reversible.'}
+            ? 'El stock se ajusta solo en esta pantalla. Limpiar, aplicar filtros o refrescar sin cache elimina este ajuste.'
+            : 'La venta queda pendiente. No se escribe al GFK hasta tocar Guardar en GFK.'}
         </div>
 
         {error && (
@@ -779,7 +878,7 @@ function AdjustModal({
             disabled={saving || !valid}
             className="inline-flex items-center gap-2 rounded-xl bg-blue-500 px-4 py-2 text-sm font-black text-white hover:bg-blue-400 disabled:opacity-60"
           >
-            {saving ? 'Guardando...' : 'Guardar y aplicar'}
+            {saving ? 'Guardando...' : target === 'stock' ? 'Aplicar temporal' : 'Agregar pendiente'}
           </button>
         </div>
       </div>
@@ -838,7 +937,7 @@ function HistorialDrawer({ row, onClose, onReverted }: { row: PSIReportRow; onCl
               : adj.status === 'pending' ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
               : adj.status === 'reverted' ? 'border-slate-700 bg-slate-900 text-slate-400 line-through opacity-70'
               : 'border-red-500/40 bg-red-500/10 text-red-200';
-            const canRevertThis = canAdjust && adj.status === 'applied_to_sheet';
+            const canRevertThis = canAdjust && (adj.status === 'applied_to_sheet' || adj.status === 'pending');
             return (
               <div key={adj.id} className={`rounded-2xl border p-3 ${statusColor}`}>
                 <div className="flex items-baseline justify-between">
@@ -860,7 +959,7 @@ function HistorialDrawer({ row, onClose, onReverted }: { row: PSIReportRow; onCl
                     disabled={reverting === adj.id}
                     className="mt-2 inline-flex items-center gap-1 rounded-lg border border-red-500/40 px-2 py-1 text-xs font-bold text-red-200 hover:bg-red-500/10 disabled:opacity-60"
                   >
-                    <Trash2 size={12} /> {reverting === adj.id ? 'Revirtiendo...' : 'Revertir'}
+                    <Trash2 size={12} /> {reverting === adj.id ? 'Procesando...' : adj.status === 'pending' ? 'Descartar' : 'Revertir'}
                   </button>
                 )}
               </div>
@@ -1022,13 +1121,14 @@ function AliasModal({
 // ──────────────────────────────────────────────────────────────────────────
 
 function ExportReportModal({
-  filters, onClose,
+  filters, stockAdjustments, onClose,
 }: {
   filters: {
     marcas: string[]; tipos: string[]; condicion: PSICondicionFilter;
     periodo_inicio: string; periodo_fin: string; mode: PSIMode;
     exclude_zero_activity: boolean;
   };
+  stockAdjustments: { product_id: number; delta: number }[];
   onClose: () => void;
 }) {
   const defaultTitle = useMemo(() => {
@@ -1056,6 +1156,7 @@ function ExportReportModal({
         periodo_fin: filters.periodo_fin,
         mode: filters.mode,
         exclude_zero_activity: filters.exclude_zero_activity,
+        stock_adjustments: stockAdjustments,
       };
       const blob = format === 'pdf' ? await exportPSIPdf(payload) : await exportPSIXlsx(payload);
       const url = URL.createObjectURL(blob);

@@ -260,40 +260,33 @@ def psi_report(
         no_gfk_available: bool = gfk_data["no_gfk_available"]
         ventas_fetched_at = datetime.utcnow().isoformat() + "Z"
 
-        # 5. Ajustes del rango — separados por target
-        # Los applied_to_sheet de target=sell_out ya están reflejados en el GFK,
-        # así que solo sumamos los 'pending' para sell_out. Para stock, sumamos
-        # tanto pending como applied_to_sheet porque NUNCA se escriben al sheet
-        # (viven solo en Postgres).
+        # 5. Ajustes de venta pendientes.
+        # Los applied_to_sheet ya están reflejados en el GFK, así que solo
+        # sumamos pending al sell_out. Los ajustes de stock son temporales de
+        # UI y no se leen/persisten acá.
         all_in_range: list[SalesPsiAdjustment] = session.scalars(
             select(SalesPsiAdjustment).where(
                 and_(
                     SalesPsiAdjustment.periodo_semana >= pi,
                     SalesPsiAdjustment.periodo_semana <= pf,
                     SalesPsiAdjustment.status.in_(["pending", "applied_to_sheet"]),
+                    SalesPsiAdjustment.target.in_(["sell_out", "both"]),
                 )
             )
         ).all()
         pending_by_product: dict[int, list[SalesPsiAdjustment]] = {}
-        stock_delta_by_product: dict[int, int] = {}
         for adj in all_in_range:
             pid = int(adj.product_id)
-            # sell_out: solo los pending de target sell_out/both
-            if adj.status == "pending" and adj.target in ("sell_out", "both"):
+            if adj.status == "pending":
                 pending_by_product.setdefault(pid, []).append(adj)
-            # stock: pending+applied de target stock/both. Si target='both',
-            # el stock se decrementa por la venta (delta sell_out negativo en stock).
-            if adj.target == "stock":
-                stock_delta_by_product[pid] = stock_delta_by_product.get(pid, 0) + int(adj.cantidad_delta)
-            elif adj.target == "both":
-                stock_delta_by_product[pid] = stock_delta_by_product.get(pid, 0) - int(adj.cantidad_delta)
 
-        # 6. Historial completo (todos los status) — para badges/drawer
+        # 6. Historial de ajustes de venta (todos los status) — para badges/drawer
         historial_rows: list[SalesPsiAdjustment] = session.scalars(
             select(SalesPsiAdjustment).where(
                 and_(
                     SalesPsiAdjustment.periodo_semana >= pi,
                     SalesPsiAdjustment.periodo_semana <= pf,
+                    SalesPsiAdjustment.target.in_(["sell_out", "both"]),
                 )
             ).order_by(SalesPsiAdjustment.created_at.desc())
         ).all()
@@ -364,7 +357,7 @@ def psi_report(
     for p in catalogo:
         if mode == "advanced":
             _ensure_entry(p)
-        elif int(p.id) in pending_by_product or int(p.id) in stock_delta_by_product:
+        elif int(p.id) in pending_by_product:
             _ensure_entry(p)
 
     rows: list[PSIReportRow] = []
@@ -380,7 +373,7 @@ def psi_report(
             continue
         p: Product = entry["product"]
         stock_base = int(entry["stock_base"])
-        stock_delta = int(stock_delta_by_product.get(pid, 0))
+        stock_delta = 0
         stock_efectivo = stock_base + stock_delta
 
         sell_out_base = int(entry["sell_out_base"])
@@ -395,7 +388,7 @@ def psi_report(
 
         # Regla de inclusión (default): stock>0 OR sell_out>0 OR ajuste
         if mode == "default":
-            if stock_efectivo <= 0 and sell_out_final <= 0 and ajuste_delta == 0 and stock_delta == 0:
+            if stock_efectivo <= 0 and sell_out_final <= 0 and ajuste_delta == 0:
                 continue
 
         historial_p = [_adjustment_to_info(a) for a in historial_by_product.get(pid, [])]
@@ -412,12 +405,12 @@ def psi_report(
             sell_out=sell_out_final,
             sell_out_base=sell_out_base,
             ajuste_delta=ajuste_delta,
-            has_pending_adjustment=(ajuste_delta != 0) or (stock_delta != 0),
+            has_pending_adjustment=(ajuste_delta != 0),
             historial_ajustes=historial_p,
         ))
         total_stock += stock_efectivo
         total_sell_out += sell_out_final
-        if ajuste_delta != 0 or stock_delta != 0:
+        if ajuste_delta != 0:
             ajustes_count += 1
 
     # 8. Bandeja "no catalogados" — SKUs del GFK que no matchearon ni por SKU ni por descripción
@@ -492,6 +485,21 @@ class PSIAdjustResponse(BaseModel):
     message:                str
 
 
+class PSIApplyPendingPayload(BaseModel):
+    periodo_inicio: str
+    periodo_fin: str
+    product_ids: list[int] = Field(default_factory=list)
+
+
+class PSIApplyPendingResponse(BaseModel):
+    applied_count: int
+    failed_count: int
+    total_pending: int
+    applied_ids: list[int]
+    failed_ids: list[int]
+    message: str
+
+
 def _pick_random_date(periodo_inicio: date, periodo_fin: date) -> date:
     """Random date dentro del rango, excluyendo domingos."""
     import random
@@ -520,21 +528,18 @@ def psi_adjust(
     payload: PSIAdjustPayload,
     user: Annotated[Any, Depends(require_permission("psi.adjust"))],
 ):
-    """Crea un ajuste manual y lo aplica.
+    """Crea un ajuste manual de venta en estado pending.
 
-    Comportamiento según target:
-      - sell_out / both: escribe una fila al GFK más reciente del rango.
-      - stock         : solo persiste en Postgres (no toca Sheets).
-
-    En 'both' el sell_out se escribe al GFK; el stock se descuenta lógicamente
-    al mostrar el reporte (stock_efectivo = base - delta).
+    El ajuste NO se escribe al GFK hasta que el usuario confirma con
+    /adjustments/apply-pending. Los ajustes de stock son temporales de UI y no
+    se persisten por API.
     """
     from ...models.products import Product
-    from ...commercial import cache_invalidate
-    from ...commercial.adjustments_writer import write_adjustment_to_gfk
 
     if payload.cantidad_delta == 0:
         raise HTTPException(400, "cantidad_delta no puede ser 0")
+    if payload.target == "stock":
+        raise HTTPException(400, "Los ajustes de stock son temporales y no se guardan en el servidor")
     if payload.sucursal not in PSI_SUCURSALES:
         raise HTTPException(400, f"sucursal inválida. Esperaba una de {PSI_SUCURSALES}")
     pi = _parse_date(payload.periodo_inicio, "periodo_inicio")
@@ -586,59 +591,104 @@ def psi_adjust(
         session.add(adj)
         session.flush()
         adjustment_id = int(adj.id)
-
-        # Si el target involucra sell_out → escribir al GFK.
-        # Si es solo stock → no se escribe a ningún Sheet, queda solo en Postgres.
-        wrote_to_gfk = payload.target in ("sell_out", "both")
-        book_id: str | None = None
-        sheet_range: str | None = None
-        if wrote_to_gfk:
-            try:
-                book_id, sheet_range = write_adjustment_to_gfk(
-                    adjustment_id=adjustment_id,
-                    inserted_date=inserted,
-                    sucursal=payload.sucursal,
-                    descripcion=adj.descripcion_snapshot,
-                    marca=adj.marca_snapshot,
-                    sku=adj.sku_snapshot,
-                    cantidad_delta=adj.cantidad_delta,
-                    valor_estimado=adj.valor_estimado,
-                    periodo_inicio=pi,
-                    periodo_fin=pf,
-                )
-            except HTTPException:
-                adj.status = "failed"
-                session.commit()
-                raise
-            adj.applied_to_book = book_id
-            adj.applied_to_sheet_range = sheet_range
-
-        adj.status = "applied_to_sheet"
-        adj.applied_at = datetime.utcnow()
-        adj.applied_by_user_id = actor_id
         session.commit()
-
-        # Invalidar caches relevantes
-        if wrote_to_gfk and book_id:
-            cache_invalidate(f"gfk:{book_id}")
-
-        if wrote_to_gfk:
-            msg = f"Ajuste aplicado al GFK ({sheet_range})"
-            if payload.target == "both":
-                msg += " · stock descontado lógicamente"
-        else:
-            msg = "Ajuste de stock registrado (solo Postgres, no se escribe al Sheet)"
 
         return PSIAdjustResponse(
             id=adjustment_id,
-            status="applied_to_sheet",
+            status="pending",
             inserted_date=inserted.strftime("%Y-%m-%d"),
             sucursal=payload.sucursal,
             cantidad_delta=adj.cantidad_delta,
-            applied_to_book=book_id,
-            applied_to_sheet_range=sheet_range,
-            message=msg,
+            applied_to_book=None,
+            applied_to_sheet_range=None,
+            message="Ajuste de venta pendiente. Usá Guardar en GFK para confirmarlo.",
         )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# POST /api/psi/adjustments/apply-pending — confirmar pendientes al GFK
+# ──────────────────────────────────────────────────────────────────────────
+
+@router.post("/adjustments/apply-pending", response_model=PSIApplyPendingResponse)
+def psi_apply_pending_adjustments(
+    payload: PSIApplyPendingPayload,
+    user: Annotated[Any, Depends(require_permission("psi.adjust"))],
+):
+    """Escribe al GFK los ajustes de venta pendientes del rango indicado."""
+    from ...commercial import cache_invalidate
+    from ...commercial.adjustments_writer import write_adjustment_to_gfk
+
+    pi = _parse_date(payload.periodo_inicio, "periodo_inicio")
+    pf = _parse_date(payload.periodo_fin, "periodo_fin")
+    if pf < pi:
+        raise HTTPException(400, "periodo_fin no puede ser menor que periodo_inicio")
+
+    product_ids = sorted({int(pid) for pid in payload.product_ids if int(pid) > 0})
+
+    applied_ids: list[int] = []
+    failed_ids: list[int] = []
+    books_touched: set[str] = set()
+
+    with db_session() as session:
+        actor_id = _resolve_user_id(session, user)
+        conditions = [
+            SalesPsiAdjustment.periodo_semana >= pi,
+            SalesPsiAdjustment.periodo_semana <= pf,
+            SalesPsiAdjustment.status == "pending",
+            SalesPsiAdjustment.target.in_(["sell_out", "both"]),
+        ]
+        if product_ids:
+            conditions.append(SalesPsiAdjustment.product_id.in_(product_ids))
+
+        pending: list[SalesPsiAdjustment] = session.scalars(
+            select(SalesPsiAdjustment)
+            .where(and_(*conditions))
+            .order_by(SalesPsiAdjustment.created_at.asc())
+        ).all()
+        total_pending = len(pending)
+
+        for adj in pending:
+            try:
+                book_id, sheet_range = write_adjustment_to_gfk(
+                    adjustment_id=int(adj.id),
+                    inserted_date=adj.inserted_date,
+                    sucursal=adj.sucursal,
+                    descripcion=adj.descripcion_snapshot,
+                    marca=adj.marca_snapshot,
+                    sku=adj.sku_snapshot,
+                    cantidad_delta=int(adj.cantidad_delta),
+                    valor_estimado=float(adj.valor_estimado) if adj.valor_estimado is not None else None,
+                    periodo_inicio=pi,
+                    periodo_fin=pf,
+                )
+                adj.status = "applied_to_sheet"
+                adj.applied_at = datetime.utcnow()
+                adj.applied_by_user_id = actor_id
+                adj.applied_to_book = book_id
+                adj.applied_to_sheet_range = sheet_range
+                applied_ids.append(int(adj.id))
+                if book_id:
+                    books_touched.add(book_id)
+            except Exception:
+                adj.status = "failed"
+                failed_ids.append(int(adj.id))
+            finally:
+                session.commit()
+
+    for book_id in books_touched:
+        cache_invalidate(f"gfk:{book_id}")
+
+    return PSIApplyPendingResponse(
+        applied_count=len(applied_ids),
+        failed_count=len(failed_ids),
+        total_pending=total_pending,
+        applied_ids=applied_ids,
+        failed_ids=failed_ids,
+        message=(
+            f"{len(applied_ids)} ajuste(s) guardado(s) en GFK."
+            if applied_ids else "No había ajustes pendientes para guardar."
+        ),
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -666,6 +716,13 @@ def psi_adjust_revert(
             raise HTTPException(404, "Ajuste no encontrado")
         if adj.status == "reverted":
             return PSIRevertResponse(id=adjustment_id, status="reverted", message="Ya estaba revertido")
+        if adj.status == "pending":
+            actor_id = _resolve_user_id(session, user)
+            adj.status = "reverted"
+            adj.reverted_at = datetime.utcnow()
+            adj.reverted_by_user_id = actor_id
+            session.commit()
+            return PSIRevertResponse(id=adjustment_id, status="reverted", message="Ajuste pendiente descartado")
         if adj.status != "applied_to_sheet":
             raise HTTPException(
                 400,
@@ -877,13 +934,49 @@ class PSIExportPDFPayload(BaseModel):
     titulo:         str = Field(min_length=1, max_length=200)
     logo:           Literal["GV", "ABC", "NONE"] = "GV"
     # Mismos filtros que /report
-    marcas:         list[str] = []
-    tipos:          list[str] = []
+    marcas:         list[str] = Field(default_factory=list)
+    tipos:          list[str] = Field(default_factory=list)
     condicion:      Literal["TODO", "PRIMERA", "OUTLET"] = "TODO"
     periodo_inicio: str
     periodo_fin:    str
     mode:           Literal["default", "advanced"] = "default"
     exclude_zero_activity: bool = False
+    stock_adjustments: list[dict[str, int]] = Field(default_factory=list)
+
+
+def _apply_export_stock_adjustments(report: PSIReportResponse, adjustments: list[dict[str, int]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Aplica ajustes temporales de stock al snapshot usado por PDF/Excel."""
+    stock_delta_by_product: dict[int, int] = {}
+    for item in adjustments or []:
+        try:
+            product_id = int(item.get("product_id") or 0)
+            delta = int(item.get("delta") or 0)
+        except Exception:
+            continue
+        if product_id > 0 and delta != 0:
+            stock_delta_by_product[product_id] = stock_delta_by_product.get(product_id, 0) + delta
+
+    rows: list[dict[str, Any]] = []
+    total_stock = 0
+    total_sell_out = 0
+    exclude_zero = bool(report.filters_applied.exclude_zero_activity)
+    for row in report.items:
+        data = row.model_dump()
+        delta = stock_delta_by_product.get(int(data["product_id"]), 0)
+        if delta:
+            data["stock"] = int(data["stock"] or 0) + delta
+            data["stock_adjustment_delta"] = int(data.get("stock_adjustment_delta") or 0) + delta
+        if exclude_zero and int(data.get("stock") or 0) == 0 and int(data.get("sell_out") or 0) == 0:
+            continue
+        rows.append(data)
+        total_stock += int(data.get("stock") or 0)
+        total_sell_out += int(data.get("sell_out") or 0)
+
+    totals = report.totals.model_dump()
+    totals["stock"] = total_stock
+    totals["sell_out"] = total_sell_out
+    totals["productos_visibles"] = len(rows)
+    return rows, totals
 
 
 @router.post("/export-pdf")
@@ -925,10 +1018,12 @@ def psi_export_pdf(
             or None
         )
 
+    export_items, export_totals = _apply_export_stock_adjustments(report, payload.stock_adjustments)
+
     pdf_bytes = render_psi_pdf(
         titulo=payload.titulo.strip(),
-        items=[i.model_dump() for i in report.items],
-        totals=report.totals.model_dump(),
+        items=export_items,
+        totals=export_totals,
         filters_applied=report.filters_applied.model_dump(),
         gfk_files_used=[g.model_dump() for g in report.data_freshness.gfk_files_used],
         logo=payload.logo,
@@ -987,10 +1082,12 @@ def psi_export_xlsx(
             or None
         )
 
+    export_items, export_totals = _apply_export_stock_adjustments(report, payload.stock_adjustments)
+
     xlsx_bytes = render_psi_xlsx(
         titulo=payload.titulo.strip(),
-        items=[i.model_dump() for i in report.items],
-        totals=report.totals.model_dump(),
+        items=export_items,
+        totals=export_totals,
         filters_applied=report.filters_applied.model_dump(),
         logo=payload.logo,
         responsable=responsable_name,

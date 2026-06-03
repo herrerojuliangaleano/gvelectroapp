@@ -1955,6 +1955,15 @@ export interface PSIAdjustResponse {
   message:                  string;
 }
 
+export interface PSIApplyPendingResponse {
+  applied_count: number;
+  failed_count: number;
+  total_pending: number;
+  applied_ids: number[];
+  failed_ids: number[];
+  message: string;
+}
+
 export interface PSIProductSearchRow {
   id:          number;
   sku:         string;

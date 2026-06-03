@@ -881,6 +881,10 @@ export async function createPSIAdjustment(payload: import('../types').PSIAdjustP
   return request('/api/psi/adjust', { method: 'POST', body: JSON.stringify(payload) });
 }
 
+export async function applyPendingPSIAdjustments(payload: { periodo_inicio: string; periodo_fin: string; product_ids?: number[] }): Promise<import('../types').PSIApplyPendingResponse> {
+  return request('/api/psi/adjustments/apply-pending', { method: 'POST', body: JSON.stringify(payload) });
+}
+
 export async function revertPSIAdjustment(id: number): Promise<import('../types').PSIRevertResponse> {
   return request(`/api/psi/adjust/${id}/revert`, { method: 'POST' });
 }
@@ -916,6 +920,7 @@ export interface PSIExportPDFPayload {
   periodo_fin: string;
   mode: 'default' | 'advanced';
   exclude_zero_activity?: boolean;
+  stock_adjustments?: { product_id: number; delta: number }[];
 }
 
 export async function searchPSIProducts(q: string, limit = 20): Promise<PSIProductSearchRow[]> {

@@ -1,13 +1,13 @@
 # Módulo Comercial — Fase 1 (PSI con cruce al GFK)
 
 > **Para qué sirve este doc**: planificar y guiar la implementación del PSI
-> (Planificación de Ventas e Inventario) como nuevo módulo de la sección
+> (Compras, Ventas e Inventario) como nuevo módulo de la sección
 > Comercial. Este doc es la fuente de verdad de la especificación. Cualquier
 > agente (Codex / Claude Code) que arranque a implementar debería poder hacerlo
 > sólo con este archivo y la base de código actual.
 >
-> **Estado**: planificado, no implementado. Cada sección incluye qué hay que
-> hacer en backend y/o frontend.
+> **Estado**: implementado en iteración inicial y mantenido como especificación
+> viva. Cada cambio funcional del PSI debe actualizar este archivo.
 
 ---
 
@@ -16,9 +16,13 @@
 El **PSI** es una pantalla para que el gerente comercial revise semanalmente
 el desempeño de cada marca: cuánto vendió, cuánto stock le queda, y poder
 **ajustar manualmente** las ventas cuando el sistema operativo no las registró
-correctamente. Los ajustes se aplican automáticamente al libro mensual de
-ventas en Google Drive, de modo que el reporte GFK (que se genera con la
-herramienta `gg`) los incluye sin intervención adicional.
+correctamente.
+
+Regla actual de ajustes:
+- Los ajustes de **venta / sell out** quedan pendientes en PostgreSQL y se
+  escriben al libro mensual/GFK solamente cuando el usuario toca `Guardar en GFK`.
+- Los ajustes de **stock** son temporales de pantalla: no se guardan en backend,
+  no modifican Google Sheets y se pierden al limpiar filtros o refrescar sin cache.
 
 **Destinatario**: rol nuevo `GERENTE_COMERCIAL`, más los actuales `GERENTE` y
 `SUPERADMIN`.
@@ -168,6 +172,10 @@ detectada por `has_outlet_marker` en `backend/app/product_catalog.py`.
               └────────────────────────┘
 ```
 
+Nota de implementación vigente: el bloque "Backend escribe fila al sheet" ocurre
+solamente después de `Guardar en GFK`. Crear un ajuste de venta deja el registro
+en `pending`; ajustar stock no entra en este flujo porque es temporal de UI.
+
 ### 3.2 Decisiones de diseño clave
 
 - **No se mantiene un cache persistente de hechos (`sales_psi_facts`) en
@@ -178,9 +186,12 @@ detectada por `has_outlet_marker` en `backend/app/product_catalog.py`.
   condición.** El sell out del libro mensual y el stock vienen con SKU como
   llave; el lookup contra `products` resuelve los atributos. Si un SKU no
   está en el catálogo → bandeja "productos no catalogados" (sección 7.4).
-- **Los ajustes se escriben al sheet en el mismo request** que los crea (no
-  hay paso manual "aplicar ajustes"). Esto evita estados intermedios y deja
-  el libro mensual siempre como single source of truth.
+- **Los ajustes de venta no se escriben al sheet al crearlos.** Primero se
+  guardan como `pending` en `sales_psi_adjustments`; el GFK se modifica recién
+  con la acción explícita `Guardar en GFK` (`POST /api/psi/adjustments/apply-pending`).
+- **Los ajustes de stock son overlay local de UI.** Sirven para armar/exportar
+  un PSI puntual, pero se eliminan al limpiar filtros, aplicar filtros o usar
+  `Refrescar (sin cache)`. No se persisten en PostgreSQL ni se escriben en Sheets.
 - **El PSI consolida ambas empresas** (GV + ABC). El logo del PDF
   exportado es configurable, no determina el alcance de los datos.
 - **No hay filtro de sucursal** en Fase 1. El stock consolidado y la suma
@@ -243,6 +254,13 @@ Helpers existentes a reusar: `sku_key()`, `normalize_text()`,
 ### 4.4 Ajustes en Postgres (`sales_psi_adjustments`)
 
 Tabla nueva, ver schema completo en sección 9.
+
+Alcance actual:
+- Persisten ajustes de venta (`target='sell_out'` o `target='both'`) en estado
+  `pending`, `applied_to_sheet`, `reverted` o `failed`.
+- No persisten ajustes de stock puro. El stock ajustado existe solo en el estado
+  del frontend y en el payload de exportación si se genera un PDF/Excel antes de
+  limpiar o refrescar.
 
 ---
 
@@ -480,15 +498,20 @@ Botón `⚙ Ajustes avanzados` cambia el modo de la tabla:
 │ ⚠ Esta acción escribe una fila al libro mensual  │
 │   del rango. Es reversible.                      │
 │                                                   │
-│         [ Cancelar ]   [ Guardar y aplicar ]     │
+│         [ Cancelar ]   [ Agregar pendiente ]     │
 └──────────────────────────────────────────────────┘
 ```
 
 Reglas UI:
 - Si delta = 0, deshabilitar `Guardar`.
 - Si modo = manual y fecha está fuera del rango, mostrar error inline.
-- Si la sucursal no se eligió y hay más de una posible (ver sección 10.4),
-  no permitir continuar.
+- Si la sucursal no se eligió y hay más de una posible, no permitir continuar.
+- `Venta`: crea un ajuste `pending` y muestra el botón global `Guardar en GFK`.
+- `Stock`: aplica el delta solo en la pantalla. `Limpiar`, `Aplicar filtros` y
+  `Refrescar (sin cache)` lo eliminan.
+- `Ambos`: separa la operación: venta pendiente en backend + stock temporal en UI.
+- El botón principal del modal dice `Agregar pendiente` para ventas y
+  `Aplicar temporal` para stock.
 
 ### 8.5 Historial de ajustes por producto
 
@@ -496,30 +519,34 @@ Click en el badge de una celda → drawer lateral con:
 
 | Fecha del ajuste | Sucursal | Delta | Estado | Motivo | Usuario | Acción |
 |---|---|---|---|---|---|---|
-| 13/05 (manual) | Caseros | +1 | applied | venta web | admin | [Revertir] |
+| 13/05 (manual) | Caseros | +1 | pending | venta web | admin | [Descartar] |
 | 15/05 (random) | Sur | -1 | applied | doble carga | admin | [Revertir] |
 
-`Revertir` borra la fila del sheet correspondiente y marca el ajuste como
-`reverted` con timestamp y usuario.
+`Descartar` sobre un ajuste `pending` lo marca como `reverted` sin tocar Sheets.
+`Revertir` sobre un ajuste `applied_to_sheet` borra la fila del sheet
+correspondiente y marca el ajuste como `reverted` con timestamp y usuario.
 
-### 8.6 Export PDF
+### 8.6 Export PDF / Excel
 
-Botón `📄 PDF` abre modal:
+Botón `Exportar` abre modal:
 
 ```text
 ┌────────────────────────────────────────┐
-│ Exportar PSI a PDF                     │
+│ Exportar PSI                           │
 │                                         │
 │ Logo:    ( GV │ ABC │ Sin logo )       │
 │ Título:  [PSI SMART LIFE 8/05 AL 18/05]│
 │                                         │
-│ [Cancelar]              [Generar PDF]  │
+│ [Cancelar]      [PDF] [Excel]          │
 └────────────────────────────────────────┘
 ```
 
-El backend renderiza con `reportlab` (mismo enfoque que `pdf_remito.py`).
+El backend renderiza PDF con `reportlab` y Excel con `openpyxl`.
 Formato similar al screenshot del Sheet "PSI SMART LIFE 8/05 AL 18/05":
 logo arriba, título centrado, tabla con SKU/Descripción/Stock/Sell out.
+Si hay ajustes temporales de stock activos en la pantalla, se envían en
+`stock_adjustments` para que el PDF/Excel refleje la vista actual sin persistir
+ese stock.
 
 ---
 
@@ -672,7 +699,10 @@ Devuelve la tabla del PSI con filtros aplicados.
 
 ### 10.3 `POST /api/psi/adjust`
 
-Crea un ajuste y lo escribe al libro mensual en una sola operación.
+Crea un ajuste manual de venta en estado `pending`.
+
+No escribe al libro mensual ni al GFK en esta llamada. Los ajustes de stock
+puro no se aceptan por API: son temporales de UI.
 
 **Permission**: `psi.adjust`
 
@@ -686,7 +716,8 @@ Crea un ajuste y lo escribe al libro mensual en una sola operación.
   "periodo_fin": "2026-05-18",
   "fecha_mode": "random",
   "fecha_manual": null,
-  "reason": "venta web no registrada"
+  "reason": "venta web no registrada",
+  "target": "sell_out"
 }
 ```
 
@@ -694,55 +725,85 @@ Crea un ajuste y lo escribe al libro mensual en una sola operación.
 - `product_id` existe y está activo.
 - `sucursal` ∈ {CASEROS, SUR, NORTE, CANNING}.
 - `cantidad_delta` ≠ 0.
+- `target='stock'` devuelve 400 porque el stock no se persiste en backend.
 - Si `fecha_mode='manual'`, `fecha_manual` está en `[periodo_inicio,
   periodo_fin]`.
-- El libro mensual del mes correspondiente existe y es accesible.
 
 **Procedimiento**:
 1. Calcular `inserted_date` (manual o random).
 2. Calcular `periodo_semana` = lunes de la semana de `inserted_date`.
 3. INSERT en `sales_psi_adjustments` con `status='pending'`.
-4. Identificar el libro mensual del mes de `inserted_date`.
-5. Identificar la hoja `BASE_{sucursal}` y la próxima fila vacía.
-6. APPEND fila: `inserted_date | sucursal | tipo_venta | "" | descripcion |
-   sku | cantidad_delta | valor_estimado`.
-7. UPDATE `sales_psi_adjustments` set `status='applied_to_sheet',
-   applied_at=NOW(), applied_to_book=..., applied_to_sheet_range=...`.
-8. Invalidar cache de ventas para ese mes.
-
-Si el paso 6 falla: `status='failed'`, devolver 502.
+4. Devolver el ajuste pendiente para que la pantalla muestre `Guardar en GFK`.
 
 **Response 200**:
 ```json
 {
   "id": 42,
-  "status": "applied_to_sheet",
+  "status": "pending",
   "inserted_date": "2026-05-13",
-  "applied_to_book": "1abc…file_id…",
-  "applied_to_sheet_range": "BASE_CASEROS!A123:H123",
-  "message": "Ajuste aplicado al libro mensual"
+  "sucursal": "CASEROS",
+  "cantidad_delta": 1,
+  "applied_to_book": null,
+  "applied_to_sheet_range": null,
+  "message": "Ajuste de venta pendiente. Usá Guardar en GFK para confirmarlo."
 }
 ```
 
-### 10.4 `POST /api/psi/adjust/{id}/revert`
+### 10.4 `POST /api/psi/adjustments/apply-pending`
 
-Borra la fila escrita en el sheet y marca el ajuste como reverted.
+Confirma ajustes pendientes de venta y los escribe al libro mensual/GFK.
+
+**Permission**: `psi.adjust`
+
+**Request body**:
+```json
+{
+  "periodo_inicio": "2026-05-08",
+  "periodo_fin": "2026-05-18",
+  "product_ids": [123, 456]
+}
+```
+
+**Reglas**:
+- Solo toma ajustes `status='pending'`.
+- Solo toma `target IN ('sell_out', 'both')`.
+- Si `product_ids` viene informado, confirma solo esos productos.
+- Si la escritura falla para un ajuste, queda `status='failed'`.
+- Al confirmar correctamente, el ajuste pasa a `applied_to_sheet` y se guardan
+  `applied_at`, `applied_to_book`, `applied_to_sheet_range` y `applied_by_user_id`.
+
+**Response 200**:
+```json
+{
+  "applied_count": 2,
+  "failed_count": 0,
+  "total_pending": 2,
+  "applied_ids": [42, 43],
+  "failed_ids": [],
+  "message": "2 ajuste(s) guardado(s) en GFK."
+}
+```
+
+### 10.5 `POST /api/psi/adjust/{id}/revert`
+
+Descarta o revierte un ajuste.
 
 **Permission**: `psi.adjust`
 
 **Procedimiento**:
-1. SELECT ajuste, validar `status='applied_to_sheet'`.
-2. Borrar el rango `applied_to_sheet_range` del libro `applied_to_book`.
-3. UPDATE `sales_psi_adjustments` set `status='reverted', reverted_at=NOW(),
+1. SELECT ajuste.
+2. Si `status='pending'`, marcar `reverted` sin tocar Sheets.
+3. Si `status='applied_to_sheet'`, borrar la fila/rango del libro mensual.
+4. UPDATE `sales_psi_adjustments` set `status='reverted', reverted_at=NOW(),
    reverted_by_user_id=...`.
-4. Invalidar cache de ventas.
+5. Invalidar cache de ventas si se tocó el GFK.
 
 **Response 200**:
 ```json
-{ "id": 42, "status": "reverted" }
+{ "id": 42, "status": "reverted", "message": "Ajuste pendiente descartado" }
 ```
 
-### 10.5 `POST /api/psi/export-pdf`
+### 10.6 `POST /api/psi/export-pdf`
 
 Genera un PDF con la vista actual del PSI.
 
@@ -751,9 +812,18 @@ Genera un PDF con la vista actual del PSI.
 **Request body**:
 ```json
 {
-  "filters": { /* mismo shape que /report */ },
-  "logo": "GV" | "ABC" | "NONE",
-  "titulo": "PSI SMART LIFE 8/05 AL 18/05"
+  "titulo": "PSI SMART LIFE 8/05 AL 18/05",
+  "logo": "GV",
+  "marcas": ["SMART LIFE"],
+  "tipos": [],
+  "condicion": "TODO",
+  "periodo_inicio": "2026-05-08",
+  "periodo_fin": "2026-05-18",
+  "mode": "default",
+  "exclude_zero_activity": true,
+  "stock_adjustments": [
+    { "product_id": 123, "delta": -1 }
+  ]
 }
 ```
 
@@ -762,13 +832,20 @@ filename="psi-{titulo-slug}.pdf"`.
 
 **Implementación**:
 1. Llamar internamente al endpoint `/report` con los filtros recibidos.
-2. Renderizar con `reportlab` (ver `backend/app/pdf_remito.py` para el
-   patrón de estilos, márgenes, tablas).
-3. Logos: dos archivos PNG en `backend/storage/brand/`:
-   - `gv-electro.png`
-   - `abc-electro.png`
+2. Aplicar `stock_adjustments` al snapshot exportado sin persistirlos.
+3. Renderizar con `reportlab`.
+4. Logos: resolver con `backend/app/brand_assets.py`.
 
-### 10.6 `GET /api/psi/adjustments`
+### 10.7 `POST /api/psi/export-xlsx`
+
+Genera un Excel con el mismo payload conceptual que `export-pdf`.
+
+**Permission**: `psi.export`
+
+**Response 200**: `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+con `Content-Disposition: attachment; filename="psi-{titulo-slug}.xlsx"`.
+
+### 10.8 `GET /api/psi/adjustments`
 
 Histórico paginado de ajustes (todos los status).
 
@@ -1069,14 +1146,14 @@ backend/app/
 │       ├── __init__.py              ← router base + types
 │       ├── report.py                ← GET /api/psi/report, /options
 │       ├── adjustments.py           ← POST /adjust, /adjust/{id}/revert
-│       └── export.py                ← POST /export-pdf
+│       └── export.py                ← POST /export-pdf, /export-xlsx
 ├── commercial/                       ← NUEVO (lógica de negocio)
 │   ├── __init__.py
 │   ├── stock_reader.py              ← lee hoja Stock con cache
 │   ├── ventas_reader.py             ← lee libro mensual con cache
 │   ├── psi_engine.py                ← algoritmo del report
 │   ├── adjustments_writer.py        ← escribe al libro mensual
-│   └── pdf_renderer.py              ← reportlab
+│   └── pdf_renderer.py              ← reportlab + helpers de export
 └── permissions.py                    ← editar (rol nuevo + permissions)
 
 backend/alembic/versions/
@@ -1121,7 +1198,13 @@ Antes de cerrar la fase, validar:
       del rango y no es domingo.
 - [ ] `POST /api/psi/adjust` con `fecha_mode=manual` y fecha en rango pasa.
 - [ ] `POST /api/psi/adjust` con fecha fuera de rango devuelve 400.
-- [ ] El ajuste pasa de `pending` → `applied_to_sheet` automáticamente.
+- [ ] `POST /api/psi/adjust` con `target=stock` devuelve 400; el stock se
+      prueba desde frontend como ajuste temporal local.
+- [ ] El ajuste de venta queda `status=pending` y aparece como pendiente en el PSI.
+- [ ] `Limpiar`, `Aplicar filtros` y `Refrescar (sin cache)` eliminan ajustes
+      temporales de stock.
+- [ ] `POST /api/psi/adjustments/apply-pending` pasa el ajuste de `pending` a
+      `applied_to_sheet`.
 - [ ] En el libro mensual aparece una fila nueva en `BASE_{sucursal}` con
       `TipoVenta="AJUSTE"` y `Remito="PSI-{id}"`.
 - [ ] Al refrescar el PSI, el ajuste **NO se cuenta dos veces** (ya está en
@@ -1130,7 +1213,10 @@ Antes de cerrar la fase, validar:
 
 ### 17.3 Revert
 
-- [ ] `POST /api/psi/adjust/{id}/revert` borra la fila del libro mensual
+- [ ] `POST /api/psi/adjust/{id}/revert` sobre un ajuste `pending` lo descarta
+      sin tocar Google Sheets.
+- [ ] `POST /api/psi/adjust/{id}/revert` sobre un ajuste `applied_to_sheet`
+      borra la fila del libro mensual
       identificada por `Remito="PSI-{id}"`.
 - [ ] El ajuste pasa a `status=reverted` con `reverted_at` y
       `reverted_by_user_id`.
@@ -1143,6 +1229,9 @@ Antes de cerrar la fase, validar:
 - [ ] Sin logo, el espacio queda en blanco pero el resto del PDF está
       correcto.
 - [ ] Título personalizado aparece en el PDF.
+- [ ] `POST /api/psi/export-xlsx` genera Excel con los mismos filtros.
+- [ ] Los `stock_adjustments` temporales se reflejan en PDF/Excel sin guardarse
+      en PostgreSQL ni en Google Sheets.
 
 ### 17.5 Permisos
 
@@ -1232,7 +1321,8 @@ sincronización del catálogo desde la Planilla Madre (ya existe el botón
 |---|---|
 | **VSC** | Ventas VS Costos. Script `vsc.py`. Sincroniza el libro diario al mensual. |
 | **GFK** | Reporte oficial generado por `gg.py`, copiado a `Drive/{año}/GFK/{MM}/`. |
-| **PSI** | Planificación de Ventas e Inventario. Este módulo. |
+| **PSI** | Compras, Ventas e Inventario. En inglés: Production, Sales and Inventory. Este módulo. |
+| **Ajuste de stock temporal** | Delta aplicado solo en frontend para armar/exportar una vista puntual del PSI. Se elimina al limpiar o refrescar sin cache. |
 | **Libro diario** | Sheet donde operadores cargan ventas a mano. Fuente del VSC. |
 | **Libro mensual** | Sheet `Ventas Vs. Costos…` por mes en `Drive/{año}/{MM-Mes}/`. Destino del VSC, fuente del GFK. |
 | **Libro Stock** | Sheet aparte con la hoja `Stock` (consolidado) y tabs por sucursal. |
