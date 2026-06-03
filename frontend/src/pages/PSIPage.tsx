@@ -7,6 +7,16 @@ import {
   can, createPSIAdjustment, createPSIAlias, exportPSIPdf, fetchPSIOptions, fetchPSIReport,
   revertPSIAdjustment, searchPSIProducts,
 } from '../api/client';
+import {
+  ErpCard,
+  ErpField,
+  ErpKpiCard,
+  ErpNotice,
+  ErpPageHeader,
+  erpBtnGhost,
+  erpBtnPrimary,
+  erpBtnSecondary,
+} from '../components/ProUI';
 import type {
   PSIAdjustmentInfo, PSICondicionFilter, PSIMode, PSINoCatalogadoRow, PSIOptionsResponse,
   PSIProductSearchRow, PSIReportResponse, PSIReportRow, PSITarget,
@@ -202,176 +212,130 @@ export function PSIPage() {
   const items: PSIReportRow[] = report?.items || [];
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
-        <div>
-          <p className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.2em] text-blue-300">
-            <TrendingUp size={14} /> Comercial
-          </p>
-          <h1 className="mt-1 text-3xl font-black text-white">PSI · Planificación de Ventas e Inventario</h1>
-          <p className="mt-2 max-w-3xl text-sm text-slate-400">
-            Consolidado por marca / tipo / condición. Cruza el catálogo con el stock actual y las ventas del rango.
-            Los ajustes manuales se aplican al libro mensual y aparecen automáticamente en el GFK.
-          </p>
-        </div>
-        <button
-          onClick={() => load(true)}
-          disabled={loading}
-          className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-sm font-bold text-slate-200 hover:bg-slate-900 disabled:opacity-60"
-        >
-          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Refrescar (sin cache)
-        </button>
-      </div>
+    <div className="erp-stack-6">
+      <ErpPageHeader
+        title="PSI · Planificación de Ventas e Inventario"
+        description={'Consolidado por marca / tipo / condición. Cruza el catálogo con el stock actual y las ventas del rango. Los ajustes manuales se aplican al libro mensual y aparecen automáticamente en el GFK.'}
+        actions={
+          <>
+            <button onClick={() => load(true)} disabled={loading} className={erpBtnGhost}>
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refrescar (sin cache)
+            </button>
+            {canExport && report && (report.items.length > 0) && (
+              <button type="button" onClick={() => setExportOpen(true)} className={erpBtnPrimary}>
+                <FileDown size={14} /> Exportar PDF
+              </button>
+            )}
+          </>
+        }
+      />
 
-      {error && (
-        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm font-semibold text-red-100">
-          <AlertTriangle size={14} className="mr-2 inline" />{error}
-        </div>
+      {error && <ErpNotice tone="error">{error}</ErpNotice>}
+
+      {report?.data_freshness?.no_gfk_available && (
+        <ErpNotice tone="warning" title="No hay archivo GFK que cubra este rango">
+          Generá el GFK con la herramienta <a className="underline" href="/herramientas">Herramientas → Generar GFK</a> con un rango que incluya este período y volvé a aplicar los filtros. Sin GFK, el sell out aparece en cero (pero el stock se sigue mostrando).
+        </ErpNotice>
       )}
-
-      {/* Filtros */}
-      <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
-        <h2 className="mb-4 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-slate-300">
-          <Filter size={14} /> Filtros
-        </h2>
-        <div className="grid gap-4 lg:grid-cols-4">
-          <MultiSelect
-            label="Marcas"
-            options={options?.marcas || []}
-            value={marcas}
-            onChange={setMarcas}
-            placeholder="Todas las marcas"
-          />
-          <MultiSelect
-            label="Tipos"
-            options={options?.tipos || []}
-            value={tipos}
-            onChange={setTipos}
-            placeholder="Todos los tipos"
-          />
-          <div>
-            <label className={labelClass}>Condición</label>
-            <div className="flex gap-2">
-              {(['TODO', 'PRIMERA', 'OUTLET'] as PSICondicionFilter[]).map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setCondicion(c)}
-                  className={`flex-1 rounded-xl border px-3 py-2 text-sm font-bold ${
-                    condicion === c
-                      ? 'border-blue-400 bg-blue-500/15 text-blue-200'
-                      : 'border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800'
-                  }`}
-                >
-                  {c === 'TODO' ? 'Todas' : c === 'PRIMERA' ? 'Primera' : 'Outlet'}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className={labelClass}>Desde</label>
-              <input type="date" value={periodoInicio} onChange={(e) => setPeriodoInicio(e.target.value)} className={inputClass} />
-            </div>
-            <div>
-              <label className={labelClass}>Hasta</label>
-              <input type="date" value={periodoFin} onChange={(e) => setPeriodoFin(e.target.value)} className={inputClass} />
-            </div>
-          </div>
-        </div>
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <button
-            onClick={applyFilters}
-            disabled={loading}
-            className="inline-flex items-center gap-2 rounded-xl bg-blue-500 px-4 py-2 text-sm font-black text-white hover:bg-blue-400 disabled:opacity-60"
-          >
-            {loading ? 'Cargando...' : 'Aplicar'}
-          </button>
-          <button onClick={clearFilters} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-bold text-slate-200 hover:bg-slate-900">
-            Limpiar
-          </button>
-          {canAdjust && (
-            <button
-              type="button"
-              onClick={() => setMode((m) => (m === 'advanced' ? 'default' : 'advanced'))}
-              className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold ${
-                mode === 'advanced'
-                  ? 'border-amber-500/60 bg-amber-500/15 text-amber-200'
-                  : 'border-slate-700 bg-slate-950 text-slate-200 hover:bg-slate-900'
-              }`}
-              title="Mostrar todos los productos del catálogo filtrado (incluso sin stock/ventas) para poder ajustar cualquiera"
-            >
-              <Settings2 size={14} /> {mode === 'advanced' ? 'Ajustes avanzados: ON' : 'Ajustes avanzados'}
-            </button>
-          )}
-          {canExport && report && (report.items.length > 0) && (
-            <button
-              type="button"
-              onClick={() => setExportOpen(true)}
-              className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-500/20"
-            >
-              <FileDown size={14} /> Exportar PDF
-            </button>
-          )}
-          {report?.data_freshness?.gfk_files_used?.length ? (
-            <span className="ml-auto text-xs text-slate-500">
-              GFK consultados: <b className="text-slate-300">{report.data_freshness.gfk_files_used.map((f) => `#${f.correlativo}`).join(', ')}</b>
-            </span>
-          ) : null}
-        </div>
-      </section>
 
       {/* KPIs */}
       {report && (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <KPI label="Productos visibles"   value={report.totals.productos_visibles} accent="blue" />
-          <KPI label="Stock total"          value={report.totals.stock} />
-          <KPI label="Sell out (rango)"     value={report.totals.sell_out} accent="green" />
-          <KPI label="Ajustes pendientes"   value={report.totals.ajustes_pendientes} accent={report.totals.ajustes_pendientes > 0 ? 'amber' : undefined} />
-        </div>
+        <section className="erp-kpi-row" aria-label="Resumen del PSI">
+          <ErpKpiCard label="Productos visibles" value={report.totals.productos_visibles} icon={<Package size={13} />} />
+          <ErpKpiCard label="Stock total"        value={report.totals.stock} />
+          <ErpKpiCard label="Sell out (rango)"   value={report.totals.sell_out} variant="default" detail={report.data_freshness.gfk_files_used.length ? `GFK consultados: ${report.data_freshness.gfk_files_used.map((f) => `#${f.correlativo}`).join(', ')}` : undefined} />
+          <ErpKpiCard label="Ajustes pendientes" value={report.totals.ajustes_pendientes} variant={report.totals.ajustes_pendientes > 0 ? 'alert' : 'default'} icon={<AlertTriangle size={13} />} />
+        </section>
       )}
 
+      {/* Filtros */}
+      <ErpCard title="Filtros" subtitle="Marcas, tipos, condición y rango de fechas (los GFK que cubren el rango se consolidan)">
+        <form onSubmit={(e) => { e.preventDefault(); applyFilters(); }}>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <MultiSelect label="Marcas" options={options?.marcas || []} value={marcas} onChange={setMarcas} placeholder="Todas las marcas" />
+            <MultiSelect label="Tipos"  options={options?.tipos  || []} value={tipos}  onChange={setTipos}  placeholder="Todos los tipos" />
+            <ErpField label="Condición">
+              <div className="flex gap-1.5">
+                {(['TODO', 'PRIMERA', 'OUTLET'] as PSICondicionFilter[]).map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setCondicion(c)}
+                    className={`flex-1 rounded-md border px-2 py-1.5 text-[12.5px] font-semibold transition ${
+                      condicion === c
+                        ? 'border-[color:var(--accent-1)] bg-[color:var(--accent-1)]/15 text-[color:var(--accent-1)]'
+                        : 'border-[color:var(--border-2)] bg-[color:var(--bg-3)] text-[color:var(--text-2)] hover:bg-[color:var(--bg-4)]'
+                    }`}
+                  >
+                    {c === 'TODO' ? 'Todas' : c === 'PRIMERA' ? 'Primera' : 'Outlet'}
+                  </button>
+                ))}
+              </div>
+            </ErpField>
+            <div className="grid grid-cols-2 gap-2">
+              <ErpField label="Desde">
+                <input type="date" value={periodoInicio} onChange={(e) => setPeriodoInicio(e.target.value)} className="erp-input" />
+              </ErpField>
+              <ErpField label="Hasta">
+                <input type="date" value={periodoFin} onChange={(e) => setPeriodoFin(e.target.value)} className="erp-input" />
+              </ErpField>
+            </div>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <button type="submit" disabled={loading} className={erpBtnPrimary}>
+              {loading ? 'Cargando…' : 'Aplicar'}
+            </button>
+            <button type="button" onClick={clearFilters} className={erpBtnGhost}>Limpiar</button>
+            {canAdjust && (
+              <button
+                type="button"
+                onClick={() => setMode((m) => (m === 'advanced' ? 'default' : 'advanced'))}
+                className={mode === 'advanced' ? erpBtnPrimary : erpBtnSecondary}
+                title="Mostrar todos los productos del catálogo filtrado (incluso sin stock/ventas) para poder ajustar cualquiera"
+              >
+                <Settings2 size={14} /> {mode === 'advanced' ? 'Ajustes avanzados: ON' : 'Ajustes avanzados'}
+              </button>
+            )}
+          </div>
+        </form>
+      </ErpCard>
+
       {/* Tabla principal */}
-      <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="flex items-center gap-2 text-lg font-black text-white">
-            <Package size={18} /> Productos
-            {report?.totals.productos_visibles ? <span className="text-xs font-normal text-slate-500">({report.totals.productos_visibles})</span> : null}
-          </h2>
-          {!canAdjust && <span className="text-xs text-slate-500">Sin permiso para ajustar</span>}
-        </div>
+      <ErpCard
+        title="Productos"
+        subtitle={report?.totals.productos_visibles ? `${report.totals.productos_visibles} producto${report.totals.productos_visibles === 1 ? '' : 's'} visible${report.totals.productos_visibles === 1 ? '' : 's'}` : undefined}
+      >
         <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-sm">
-            <thead className="text-xs uppercase tracking-wide text-slate-500">
+          <table className="erp-table">
+            <thead>
               <tr>
-                <th className="px-3 py-2">Marca</th>
-                <th className="px-3 py-2">Tipo</th>
-                <th className="px-3 py-2">SKU</th>
-                <th className="px-3 py-2">Descripción</th>
-                <th className="px-3 py-2 text-center">Cond.</th>
-                <th className="px-3 py-2 text-right">Stock</th>
-                <th className="px-3 py-2 text-right">Sell out</th>
-                <th className="px-3 py-2 text-right">Δ ajuste</th>
-                {canAdjust && <th className="px-3 py-2 text-center">Acciones</th>}
+                <th>Marca</th>
+                <th>Tipo</th>
+                <th>SKU</th>
+                <th>Descripción</th>
+                <th style={{ textAlign: 'center' }}>Cond.</th>
+                <th style={{ textAlign: 'right' }}>Stock</th>
+                <th style={{ textAlign: 'right' }}>Sell out</th>
+                <th style={{ textAlign: 'right' }}>Δ ajuste</th>
+                {canAdjust && <th style={{ textAlign: 'center' }}>Acciones</th>}
               </tr>
             </thead>
             <tbody>
               {items.map((r) => (
-                <tr key={r.product_id} className="border-t border-slate-800 text-slate-200 hover:bg-slate-900/50">
-                  <td className="px-3 py-2 whitespace-nowrap font-semibold">{r.marca}</td>
-                  <td className="px-3 py-2 whitespace-nowrap text-slate-400">{r.tipo}</td>
-                  <td className="px-3 py-2 whitespace-nowrap font-mono text-xs">{r.sku}</td>
-                  <td className="px-3 py-2 max-w-md truncate" title={r.descripcion}>{r.descripcion}</td>
-                  <td className="px-3 py-2 text-center">
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${
-                      r.condicion === 'OUTLET' ? 'bg-amber-500/15 text-amber-300' : 'bg-slate-800 text-slate-400'
-                    }`}>
+                <tr key={r.product_id}>
+                  <td className="font-semibold">{r.marca}</td>
+                  <td className="text-[color:var(--text-3)]">{r.tipo}</td>
+                  <td className="font-mono text-[12px]">{r.sku}</td>
+                  <td className="max-w-md truncate" title={r.descripcion}>{r.descripcion}</td>
+                  <td style={{ textAlign: 'center' }}>
+                    <span className={`erp-badge ${r.condicion === 'OUTLET' ? 'erp-badge-warning' : 'erp-badge-neutral'}`}>
                       {r.condicion === 'OUTLET' ? 'OUT' : 'PRI'}
                     </span>
                   </td>
-                  <td className={`px-3 py-2 text-right font-bold ${r.stock <= 0 ? 'text-red-300' : 'text-slate-200'}`}>{r.stock}</td>
-                  <td className="px-3 py-2 text-right font-bold text-emerald-200">
+                  <td style={{ textAlign: 'right' }} className={`tabular-nums font-semibold ${r.stock <= 0 ? 'text-[color:var(--danger-2)]' : ''}`}>
+                    {r.stock}
+                  </td>
+                  <td style={{ textAlign: 'right' }} className="tabular-nums font-semibold text-[color:var(--success-2)]">
                     {r.historial_ajustes.length > 0 ? (
                       <button onClick={() => setHistorialRow(r)} className="hover:underline" title="Ver historial de ajustes">
                         {r.sell_out}
@@ -379,16 +343,12 @@ export function PSIPage() {
                       </button>
                     ) : r.sell_out}
                   </td>
-                  <td className={`px-3 py-2 text-right ${r.ajuste_delta > 0 ? 'text-emerald-300' : r.ajuste_delta < 0 ? 'text-red-300' : 'text-slate-600'}`}>
+                  <td style={{ textAlign: 'right' }} className={`tabular-nums ${r.ajuste_delta > 0 ? 'text-[color:var(--success-2)]' : r.ajuste_delta < 0 ? 'text-[color:var(--danger-2)]' : 'text-[color:var(--text-4)]'}`}>
                     {r.ajuste_delta !== 0 ? (r.ajuste_delta > 0 ? `+${r.ajuste_delta}` : r.ajuste_delta) : '—'}
                   </td>
                   {canAdjust && (
-                    <td className="px-3 py-2 text-center">
-                      <button
-                        onClick={() => setAdjustRow(r)}
-                        className="rounded-lg border border-slate-700 px-2 py-1 text-xs font-bold text-slate-300 hover:bg-slate-800"
-                        title="Crear ajuste"
-                      >
+                    <td style={{ textAlign: 'center' }}>
+                      <button onClick={() => setAdjustRow(r)} className={erpBtnGhost} style={{ padding: '2px 8px', fontSize: 12 }} title="Crear ajuste">
                         +/−
                       </button>
                     </td>
@@ -396,58 +356,54 @@ export function PSIPage() {
                 </tr>
               ))}
               {!loading && items.length === 0 && (
-                <tr><td colSpan={canAdjust ? 9 : 8} className="px-3 py-12 text-center text-slate-500">
+                <tr><td colSpan={canAdjust ? 9 : 8} className="text-center text-[color:var(--text-3)]" style={{ padding: '48px 12px' }}>
                   No hay productos para los filtros aplicados.
                 </td></tr>
               )}
             </tbody>
           </table>
         </div>
-      </section>
+      </ErpCard>
 
       {/* No catalogados */}
       {report?.no_catalogados && report.no_catalogados.length > 0 && (
-        <section className="rounded-3xl border border-amber-500/30 bg-amber-500/5 p-5">
-          <button
-            onClick={() => setShowNoCatalogados((v) => !v)}
-            className="flex w-full items-center justify-between text-left"
-          >
-            <h2 className="flex items-center gap-2 text-lg font-black text-amber-100">
-              <PackageX size={18} /> Productos no catalogados
-              <span className="text-xs font-normal text-amber-200/70">({report.no_catalogados.length})</span>
-            </h2>
-            <ChevronDown size={20} className={`text-amber-300 transition-transform ${showNoCatalogados ? 'rotate-180' : ''}`} />
-          </button>
-          <p className="mt-1 text-sm text-amber-200/80">
-            SKUs que aparecen en el GFK pero no matchean ningún producto del catálogo (ni por descripción ni por SKU).
-            Para incluir sus ventas en el reporte, podés <b>asociarlos manualmente</b> a un producto del catálogo.
-            La asociación se persiste y se aplica automáticamente las próximas veces.
-          </p>
+        <ErpCard
+          title={(
+            <span className="flex items-center gap-2">
+              <PackageX size={16} /> Productos no catalogados
+              <span className="erp-badge erp-badge-warning">{report.no_catalogados.length}</span>
+            </span>
+          ) as any}
+          subtitle="SKUs del GFK que no matchean ningún producto del catálogo. Asociá manualmente para incluirlos en el reporte; la asociación queda persistida."
+          actions={
+            <button onClick={() => setShowNoCatalogados((v) => !v)} className={erpBtnGhost}>
+              {showNoCatalogados ? 'Ocultar' : 'Mostrar'}
+              <ChevronDown size={14} className={`transition-transform ${showNoCatalogados ? 'rotate-180' : ''}`} />
+            </button>
+          }
+        >
           {showNoCatalogados && (
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
-                <thead className="text-xs uppercase tracking-wide text-amber-200/60">
+            <div className="overflow-x-auto">
+              <table className="erp-table">
+                <thead>
                   <tr>
-                    <th className="px-3 py-2">SKU (raw)</th>
-                    <th className="px-3 py-2">Descripción</th>
-                    <th className="px-3 py-2 text-right">Cantidad</th>
-                    <th className="px-3 py-2">Sucursales</th>
-                    {canAdjust && <th className="px-3 py-2 text-center">Acción</th>}
+                    <th>SKU (raw)</th>
+                    <th>Descripción</th>
+                    <th style={{ textAlign: 'right' }}>Cantidad</th>
+                    <th>Sucursales</th>
+                    {canAdjust && <th style={{ textAlign: 'center' }}>Acción</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {report.no_catalogados.map((nc, i) => (
-                    <tr key={`${nc.sku_raw}-${i}`} className="border-t border-amber-500/15 text-amber-100/90">
-                      <td className="px-3 py-2 font-mono text-xs">{nc.sku_raw}</td>
-                      <td className="px-3 py-2 max-w-md truncate" title={nc.descripcion_raw}>{nc.descripcion_raw}</td>
-                      <td className="px-3 py-2 text-right font-bold">{nc.cantidad_total}</td>
-                      <td className="px-3 py-2 text-xs text-amber-200/70">{nc.sucursales.join(', ')}</td>
+                    <tr key={`${nc.sku_raw}-${i}`}>
+                      <td className="font-mono text-[12px]">{nc.sku_raw}</td>
+                      <td className="max-w-md truncate" title={nc.descripcion_raw}>{nc.descripcion_raw}</td>
+                      <td style={{ textAlign: 'right' }} className="tabular-nums font-semibold">{nc.cantidad_total}</td>
+                      <td className="text-[12px] text-[color:var(--text-3)]">{nc.sucursales.join(', ')}</td>
                       {canAdjust && (
-                        <td className="px-3 py-2 text-center">
-                          <button
-                            onClick={() => setAliasRow(nc)}
-                            className="inline-flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs font-bold text-amber-200 hover:bg-amber-500/20"
-                          >
+                        <td style={{ textAlign: 'center' }}>
+                          <button onClick={() => setAliasRow(nc)} className={erpBtnSecondary} style={{ padding: '2px 8px', fontSize: 12 }}>
                             <Link2 size={12} /> Asociar
                           </button>
                         </td>
@@ -458,31 +414,27 @@ export function PSIPage() {
               </table>
             </div>
           )}
-        </section>
-      )}
-
-      {/* Aviso si no hay GFK para el rango */}
-      {report?.data_freshness?.no_gfk_available && (
-        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
-          <AlertTriangle size={14} className="mr-2 inline text-amber-300" />
-          <b>No hay archivo GFK que cubra este rango.</b> Generá el GFK con la herramienta{' '}
-          <a href="/herramientas" className="underline">Herramientas → Generar GFK</a> con un rango que incluya este período y volvé a aplicar los filtros.
-          Sin GFK, el sell out aparece en cero (pero el stock se sigue mostrando).
-        </div>
+        </ErpCard>
       )}
 
       {/* Footer informativo */}
       {report && (
-        <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-3 text-xs text-slate-500">
-          <BarChart3 size={12} className="mr-2 inline" />
-          Cache stock: {report.data_freshness.stock_fetched_at?.slice(11, 19) || '—'} ·
-          Cache GFK: {report.data_freshness.ventas_fetched_at?.slice(11, 19) || '—'}
+        <div className="text-[11.5px] text-[color:var(--text-3)] flex flex-wrap items-center gap-x-3 gap-y-1 pt-1">
+          <span className="inline-flex items-center gap-1">
+            <BarChart3 size={11} /> Cache stock: {report.data_freshness.stock_fetched_at?.slice(11, 19) || '—'}
+          </span>
+          <span>·</span>
+          <span>Cache GFK: {report.data_freshness.ventas_fetched_at?.slice(11, 19) || '—'}</span>
           {report.data_freshness.gfk_files_used.length > 0 && (
-            <> · <span className="text-slate-400">{report.data_freshness.gfk_files_used.length} GFK consultados</span></>
+            <>
+              <span>·</span>
+              <span>{report.data_freshness.gfk_files_used.length} GFK consultados</span>
+            </>
           )}
-          <Tag size={12} className="mx-2 inline" />
-          Filtros activos: {report.filters_applied.marcas.length} marcas · {report.filters_applied.tipos.length} tipos · {report.filters_applied.condicion}
-          {!canExport && <span className="ml-3 text-slate-600">· Export PDF no disponible (Sprint 5)</span>}
+          <span>·</span>
+          <span className="inline-flex items-center gap-1">
+            <Tag size={11} /> {report.filters_applied.marcas.length} marcas · {report.filters_applied.tipos.length} tipos · {report.filters_applied.condicion}
+          </span>
         </div>
       )}
 
