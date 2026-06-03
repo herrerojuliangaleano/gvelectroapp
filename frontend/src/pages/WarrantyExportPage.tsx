@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckSquare, Download, FileSpreadsheet, FileText, Filter, PackageCheck, RefreshCw, Search, Settings2, Square, Truck } from 'lucide-react';
+import { CheckSquare, Download, FileSpreadsheet, FileText, Filter, PackageCheck, RefreshCw, RotateCcw, Search, Settings2, Square, Truck } from 'lucide-react';
 import {
   createBatchExport,
   downloadWarrantyExport,
@@ -7,6 +7,7 @@ import {
   fetchExportProviderSuggestions,
   fetchWarrantyExports,
   fetchWarrantyOptions,
+  regenerateWarrantyExport,
 } from '../api/client';
 import type { WarrantyExportInfo, WarrantyListResponse, WarrantyOptions, WarrantySummary } from '../types';
 
@@ -270,6 +271,7 @@ export function WarrantyExportPage({ embedded = false }: { embedded?: boolean } 
   const [searching, setSearching] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
+  const [regeneratingId, setRegeneratingId] = useState<number | null>(null);
   const [lastExport, setLastExport] = useState<WarrantyExportInfo | null>(null);
   const [error, setError] = useState('');
 
@@ -391,6 +393,36 @@ export function WarrantyExportPage({ embedded = false }: { embedded?: boolean } 
       setError(err instanceof Error ? err.message : 'No se pudo descargar el archivo');
     } finally {
       setDownloadingId(null);
+    }
+  }
+
+  async function handleRegenerateHistory(item: WarrantyExportInfo) {
+    const label = item.shipment_code || `export #${item.id}`;
+    const ok = window.confirm(
+      `Regenerar ${label} con los datos actuales de las garantias?\n\n` +
+      'Usalo despues de corregir producto, SKU, serie o falla desde el detalle. ' +
+      'Se conserva el archivo anterior y se crea una nueva revision.'
+    );
+    if (!ok) return;
+    setRegeneratingId(item.id);
+    setError('');
+    setLastExport(null);
+    try {
+      const regenerated = await regenerateWarrantyExport(item.id, {
+        proveedor: item.provider_name || undefined,
+        formato: item.file_format || undefined,
+        logo_brand: item.logo_brand || undefined,
+        nota: `Regeneracion manual de ${label}`,
+      });
+      const blob = await downloadWarrantyExport(regenerated.id);
+      saveBlob(blob, regenerated.file_name || `garantias-${regenerated.shipment_code || regenerated.id}.${exportExtension(regenerated.file_format)}`);
+      setLastExport(regenerated);
+      const history = await fetchWarrantyExports(50);
+      setExports(history.items || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo regenerar el lote ENV');
+    } finally {
+      setRegeneratingId(null);
     }
   }
 
@@ -618,13 +650,23 @@ export function WarrantyExportPage({ embedded = false }: { embedded?: boolean } 
                   {item.provider_name && <span>· Proveedor: {item.provider_name}</span>}
                 </div>
               </div>
-              <button
-                onClick={() => handleDownloadHistory(item)}
-                disabled={downloadingId === item.id}
-                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-600 px-4 py-2.5 text-sm font-bold text-slate-100 hover:bg-slate-800 disabled:opacity-60"
-              >
-                <Download size={16} /> {downloadingId === item.id ? 'Descargando...' : 'Descargar'}
-              </button>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <button
+                  onClick={() => handleRegenerateHistory(item)}
+                  disabled={regeneratingId === item.id}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-500/50 px-4 py-2.5 text-sm font-bold text-amber-100 hover:bg-amber-500/10 disabled:opacity-60"
+                  title="Regenerar con los datos actuales de las garantias del lote"
+                >
+                  <RotateCcw size={16} /> {regeneratingId === item.id ? 'Regenerando...' : 'Regenerar'}
+                </button>
+                <button
+                  onClick={() => handleDownloadHistory(item)}
+                  disabled={downloadingId === item.id}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-600 px-4 py-2.5 text-sm font-bold text-slate-100 hover:bg-slate-800 disabled:opacity-60"
+                >
+                  <Download size={16} /> {downloadingId === item.id ? 'Descargando...' : 'Descargar'}
+                </button>
+              </div>
             </div>
           ))}
         </div>

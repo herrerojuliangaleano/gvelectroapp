@@ -92,7 +92,7 @@ exportacion y sincronizacion con Google Sheets.
 | Mi espacio | Vista operativa para sucursal/deposito. |
 | Posventa | Entrada a gestion con proveedor y exportaciones. |
 | Gestion proveedor | Envio a proveedor, respuesta, retiro, correccion, reclamo. |
-| Export | Exportacion por lote o proveedor. |
+| Export | Exportacion por lote o proveedor. Tambien permite regenerar un ENV si se corrigieron datos de producto, SKU, serie o falla. |
 | Sync | Estado y ejecucion de sincronizacion con Google Sheets. |
 | Config | Parametros del flujo de garantias. |
 
@@ -113,8 +113,17 @@ exportacion y sincronizacion con Google Sheets.
 - Cancelar.
 - Eliminar definitivamente, solo para permisos altos.
 - Exportar.
+- Regenerar un lote ENV historico.
 - Sincronizar hacia/desde Google Sheets.
 - Resincronizar contadores.
+
+### Regeneracion de lote ENV
+
+Si un proveedor pide revisar un numero de serie, modelo, SKU o falla, primero se
+corrige la garantia desde su detalle. Luego, desde `Exportacion / ENV`, se usa
+`Regenerar` sobre el lote historico. El sistema mantiene el mismo codigo
+`ENV-YYYY-0000`, crea un archivo nuevo y conserva descargable el archivo anterior.
+Cada garantia incluida recibe un evento de historial para dejar trazabilidad.
 
 ### Permisos relevantes
 

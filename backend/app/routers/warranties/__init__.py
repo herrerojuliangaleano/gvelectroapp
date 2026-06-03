@@ -643,6 +643,13 @@ class WarrantyBatchExportRequest(BaseModel):
     logo_brand: str | None = "gv_electro"
 
 
+class WarrantyExportRegenerateRequest(BaseModel):
+    proveedor: str | None = None
+    nota: str | None = None
+    formato: str | None = None
+    logo_brand: str | None = None
+
+
 def normalize_export_format(value: Any) -> str:
     raw = str(value or "excel").strip().lower()
     return "pdf" if raw == "pdf" else "excel"

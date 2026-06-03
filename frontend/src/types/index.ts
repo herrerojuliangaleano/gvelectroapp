@@ -1086,6 +1086,13 @@ export interface WarrantyBatchExportPayload {
   logo_brand?: 'gv' | 'abc' | string;
 }
 
+export interface WarrantyExportRegeneratePayload {
+  proveedor?: string;
+  nota?: string;
+  formato?: 'excel' | 'pdf' | string;
+  logo_brand?: 'gv' | 'abc' | string;
+}
+
 export interface ConfirmShipmentPayload {
   shipment_code: string;
   provider_name?: string;

@@ -94,6 +94,7 @@ import type {
   WarrantyExportInfo,
   WarrantyExportListResponse,
   WarrantyExportPayload,
+  WarrantyExportRegeneratePayload,
   SetupSheetResult,
   WarrantySyncLogsResponse,
   WarrantySyncResult,
@@ -480,6 +481,9 @@ export async function fetchWarrantyExports(limit = 50): Promise<WarrantyExportLi
 }
 export async function downloadWarrantyExport(exportId: number): Promise<Blob> {
   return requestBlob(`/api/warranties/exports/${encodeURIComponent(String(exportId))}/download`);
+}
+export async function regenerateWarrantyExport(exportId: number, payload: WarrantyExportRegeneratePayload = {}): Promise<WarrantyExportInfo> {
+  return request(`/api/warranties/exports/${encodeURIComponent(String(exportId))}/regenerate`, { method: 'POST', body: JSON.stringify(payload) });
 }
 
 export async function fetchWarrantyConfig(): Promise<WarrantyConfigResponse> { return request('/api/warranties/config'); }

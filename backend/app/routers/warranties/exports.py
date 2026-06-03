@@ -48,6 +48,7 @@ from . import (
     WarrantyCountersResponse,
     WarrantyExportInfo,
     WarrantyExportListResponse,
+    WarrantyExportRegenerateRequest,
     WarrantyExportRequest,
     WarrantyListResponse,
     build_provider_excel,
@@ -361,6 +362,136 @@ def list_warranty_exports(
     deny_plain_deposit_operator(_user, "ver exportaciones ENV")
     rows = pg_list_exports(limit)
     return WarrantyExportListResponse(items=[export_info_from_row(row) for row in rows])
+
+
+@router.post("/exports/{export_id}/regenerate", response_model=WarrantyExportInfo)
+def regenerate_warranty_export(
+    export_id: int,
+    data: WarrantyExportRegenerateRequest,
+    user: Annotated[Any, Depends(require_permission("warranties.export"))],
+):
+    """Regenera el archivo de un lote ENV existente con los datos actuales.
+
+    Mantiene el mismo shipment_code y crea una nueva fila en guarantee_exports
+    para conservar trazabilidad del archivo anterior.
+    """
+    deny_plain_deposit_operator(user, "regenerar exportaciones ENV")
+    original = pg_get_export(export_id)
+    if not original:
+        raise HTTPException(status_code=404, detail="Exportacion no encontrada")
+
+    warranty_codes = _normalize_warranty_code_list(list(original.get("warranty_ids") or []))
+    if not warranty_codes:
+        raise HTTPException(status_code=400, detail="El lote no tiene garantias asociadas para regenerar.")
+
+    by_code = pg_fetch_guarantee_rows_by_codes(warranty_codes)
+    missing = [code for code in warranty_codes if code not in by_code]
+    if missing:
+        preview = ", ".join(missing[:8])
+        extra = "" if len(missing) <= 8 else f" y {len(missing) - 8} mas"
+        raise HTTPException(status_code=400, detail=f"No se puede regenerar: faltan garantias del lote ({preview}{extra}).")
+
+    rows = pg_collect_export_rows_by_codes(warranty_codes)
+    if not rows:
+        raise HTTPException(status_code=400, detail="No se encontraron items actuales para regenerar el ENV.")
+
+    shipment_code = str(original.get("shipment_code") or "").strip()
+    if not shipment_code:
+        raise HTTPException(status_code=400, detail="El lote original no tiene codigo ENV.")
+
+    proveedor = (
+        data.proveedor
+        if data.proveedor is not None
+        else str(original.get("provider_name") or "")
+    )
+    proveedor = str(proveedor or "").strip()
+    formato = normalize_export_format(data.formato or original.get("file_format") or "excel")
+    logo_brand = normalize_export_logo(data.logo_brand or original.get("logo_brand") or "gv_electro")
+    nota = str(data.nota or "").strip()
+
+    stamp = now_ar().strftime("%Y%m%d-%H%M%S")
+    provider_part = safe_filename_part(proveedor or "lote")
+    extension = "pdf" if formato == "pdf" else "xlsx"
+    file_name = f"garantias-{provider_part}-{shipment_code}-regen-{export_id}-{stamp}.{extension}"
+    file_path = warranty_exports_dir() / file_name
+
+    if formato == "pdf":
+        build_provider_pdf(rows, file_path, provider_name=proveedor, shipment_code=shipment_code, logo_brand=logo_brand)
+    else:
+        build_provider_excel(rows, file_path, provider_name=proveedor, shipment_code=shipment_code, logo_brand=logo_brand)
+
+    filters = dict(original.get("filters") or {})
+    filters.update({
+        "warranty_ids": warranty_codes,
+        "proveedor": proveedor,
+        "regenerated_from_export_id": int(export_id),
+        "regenerated_from_file_name": str(original.get("file_name") or ""),
+    })
+    export_row = pg_create_export(
+        user=user,
+        provider_name=proveedor,
+        marca=str(original.get("marca") or ""),
+        filters=filters,
+        file_path=str(file_path),
+        file_name=file_name,
+        row_count=len(rows),
+        shipment_code=shipment_code,
+        warranty_ids=warranty_codes,
+        file_format=formato,
+        logo_brand=logo_brand,
+    )
+    new_export_id = int(export_row["id"])
+
+    touched: set[int] = set()
+    for row in rows:
+        gid = int(row.get("guarantee_id") or 0)
+        if not gid or gid in touched:
+            continue
+        touched.add(gid)
+        warranty_code = str(row.get("warranty_code") or "")
+        current_status = str(row.get("status") or "")
+        updates: dict[str, Any] = {
+            "shipment_code": shipment_code,
+            "shipment_file_name": file_name,
+            "synced_to_google_sheet": False,
+        }
+        if proveedor:
+            updates["provider_name"] = proveedor
+        pg_update_guarantee_fields(
+            guarantee_id=gid,
+            user=user,
+            updates=updates,
+            action="batch_export_regenerated",
+            old_status=current_status,
+            new_status=current_status,
+            note=nota or f"ENV {shipment_code} regenerado desde export #{export_id}.",
+            details={
+                "original_export_id": int(export_id),
+                "new_export_id": new_export_id,
+                "shipment_code": shipment_code,
+                "old_file_name": str(original.get("file_name") or ""),
+                "new_file_name": file_name,
+                "file_format": formato,
+                "logo_brand": logo_brand,
+            },
+        )
+
+    audit(
+        "warranties.export.regenerate",
+        user=user,
+        resource_type="warranty_export",
+        resource_id=str(new_export_id),
+        details={
+            "original_export_id": int(export_id),
+            "shipment_code": shipment_code,
+            "row_count": len(rows),
+            "file_name": file_name,
+            "file_format": formato,
+            "logo_brand": logo_brand,
+            "warranty_ids": warranty_codes,
+        },
+    )
+    return export_info_from_row(export_row)
 
 
 @router.get("/exports/{export_id}/download")

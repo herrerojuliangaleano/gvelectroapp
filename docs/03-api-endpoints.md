@@ -88,6 +88,7 @@ Bearer token salvo endpoints publicos como `/api/health` y login.
 | POST | `/api/warranties/export/batch` | Exporta lote. |
 | POST | `/api/warranties/export/provider` | Exporta para proveedor. |
 | GET | `/api/warranties/exports` | Lista exportaciones. |
+| POST | `/api/warranties/exports/{export_id}/regenerate` | Regenera un ENV existente con los datos actuales. |
 | GET | `/api/warranties/exports/{export_id}/download` | Descarga exportacion. |
 | GET | `/api/warranties/sync/status` | Estado de sync con Sheets. |
 | GET | `/api/warranties/sync/logs` | Logs de sync. |
