@@ -901,6 +901,19 @@ def psi_export_pdf(
         force_refresh=False,
     )
 
+    # Responsable: solo se muestra si el usuario actual tiene rol GERENTE_COMERCIAL.
+    # Para SUPERADMIN/GERENTE/ADMINISTRADOR se omite por política — el reporte
+    # representa la mirada del gerente comercial; otros roles lo pueden generar
+    # como soporte pero no firmar como responsable.
+    user_roles = set(getattr(user, "roles", []) or [])
+    responsable_name: Optional[str] = None
+    if "GERENTE_COMERCIAL" in user_roles:
+        responsable_name = (
+            getattr(user, "display_name", None)
+            or getattr(user, "username", None)
+            or None
+        )
+
     pdf_bytes = render_psi_pdf(
         titulo=payload.titulo.strip(),
         items=[i.model_dump() for i in report.items],
@@ -908,6 +921,8 @@ def psi_export_pdf(
         filters_applied=report.filters_applied.model_dump(),
         gfk_files_used=[g.model_dump() for g in report.data_freshness.gfk_files_used],
         logo=payload.logo,
+        responsable=responsable_name,
+        responsable_area="Comercial",
     )
 
     # Slug del filename
