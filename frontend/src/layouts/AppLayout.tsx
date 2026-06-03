@@ -1,5 +1,5 @@
 import {
-  Activity, Archive, BarChart2, Bell, Building2, Calculator, Camera, ChevronDown, ChevronRight, CircleDollarSign, ClipboardList, Cloud, FileSpreadsheet, FileText, Globe2, History, Home, IdCard, Info, KeyRound, LayoutDashboard, LogOut, MapPin, Menu, MoreHorizontal, PackageCheck, Settings, ShieldCheck, SlidersHorizontal, Truck, User, UserCog, Wrench, X,
+  Activity, Archive, BarChart2, Bell, Building2, Calculator, Camera, ChevronDown, ChevronRight, CircleDollarSign, ClipboardList, Cloud, FileSpreadsheet, FileText, Globe2, History, Home, IdCard, Info, KeyRound, LayoutDashboard, LogOut, MapPin, Menu, MoreHorizontal, PackageCheck, Settings, ShieldCheck, SlidersHorizontal, TrendingUp, Truck, User, UserCog, Wrench, X,
 } from 'lucide-react';
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -165,13 +165,16 @@ export function AppLayout({ children }: { children: ReactNode }) {
           { to: '/admin/operational-config?tab=garantias', icon: <SlidersHorizontal size={14} />, label: 'Configuración',           visible: canSeeWarrantyConfig(user) },
         ] },
       ] },
-      { title: 'Gestión interna', items: [
-        { to: '/productos', icon: <FileSpreadsheet size={16} />, label: 'Productos y proveedores', permission: 'products.view' },
-        { to: '/precios-costos', icon: <CircleDollarSign size={16} />, label: 'Precios y costos', anyPermission: ['price_updates.view', 'cost_updates.view'] },
+      { title: 'Comercial', items: [
+        { to: '/comercial/psi', icon: <TrendingUp size={16} />, label: 'PSI · Planificación', permission: 'psi.view' },
         { to: '/ventas-bi', icon: <BarChart2 size={16} />, label: 'Inteligencia comercial', children: [
           { to: '/ventas-bi/historial', icon: <History size={14} />, label: 'Historial', permission: 'sales_bi.view' },
           { to: '/ventas-bi/importar', icon: <FileSpreadsheet size={14} />, label: 'Importar planilla', permission: 'sales_bi.import' },
         ] },
+      ] },
+      { title: 'Gestión interna', items: [
+        { to: '/productos', icon: <FileSpreadsheet size={16} />, label: 'Productos y proveedores', permission: 'products.view' },
+        { to: '/precios-costos', icon: <CircleDollarSign size={16} />, label: 'Precios y costos', anyPermission: ['price_updates.view', 'cost_updates.view'] },
         { to: '/recibos', icon: <FileText size={16} />, label: 'Recibos de sueldo', anyPermission: ['payroll_receipts.view_own', 'payroll_receipts.view_all', 'payroll_receipts.upload'] },
       ] },
       { title: 'Herramientas', items: [

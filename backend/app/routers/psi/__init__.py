@@ -2,7 +2,7 @@
 
 Endpoints (Fase 1):
   GET  /api/psi/options    — marcas, tipos y sucursales para los filtros
-  GET  /api/psi/report     — tabla del PSI con filtros aplicados   (próximo)
+  GET  /api/psi/report     — tabla del PSI con filtros aplicados
   POST /api/psi/adjust     — crear ajuste + escribir al libro mensual (próximo)
   POST /api/psi/adjust/{id}/revert — revertir ajuste                 (próximo)
   POST /api/psi/export-pdf — generar PDF del reporte                 (próximo)
@@ -11,15 +11,19 @@ Spec completa en docs/10-modulo-comercial-fase1.md §10.
 """
 from __future__ import annotations
 
-from typing import Annotated, Any
+from datetime import date, datetime, timedelta
+from typing import Annotated, Any, Literal, Optional
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
-from sqlalchemy import distinct, func, select
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
+from sqlalchemy import and_, distinct, func, select
 
 from ...auth import require_permission
+from ...commercial.stock_reader import load_stock_map
+from ...commercial.ventas_reader import load_ventas
 from ...db import db_session
 from ...models.products import Product
+from ...models.sales_psi import SalesPsiAdjustment
 
 
 router = APIRouter(prefix="/api/psi", tags=["psi"])
@@ -35,22 +39,116 @@ class PSIOptionsResponse(BaseModel):
     sucursales: list[str]
 
 
+class PSIAdjustmentInfo(BaseModel):
+    id:          int
+    fecha:       str   # YYYY-MM-DD (inserted_date)
+    sucursal:    str
+    delta:       int
+    status:      str
+    reason:      str
+    fecha_mode:  str
+    created_by:  Optional[str] = None
+    created_at:  str
+
+
+class PSIReportRow(BaseModel):
+    product_id:               int
+    sku:                      str
+    descripcion:              str
+    marca:                    str
+    tipo:                     str
+    condicion:                str
+    stock:                    int
+    sell_out:                 int
+    sell_out_base:            int
+    ajuste_delta:             int
+    has_pending_adjustment:   bool
+    historial_ajustes:        list[PSIAdjustmentInfo]
+
+
+class PSINoCatalogadoRow(BaseModel):
+    sku_raw:         str
+    descripcion_raw: str
+    cantidad_total:  int
+    sucursales:      list[str]
+
+
+class PSIReportTotals(BaseModel):
+    stock:               int
+    sell_out:            int
+    ajustes_pendientes:  int
+    productos_visibles:  int
+    productos_no_catalogados: int
+
+
+class PSIReportFiltersApplied(BaseModel):
+    marcas:         list[str]
+    tipos:          list[str]
+    condicion:      str
+    periodo_inicio: str
+    periodo_fin:    str
+    mode:           str
+
+
+class PSIReportFreshness(BaseModel):
+    stock_fetched_at:  Optional[str] = None
+    ventas_fetched_at: Optional[str] = None
+    months_used:       list[str] = []
+
+
+class PSIReportResponse(BaseModel):
+    filters_applied: PSIReportFiltersApplied
+    items:           list[PSIReportRow]
+    no_catalogados:  list[PSINoCatalogadoRow]
+    totals:          PSIReportTotals
+    data_freshness:  PSIReportFreshness
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Constantes
+# ──────────────────────────────────────────────────────────────────────────
+
+PSI_SUCURSALES = ["CASEROS", "SUR", "NORTE", "CANNING"]
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────────────────────
+
+def _parse_csv(text: str) -> list[str]:
+    """Convierte 'a,b,c' → ['a','b','c'] (limpia vacíos y trim)."""
+    if not text:
+        return []
+    return [x.strip() for x in text.split(",") if x.strip()]
+
+
+def _parse_date(text: str, field: str) -> date:
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"Parámetro '{field}' debe tener formato YYYY-MM-DD")
+
+
+def _monday_of(d: date) -> date:
+    """Lunes de la semana de d (0=lunes)."""
+    return d - timedelta(days=d.weekday())
+
+
+def _default_periodo() -> tuple[date, date]:
+    """Default: últimas 2 semanas completas (lunes hace 14 días → domingo hace 7)."""
+    today = date.today()
+    inicio = _monday_of(today) - timedelta(days=14)
+    fin = inicio + timedelta(days=13)  # incluye domingo siguiente
+    return inicio, fin
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # GET /api/psi/options
 # ──────────────────────────────────────────────────────────────────────────
 
-# Lista canónica de sucursales del PSI (corresponden a las hojas Ventas X Total
-# del libro mensual y a las hojas BASE_* donde se escriben los ajustes).
-PSI_SUCURSALES = ["CASEROS", "SUR", "NORTE", "CANNING"]
-
-
 @router.get("/options", response_model=PSIOptionsResponse)
 def psi_options(_user: Annotated[Any, Depends(require_permission("psi.view"))]):
-    """Marcas, tipos y sucursales disponibles para los multi-select de filtros.
-
-    Marca/tipo salen del catálogo de productos activos (mismo origen que el
-    listado del PSI). Sucursales son las 4 canónicas del libro mensual.
-    """
+    """Marcas, tipos y sucursales disponibles para los multi-select de filtros."""
     with db_session() as session:
         marcas = session.execute(
             select(distinct(Product.marca))
@@ -67,4 +165,192 @@ def psi_options(_user: Annotated[Any, Depends(require_permission("psi.view"))]):
         marcas=[m for m in marcas if m],
         tipos=[t for t in tipos if t],
         sucursales=PSI_SUCURSALES,
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# GET /api/psi/report
+# ──────────────────────────────────────────────────────────────────────────
+
+def _adjustment_to_info(adj: SalesPsiAdjustment) -> PSIAdjustmentInfo:
+    return PSIAdjustmentInfo(
+        id=int(adj.id),
+        fecha=adj.inserted_date.strftime("%Y-%m-%d"),
+        sucursal=adj.sucursal,
+        delta=int(adj.cantidad_delta),
+        status=adj.status,
+        reason=adj.reason or "",
+        fecha_mode=adj.fecha_mode,
+        created_by=None,  # se completa abajo con nombres resueltos
+        created_at=(adj.created_at.isoformat() if adj.created_at else ""),
+    )
+
+
+@router.get("/report", response_model=PSIReportResponse)
+def psi_report(
+    _user: Annotated[Any, Depends(require_permission("psi.view"))],
+    marcas: str = Query(default="", description="CSV de marcas a filtrar (vacío = todas)"),
+    tipos: str = Query(default="", description="CSV de tipos a filtrar"),
+    condicion: Literal["TODO", "PRIMERA", "OUTLET"] = Query(default="TODO"),
+    periodo_inicio: str = Query(default="", description="YYYY-MM-DD"),
+    periodo_fin: str = Query(default="", description="YYYY-MM-DD"),
+    mode: Literal["default", "advanced"] = Query(default="default"),
+    force_refresh: bool = Query(default=False),
+):
+    """Reporte PSI consolidado: catálogo × stock × ventas × ajustes.
+
+    Ver docs/10-modulo-comercial-fase1.md §7 para el algoritmo completo.
+    """
+    # 1. Parsear filtros
+    marcas_list = _parse_csv(marcas)
+    tipos_list  = _parse_csv(tipos)
+    if periodo_inicio:
+        pi = _parse_date(periodo_inicio, "periodo_inicio")
+    else:
+        pi, _ = _default_periodo()
+    if periodo_fin:
+        pf = _parse_date(periodo_fin, "periodo_fin")
+    else:
+        _, pf = _default_periodo()
+    if pf < pi:
+        raise HTTPException(400, "periodo_fin no puede ser menor que periodo_inicio")
+
+    # 2. Catálogo filtrado
+    with db_session() as session:
+        stmt = select(Product).where(Product.is_active.is_(True))
+        if marcas_list:
+            stmt = stmt.where(Product.marca.in_(marcas_list))
+        if tipos_list:
+            stmt = stmt.where(Product.tipo.in_(tipos_list))
+        if condicion != "TODO":
+            stmt = stmt.where(Product.condicion_producto == condicion)
+        catalogo: list[Product] = session.scalars(stmt).all()
+
+        # 3. Stock (lectura con cache)
+        stock_map = load_stock_map(force_refresh=force_refresh)
+        stock_fetched_at = datetime.utcnow().isoformat() + "Z"
+
+        # 4. Ventas (lectura con cache)
+        ventas = load_ventas(pi, pf, force_refresh=force_refresh)
+        ventas_agg: dict[str, int] = ventas["ventas_agg"]
+        by_sku_meta: dict[str, dict[str, Any]] = ventas["by_sku_meta"]
+        months_used: list[tuple[int, int]] = ventas["months_used"]
+        ventas_fetched_at = datetime.utcnow().isoformat() + "Z"
+
+        # 5. Ajustes pendientes (los applied ya están en ventas)
+        pending_rows: list[SalesPsiAdjustment] = session.scalars(
+            select(SalesPsiAdjustment).where(
+                and_(
+                    SalesPsiAdjustment.status == "pending",
+                    SalesPsiAdjustment.periodo_semana >= pi,
+                    SalesPsiAdjustment.periodo_semana <= pf,
+                )
+            )
+        ).all()
+        pending_by_product: dict[int, list[SalesPsiAdjustment]] = {}
+        for adj in pending_rows:
+            pending_by_product.setdefault(int(adj.product_id), []).append(adj)
+
+        # 6. Historial completo (todos los status) — para badges/drawer
+        historial_rows: list[SalesPsiAdjustment] = session.scalars(
+            select(SalesPsiAdjustment).where(
+                and_(
+                    SalesPsiAdjustment.periodo_semana >= pi,
+                    SalesPsiAdjustment.periodo_semana <= pf,
+                )
+            ).order_by(SalesPsiAdjustment.created_at.desc())
+        ).all()
+        historial_by_product: dict[int, list[SalesPsiAdjustment]] = {}
+        for adj in historial_rows:
+            historial_by_product.setdefault(int(adj.product_id), []).append(adj)
+
+    # 7. Construcción de filas
+    rows: list[PSIReportRow] = []
+    total_stock = 0
+    total_sell_out = 0
+    ajustes_count = 0
+    for p in catalogo:
+        sku_norm = str(p.sku_normalized or "")
+        stock_actual = int(stock_map.get(sku_norm, 0))
+        sell_out_base = int(ventas_agg.get(sku_norm, 0))
+        pending_for_p = pending_by_product.get(int(p.id), [])
+        ajuste_delta = sum(int(a.cantidad_delta) for a in pending_for_p)
+        sell_out_final = sell_out_base + ajuste_delta
+
+        # Regla de inclusión (default): stock>0 OR sell_out>0 OR ajuste
+        if mode == "default":
+            if stock_actual <= 0 and sell_out_final <= 0 and ajuste_delta == 0:
+                continue
+        # mode == 'advanced' incluye todos los productos del filtro
+
+        historial_p = [_adjustment_to_info(a) for a in historial_by_product.get(int(p.id), [])]
+        rows.append(PSIReportRow(
+            product_id=int(p.id),
+            sku=str(p.sku or ""),
+            descripcion=str(p.descripcion or ""),
+            marca=str(p.marca or ""),
+            tipo=str(p.tipo or ""),
+            condicion=str(p.condicion_producto or ""),
+            stock=stock_actual,
+            sell_out=sell_out_final,
+            sell_out_base=sell_out_base,
+            ajuste_delta=ajuste_delta,
+            has_pending_adjustment=ajuste_delta != 0,
+            historial_ajustes=historial_p,
+        ))
+        total_stock += stock_actual
+        total_sell_out += sell_out_final
+        if ajuste_delta != 0:
+            ajustes_count += 1
+
+    # 8. SKUs en ventas que no están en catálogo
+    skus_en_ventas = set(ventas_agg.keys())
+    skus_del_catalogo = {str(p.sku_normalized or "") for p in catalogo}
+    # Si el usuario filtró por marca/tipo/condición, el catálogo es un subset.
+    # Para no catalogados, comparamos contra TODO el catálogo activo (no contra el subset).
+    if marcas_list or tipos_list or condicion != "TODO":
+        with db_session() as session:
+            all_skus = session.execute(
+                select(Product.sku_normalized).where(Product.is_active.is_(True))
+            ).scalars().all()
+            skus_del_catalogo = {str(s or "") for s in all_skus}
+
+    no_catalogados: list[PSINoCatalogadoRow] = []
+    for sku_huerfano in sorted(skus_en_ventas - skus_del_catalogo):
+        if not sku_huerfano:
+            continue
+        meta = by_sku_meta.get(sku_huerfano, {})
+        no_catalogados.append(PSINoCatalogadoRow(
+            sku_raw=str(meta.get("first_sku_raw") or ""),
+            descripcion_raw=str(meta.get("first_descripcion") or ""),
+            cantidad_total=int(ventas_agg.get(sku_huerfano, 0)),
+            sucursales=list(meta.get("sucursales", []) or []),
+        ))
+
+    # 9. Ordenar y devolver
+    rows.sort(key=lambda r: (r.marca, r.tipo, r.descripcion))
+
+    return PSIReportResponse(
+        filters_applied=PSIReportFiltersApplied(
+            marcas=marcas_list,
+            tipos=tipos_list,
+            condicion=condicion,
+            periodo_inicio=pi.strftime("%Y-%m-%d"),
+            periodo_fin=pf.strftime("%Y-%m-%d"),
+            mode=mode,
+        ),
+        items=rows,
+        no_catalogados=no_catalogados,
+        totals=PSIReportTotals(
+            stock=total_stock,
+            sell_out=total_sell_out,
+            ajustes_pendientes=ajustes_count,
+            productos_visibles=len(rows),
+            productos_no_catalogados=len(no_catalogados),
+        ),
+        data_freshness=PSIReportFreshness(
+            stock_fetched_at=stock_fetched_at,
+            ventas_fetched_at=ventas_fetched_at,
+            months_used=[f"{y:04d}-{m:02d}" for (y, m) in months_used],
+        ),
     )

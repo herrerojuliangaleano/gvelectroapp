@@ -189,12 +189,49 @@ def _buscar_archivo_por_nombre_parcial(drive, folder_id: str, partial: str) -> d
     return (sheets or files)[0] if (sheets or files) else None
 
 
+def _resolve_year_root_folder(drive, year: int) -> str:
+    """Resuelve la carpeta raíz del año.
+
+    El config ``commercial.year_folder_id`` puede apuntar a:
+    - La carpeta del año directamente (contiene 01-Enero/, 02-Febrero/, ...)
+    - Una carpeta padre que contiene sub-carpetas '2025/', '2026/', etc.
+
+    Si lo configurado contiene sub-carpetas tipo 'MM-Mes', usamos esa.
+    Si no, buscamos una sub-carpeta con el año pedido como nombre.
+    """
+    configured = _year_folder_id()
+    if month_folder_first_seen(drive, configured):
+        # Tiene sub-carpetas tipo MM-Mes → ya estamos en la carpeta del año
+        return configured
+    # Buscar sub-carpeta con nombre = año (ej "2026")
+    sub = _buscar_subcarpeta(drive, configured, str(year))
+    if sub:
+        return sub["id"]
+    # Fallback: usar el configured tal cual (el siguiente paso fallará silencioso)
+    return configured
+
+
+def month_folder_first_seen(drive, parent_id: str) -> str | None:
+    """Devuelve el primer nombre de sub-carpeta del padre que matchea 'MM-Mes', o None."""
+    res = drive.files().list(
+        q=f"'{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        fields="files(id, name)", pageSize=20,
+        supportsAllDrives=True, includeItemsFromAllDrives=True,
+    ).execute()
+    for f in res.get("files", []):
+        name = str(f.get("name", ""))
+        # Patrón MM-Mes (ej "01-Enero", "12-Diciembre")
+        if len(name) >= 4 and name[:2].isdigit() and name[2] == "-":
+            return name
+    return None
+
+
 def find_monthly_book_id(year: int, month: int) -> str | None:
     """Devuelve el file_id del libro mensual de (year, month), o None si no existe."""
     drive = drive_service()
-    year_folder_id = _year_folder_id()
+    year_root = _resolve_year_root_folder(drive, year)
     mes_folder_name = f"{month:02d}-{NOMBRES_MES[month]}"
-    folder = _buscar_subcarpeta(drive, year_folder_id, mes_folder_name)
+    folder = _buscar_subcarpeta(drive, year_root, mes_folder_name)
     if not folder:
         return None
     archivo = _buscar_archivo_por_nombre_parcial(drive, folder["id"], "Ventas Vs. Costos")

@@ -854,3 +854,24 @@ export async function fetchSalesBIBalances(params: {
 export async function fetchSalesBIStats(): Promise<SalesBIStats> {
   return request('/api/sales-bi/stats');
 }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Módulo Comercial · PSI
+// ──────────────────────────────────────────────────────────────────────────
+
+export async function fetchPSIOptions(): Promise<import('../types').PSIOptionsResponse> {
+  return request('/api/psi/options');
+}
+
+export async function fetchPSIReport(query: import('../types').PSIReportQuery = {}): Promise<import('../types').PSIReportResponse> {
+  const params: Record<string, string> = {};
+  if (query.marcas?.length) params.marcas = query.marcas.join(',');
+  if (query.tipos?.length)  params.tipos  = query.tipos.join(',');
+  if (query.condicion && query.condicion !== 'TODO') params.condicion = query.condicion;
+  if (query.periodo_inicio) params.periodo_inicio = query.periodo_inicio;
+  if (query.periodo_fin)    params.periodo_fin    = query.periodo_fin;
+  if (query.mode)           params.mode           = query.mode;
+  if (query.force_refresh)  params.force_refresh  = 'true';
+  return request(`/api/psi/report${buildQs(params)}`);
+}

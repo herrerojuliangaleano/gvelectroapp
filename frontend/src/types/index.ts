@@ -650,6 +650,8 @@ export interface OperationalConfigPayload {
     cutoff_day: number;
     cutoff_description: string;
   };
+  // PSI types
+  // (definidos abajo, fuera del OperationalConfigPayload)
   commercial?: {
     year_folder_id?: string;
     stock_book_id?: string;
@@ -1822,4 +1824,92 @@ export interface ProductSyncResult {
   cost_changes_detected: number;
   price_cost_updates_created: number;
   price_cost_updates_skipped: number;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Módulo Comercial · PSI (Planificación de Ventas e Inventario)
+// ──────────────────────────────────────────────────────────────────────────
+
+export interface PSIOptionsResponse {
+  marcas:     string[];
+  tipos:      string[];
+  sucursales: string[];
+}
+
+export type PSICondicionFilter = 'TODO' | 'PRIMERA' | 'OUTLET';
+export type PSIMode             = 'default' | 'advanced';
+
+export interface PSIAdjustmentInfo {
+  id:          number;
+  fecha:       string;   // YYYY-MM-DD
+  sucursal:    string;
+  delta:       number;
+  status:      string;   // pending | applied_to_sheet | reverted | failed
+  reason:      string;
+  fecha_mode:  string;   // manual | random
+  created_by:  string | null;
+  created_at:  string;
+}
+
+export interface PSIReportRow {
+  product_id:               number;
+  sku:                      string;
+  descripcion:              string;
+  marca:                    string;
+  tipo:                     string;
+  condicion:                string;  // PRIMERA | OUTLET
+  stock:                    number;
+  sell_out:                 number;
+  sell_out_base:            number;
+  ajuste_delta:             number;
+  has_pending_adjustment:   boolean;
+  historial_ajustes:        PSIAdjustmentInfo[];
+}
+
+export interface PSINoCatalogadoRow {
+  sku_raw:         string;
+  descripcion_raw: string;
+  cantidad_total:  number;
+  sucursales:      string[];
+}
+
+export interface PSIReportTotals {
+  stock:                     number;
+  sell_out:                  number;
+  ajustes_pendientes:        number;
+  productos_visibles:        number;
+  productos_no_catalogados:  number;
+}
+
+export interface PSIReportFiltersApplied {
+  marcas:         string[];
+  tipos:          string[];
+  condicion:      PSICondicionFilter;
+  periodo_inicio: string;
+  periodo_fin:    string;
+  mode:           PSIMode;
+}
+
+export interface PSIReportFreshness {
+  stock_fetched_at:  string | null;
+  ventas_fetched_at: string | null;
+  months_used:       string[];
+}
+
+export interface PSIReportResponse {
+  filters_applied: PSIReportFiltersApplied;
+  items:           PSIReportRow[];
+  no_catalogados:  PSINoCatalogadoRow[];
+  totals:          PSIReportTotals;
+  data_freshness:  PSIReportFreshness;
+}
+
+export interface PSIReportQuery {
+  marcas?:         string[];
+  tipos?:          string[];
+  condicion?:      PSICondicionFilter;
+  periodo_inicio?: string;
+  periodo_fin?:    string;
+  mode?:           PSIMode;
+  force_refresh?:  boolean;
 }

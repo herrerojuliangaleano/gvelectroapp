@@ -27,6 +27,7 @@ import { PayrollReceiptsPage } from './pages/PayrollReceiptsPage';
 import { PriceCostUpdatesPage } from './pages/PriceCostUpdatesPage';
 import { ProductCatalogPage } from './pages/ProductCatalogPage';
 import { OperationalConfigPage } from './pages/OperationalConfigPage';
+import { PSIPage } from './pages/PSIPage';
 import { SalesWebCreatePage } from './pages/SalesWebCreatePage';
 import { SalesWebDetailPage } from './pages/SalesWebDetailPage';
 import { SalesWebListPage } from './pages/SalesWebListPage';
@@ -186,6 +187,7 @@ export default function App() {
       {/* DEPRECATED (Fase A consolidación): /settings se embebió como tab "Sistema" en /admin/operational-config. */}
       <Route path="/settings" element={<Navigate to="/admin/operational-config?tab=sistema" replace />} />
       <Route path="/admin/operational-config" element={<ProtectedLayout permission="ops_config.view"><OperationalConfigPage /></ProtectedLayout>} />
+      <Route path="/comercial/psi" element={<ProtectedLayout permission="psi.view"><PSIPage /></ProtectedLayout>} />
       <Route path="/admin/companies-branches" element={<ProtectedLayout permission="branches.view"><CompaniesBranchesPage /></ProtectedLayout>} />
       <Route path="/admin/empresas-sucursales" element={<Navigate to="/admin/companies-branches" replace />} />
       <Route path="/administracion/usuarios" element={<ProtectedLayout permission="users.view"><AdminUsuariosPage /></ProtectedLayout>} />
