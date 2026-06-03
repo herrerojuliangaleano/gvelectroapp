@@ -96,6 +96,7 @@ class PSIReportFiltersApplied(BaseModel):
     periodo_inicio: str
     periodo_fin:    str
     mode:           str
+    exclude_zero_activity: bool = False
 
 
 class PSIGFKFileInfo(BaseModel):
@@ -213,6 +214,7 @@ def psi_report(
     periodo_inicio: str = Query(default="", description="YYYY-MM-DD"),
     periodo_fin: str = Query(default="", description="YYYY-MM-DD"),
     mode: Literal["default", "advanced"] = Query(default="default"),
+    exclude_zero_activity: bool = Query(default=False, description="Oculta filas con stock=0 y sell_out=0"),
     force_refresh: bool = Query(default=False),
 ):
     """Reporte PSI consolidado: catálogo × stock × ventas × ajustes.
@@ -386,6 +388,11 @@ def psi_report(
         ajuste_delta = sum(int(a.cantidad_delta) for a in pending_for_p)
         sell_out_final = sell_out_base + ajuste_delta
 
+        # Filtro manual del informe: si el producto queda en 0/0 no aporta al
+        # reporte, incluso si llegó a ese estado por un ajuste.
+        if exclude_zero_activity and stock_efectivo == 0 and sell_out_final == 0:
+            continue
+
         # Regla de inclusión (default): stock>0 OR sell_out>0 OR ajuste
         if mode == "default":
             if stock_efectivo <= 0 and sell_out_final <= 0 and ajuste_delta == 0 and stock_delta == 0:
@@ -437,6 +444,7 @@ def psi_report(
             periodo_inicio=pi.strftime("%Y-%m-%d"),
             periodo_fin=pf.strftime("%Y-%m-%d"),
             mode=mode,
+            exclude_zero_activity=exclude_zero_activity,
         ),
         items=rows,
         no_catalogados=no_catalogados,
@@ -875,6 +883,7 @@ class PSIExportPDFPayload(BaseModel):
     periodo_inicio: str
     periodo_fin:    str
     mode:           Literal["default", "advanced"] = "default"
+    exclude_zero_activity: bool = False
 
 
 @router.post("/export-pdf")
@@ -899,6 +908,7 @@ def psi_export_pdf(
         periodo_inicio=payload.periodo_inicio,
         periodo_fin=payload.periodo_fin,
         mode=payload.mode,
+        exclude_zero_activity=payload.exclude_zero_activity,
         force_refresh=False,
     )
 
@@ -963,6 +973,7 @@ def psi_export_xlsx(
         periodo_inicio=payload.periodo_inicio,
         periodo_fin=payload.periodo_fin,
         mode=payload.mode,
+        exclude_zero_activity=payload.exclude_zero_activity,
         force_refresh=False,
     )
 

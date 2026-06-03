@@ -277,6 +277,11 @@ Productos con stock=0, sell_out=0 y sin ajustes **no aparecen** (sería ruido).
 todos los productos del catálogo que cumplan los filtros, sin descartar nada,
 para que el gerente pueda agregar ajustes incluso sobre productos sin actividad.
 
+**Filtro manual del informe**: si `exclude_zero_activity=true`, se ocultan las
+filas cuyo resultado final queda en `stock=0` y `sell_out=0`. Esta regla aplica
+también cuando el producto llegó a `0/0` por un ajuste, y se respeta en PDF y
+Excel.
+
 ---
 
 ## 7. Algoritmo del endpoint `GET /api/psi/report`
@@ -620,6 +625,7 @@ Devuelve la tabla del PSI con filtros aplicados.
 | `periodo_inicio` | YYYY-MM-DD | lunes de hace 14 días | |
 | `periodo_fin` | YYYY-MM-DD | domingo de hace 7 días | |
 | `mode` | `default`\|`advanced` | `default` | advanced trae todo el catálogo filtrado |
+| `exclude_zero_activity` | bool | false | oculta filas con `stock=0` y `sell_out=0` |
 | `force_refresh` | bool | false | invalida cache si true |
 
 **Response 200**:
@@ -627,7 +633,8 @@ Devuelve la tabla del PSI con filtros aplicados.
 {
   "filters_applied": {
     "marcas": ["Samsung"], "tipos": ["heladera"], "condicion": "PRIMERA",
-    "periodo_inicio": "2026-05-08", "periodo_fin": "2026-05-18", "mode": "default"
+    "periodo_inicio": "2026-05-08", "periodo_fin": "2026-05-18", "mode": "default",
+    "exclude_zero_activity": false
   },
   "items": [
     {

@@ -168,6 +168,7 @@ export function PSIPage() {
   const [error, setError] = useState('');
   const [showNoCatalogados, setShowNoCatalogados] = useState(true);
   const [mode, setMode] = useState<PSIMode>('default');
+  const [excludeZeroActivity, setExcludeZeroActivity] = useState(false);
 
   // Modal de ajuste
   const [adjustRow, setAdjustRow] = useState<PSIReportRow | null>(null);
@@ -188,7 +189,7 @@ export function PSIPage() {
     try {
       const data = await fetchPSIReport({
         marcas, tipos, condicion, periodo_inicio: periodoInicio, periodo_fin: periodoFin,
-        mode, force_refresh: forceRefresh,
+        mode, exclude_zero_activity: excludeZeroActivity, force_refresh: forceRefresh,
       });
       setReport(data);
     } catch (err) {
@@ -199,14 +200,15 @@ export function PSIPage() {
   }
 
   useEffect(() => { load(false); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  // Recargar cuando cambia el modo (default ↔ advanced)
-  useEffect(() => { load(false); }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Recargar cuando cambia el modo o el filtro 0/0.
+  useEffect(() => { load(false); }, [mode, excludeZeroActivity]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function applyFilters() { load(false); }
   function clearFilters() {
     setMarcas([]); setTipos([]); setCondicion('TODO');
     const r = defaultRange(); setPeriodoInicio(r.inicio); setPeriodoFin(r.fin);
     setMode('default');
+    setExcludeZeroActivity(false);
   }
 
   const items: PSIReportRow[] = report?.items || [];
@@ -214,8 +216,7 @@ export function PSIPage() {
   return (
     <div className="erp-stack-6">
       <ErpPageHeader
-        title="PSI · Planificación de Ventas e Inventario"
-        description={'Consolidado por marca / tipo / condición. Cruza el catálogo con el stock actual y las ventas del rango. Los ajustes manuales se aplican al libro mensual y aparecen automáticamente en el GFK.'}
+        title="PSI · Compras, Ventas e Inventario"
         actions={
           <>
             <button onClick={() => load(true)} disabled={loading} className={erpBtnGhost}>
@@ -286,6 +287,14 @@ export function PSIPage() {
               {loading ? 'Cargando…' : 'Aplicar'}
             </button>
             <button type="button" onClick={clearFilters} className={erpBtnGhost}>Limpiar</button>
+            <button
+              type="button"
+              onClick={() => setExcludeZeroActivity((v) => !v)}
+              className={excludeZeroActivity ? erpBtnPrimary : erpBtnSecondary}
+              title="Ocultar productos que quedan con stock 0 y sell out 0 en la tabla y en el export."
+            >
+              <PackageX size={14} /> {excludeZeroActivity ? 'Ocultar 0/0: ON' : 'Ocultar 0/0'}
+            </button>
             {canAdjust && (
               <button
                 type="button"
@@ -473,6 +482,7 @@ export function PSIPage() {
           filters={{
             marcas, tipos, condicion,
             periodo_inicio: periodoInicio, periodo_fin: periodoFin, mode,
+            exclude_zero_activity: excludeZeroActivity,
           }}
           onClose={() => setExportOpen(false)}
         />
@@ -1017,6 +1027,7 @@ function ExportReportModal({
   filters: {
     marcas: string[]; tipos: string[]; condicion: PSICondicionFilter;
     periodo_inicio: string; periodo_fin: string; mode: PSIMode;
+    exclude_zero_activity: boolean;
   };
   onClose: () => void;
 }) {
@@ -1044,6 +1055,7 @@ function ExportReportModal({
         periodo_inicio: filters.periodo_inicio,
         periodo_fin: filters.periodo_fin,
         mode: filters.mode,
+        exclude_zero_activity: filters.exclude_zero_activity,
       };
       const blob = format === 'pdf' ? await exportPSIPdf(payload) : await exportPSIXlsx(payload);
       const url = URL.createObjectURL(blob);

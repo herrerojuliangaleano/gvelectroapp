@@ -1902,6 +1902,7 @@ export interface PSIReportFiltersApplied {
   periodo_inicio: string;
   periodo_fin:    string;
   mode:           PSIMode;
+  exclude_zero_activity: boolean;
 }
 
 export interface PSIReportFreshness {
@@ -1927,6 +1928,7 @@ export interface PSIReportQuery {
   periodo_inicio?: string;
   periodo_fin?:    string;
   mode?:           PSIMode;
+  exclude_zero_activity?: boolean;
   force_refresh?:  boolean;
 }
 

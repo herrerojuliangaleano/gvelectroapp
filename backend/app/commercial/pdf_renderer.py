@@ -4,8 +4,8 @@ Layout pedido por el gerente:
 
   +----+  Reporte PSI                                 Marca: ...
   |LOGO|  ELECTRO GV                                  Período: ...
-  +----+  Reporte de Stock y Sell-Out por marca       Sucursales: Todas
-          Generado DD/MM/YYYY HH:MM                   Responsable: ... (si GERENTE_COMERCIAL)
+  +----+                                               Sucursales: Todas
+                                                       Responsable: ... (si GERENTE_COMERCIAL)
 
          [ STOCK TOTAL ]    [ SELL OUT TOTAL ]
 
@@ -35,7 +35,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from ..config import get_settings
+from ..brand_assets import brand_logo_path
 from ..operational_config import load_operational_config
 
 
@@ -74,23 +74,12 @@ def _logo_path(logo: str) -> Optional[Path]:
         return None
     cfg = load_operational_config().get("commercial", {}) or {}
     logos = cfg.get("logos", {}) or {}
-    settings = get_settings()
-    backend_root = settings.storage_dir.parent
 
     key = "gv_path" if logo_norm == "GV" else "abc_path" if logo_norm == "ABC" else None
     if not key:
         return None
-    candidates: list[Path] = []
     rel = str(logos.get(key) or "")
-    if rel:
-        candidates.append((backend_root / rel).resolve() if not Path(rel).is_absolute() else Path(rel))
-    # Fallbacks razonables
-    candidates.append(backend_root / "storage" / "logos" / f"{logo_norm.lower()}_electro.png")
-    candidates.append(backend_root / "storage" / "brand"  / f"{logo_norm.lower()}-electro.png")
-    for path in candidates:
-        if path.exists():
-            return path
-    return None
+    return brand_logo_path(logo_norm, configured_path=rel or None, allow_none=True)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -207,10 +196,6 @@ def render_psi_pdf(
     if empresa_nombre is None:
         empresa_nombre = "ELECTRO GV" if logo.upper() == "GV" else "ELECTRO ABC SRL" if logo.upper() == "ABC" else "ELECTRO"
 
-    # ─── HEADER ───────────────────────────────────────────────────────────
-    now_local = datetime.now(AR_TZ)
-    fecha_generado = now_local.strftime("%d/%m/%Y %H:%M")
-
     logo_p = _logo_path(logo)
     if logo_p:
         try:
@@ -221,14 +206,10 @@ def render_psi_pdf(
     else:
         logo_img = Paragraph("", sub_style)
 
-    # Bloque izquierdo: logo + (Reporte PSI / Empresa / subtítulos)
+    # Bloque izquierdo: logo + titulo/empresa.
     titulo_block = [
         Paragraph("Reporte PSI", h_title),
         Paragraph(empresa_nombre, h_subtitle),
-        Paragraph(
-            f"Reporte de Stock y Sell-Out por marca · Generado {fecha_generado}",
-            sub_style,
-        ),
     ]
     left_block = Table(
         [[logo_img, titulo_block]],
@@ -395,6 +376,7 @@ def render_psi_xlsx(
         productos (SKU/Descripción/Marca/Stock/Sell-out).
     """
     import openpyxl
+    from openpyxl.drawing.image import Image as XLImage
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
 
@@ -404,9 +386,6 @@ def render_psi_xlsx(
 
     if empresa_nombre is None:
         empresa_nombre = "ELECTRO GV" if logo.upper() == "GV" else "ELECTRO ABC SRL" if logo.upper() == "ABC" else "ELECTRO"
-
-    now_local = datetime.now(AR_TZ)
-    fecha_generado = now_local.strftime("%d/%m/%Y %H:%M")
 
     filt = filters_applied or {}
     marca_text = ", ".join(filt.get("marcas") or []) or "Todas"
@@ -434,12 +413,25 @@ def render_psi_xlsx(
     grid_border  = Border(left=border_thin, right=border_thin, top=border_thin, bottom=border_thin)
 
     # ── Header (filas 1-5)
-    ws["A1"] = "Reporte PSI"
-    ws["A1"].font = title_font
-    ws["A2"] = empresa_nombre
-    ws["A2"].font = subt_font
-    ws["A3"] = f"Reporte de Stock y Sell-Out por marca · Generado {fecha_generado}"
-    ws["A3"].font = Font(name="Calibri", size=10, color="64748B")
+    title_col = "A"
+    logo_path = _logo_path(logo)
+    if logo_path:
+        try:
+            logo_img = XLImage(str(logo_path))
+            logo_img.width = 64
+            logo_img.height = 64
+            ws.add_image(logo_img, "A1")
+            title_col = "B"
+            ws.row_dimensions[1].height = 30
+            ws.row_dimensions[2].height = 24
+            ws.row_dimensions[3].height = 18
+        except Exception:
+            title_col = "A"
+
+    ws[f"{title_col}1"] = "Reporte PSI"
+    ws[f"{title_col}1"].font = title_font
+    ws[f"{title_col}2"] = empresa_nombre
+    ws[f"{title_col}2"].font = subt_font
 
     # Metadata derecha (columnas D-E filas 1-5)
     meta_pairs = [

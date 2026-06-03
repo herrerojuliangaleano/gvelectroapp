@@ -30,6 +30,8 @@ from reportlab.platypus import (
     Paragraph,
 )
 
+from .brand_assets import brand_logo_path
+
 # ── Brand config ────────────────────────────────────────────────────────────
 
 ACCENT_BLUE = HexColor("#0052CC")
@@ -79,9 +81,8 @@ def get_logos_dir() -> Path:
 
 
 def _logo_image(company_brand: str) -> RLImage | None:
-    brand = BRANDS.get(company_brand, BRANDS["gv_electro"])
-    path = get_logos_dir() / brand["logo_file"]
-    if not path.exists():
+    path = brand_logo_path(company_brand)
+    if not path:
         return None
     try:
         # Los logos provistos son cuadrados; usar tamaño fijo evita que deformen el encabezado.

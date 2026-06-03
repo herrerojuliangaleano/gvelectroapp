@@ -872,6 +872,7 @@ export async function fetchPSIReport(query: import('../types').PSIReportQuery = 
   if (query.periodo_inicio) params.periodo_inicio = query.periodo_inicio;
   if (query.periodo_fin)    params.periodo_fin    = query.periodo_fin;
   if (query.mode)           params.mode           = query.mode;
+  if (query.exclude_zero_activity) params.exclude_zero_activity = 'true';
   if (query.force_refresh)  params.force_refresh  = 'true';
   return request(`/api/psi/report${buildQs(params)}`);
 }
@@ -914,6 +915,7 @@ export interface PSIExportPDFPayload {
   periodo_inicio: string;
   periodo_fin: string;
   mode: 'default' | 'advanced';
+  exclude_zero_activity?: boolean;
 }
 
 export async function searchPSIProducts(q: string, limit = 20): Promise<PSIProductSearchRow[]> {

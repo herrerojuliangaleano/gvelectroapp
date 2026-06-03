@@ -29,6 +29,7 @@ from openpyxl.worksheet.table import Table as XLTable, TableStyleInfo
 from ...access import assigned_deposit_names, ensure_active_user, user_has, user_role_keys, users_with_permission
 from ...audit import audit
 from ...auth import require_current_user, require_permission
+from ...brand_assets import brand_logo_path
 from ...config import get_settings
 from ...google_sheets import quote_sheet_name, sheets_service
 from ...operational_config import runtime_warranty_config, load_operational_config, save_operational_config
@@ -1906,22 +1907,7 @@ def _export_brand_info(logo_brand: str) -> dict[str, str]:
 
 
 def _export_logo_path(logo_brand: str) -> Path | None:
-    info = _export_brand_info(logo_brand)
-    cfg = get_settings()
-    candidates = [
-        cfg.storage_dir / "logos" / info["logo_file"],
-        cfg.project_dir / "storage" / "logos" / info["logo_file"],
-        cfg.project_dir / "backend" / "storage" / "logos" / info["logo_file"],
-        Path("storage") / "logos" / info["logo_file"],
-        Path("backend") / "storage" / "logos" / info["logo_file"],
-    ]
-    for candidate in candidates:
-        try:
-            if candidate.exists():
-                return candidate
-        except Exception:
-            continue
-    return None
+    return brand_logo_path(logo_brand)
 
 
 def build_provider_excel(rows: list[dict[str, Any]], file_path: Path, *, provider_name: str = "", shipment_code: str = "", logo_brand: str = "gv_electro") -> None:

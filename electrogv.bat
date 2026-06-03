@@ -187,6 +187,17 @@ if exist "backend\.env.production.local" (
 )
 exit /b 0
 
+:ensure_prod_assets
+if not exist "backend\storage-prod" mkdir "backend\storage-prod"
+if not exist "backend\storage-prod\logos" mkdir "backend\storage-prod\logos"
+if exist "backend\storage\logos\gv_electro.png" (
+  copy /Y "backend\storage\logos\gv_electro.png" "backend\storage-prod\logos\gv_electro.png" >nul
+)
+if exist "backend\storage\logos\abc_electro.png" (
+  copy /Y "backend\storage\logos\abc_electro.png" "backend\storage-prod\logos\abc_electro.png" >nul
+)
+exit /b 0
+
 :timestamp
 for /f %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HH-mm"') do set STAMP=%%I
 exit /b 0
@@ -242,6 +253,7 @@ exit /b 0
 :prod_up
 call :check_docker || exit /b 1
 call :ensure_prod_env || exit /b 1
+call :ensure_prod_assets || exit /b 1
 echo Levantando PROD local...
 docker compose --env-file "backend\.env.production.local" -f docker-compose.prod-local.yml up -d --build
 if errorlevel 1 goto command_error

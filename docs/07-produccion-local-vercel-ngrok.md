@@ -95,6 +95,25 @@ backend/secrets/firebase-service-account.json
 
 pero para mini-prod usar `backend/storage-prod/private/`.
 
+## Logos para PDFs y Excels
+
+Los exports de PDF/Excel resuelven los logos desde el storage activo del
+backend. En desarrollo el storage es `backend/storage/`; en mini-prod local es
+`backend/storage-prod/`.
+
+Archivos esperados:
+
+```text
+backend/storage/logos/gv_electro.png
+backend/storage/logos/abc_electro.png
+backend/storage-prod/logos/gv_electro.png
+backend/storage-prod/logos/abc_electro.png
+```
+
+El panel `electrogv.bat` copia automaticamente los logos de desarrollo a
+`storage-prod/logos/` al levantar mini-prod local. Si se cambia un logo, copiarlo
+tambien al storage del entorno que esta sirviendo la app.
+
 Para **Android Firebase / push nativo**, el archivo no es el mismo que el del
 backend. Debe ir en:
 
