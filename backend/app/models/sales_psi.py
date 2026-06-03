@@ -1,18 +1,10 @@
 """Módulo Comercial — PSI (Planificación de Ventas e Inventario).
 
-Tabla `sales_psi_adjustments`: ajustes manuales que hace el gerente comercial
-desde la pantalla PSI sobre el sell out de un producto. Cada ajuste:
+Tablas:
+- ``sales_psi_adjustments``: ajustes manuales del gerente (ventas y/o stock).
+- ``psi_product_aliases``: matching manual cuando SKU/descripción no resuelven.
 
-1. Se crea con `status='pending'`.
-2. Se aplica inmediatamente al libro mensual de ventas en Drive (escribe
-   una fila en la hoja BASE_<sucursal>). Pasa a `status='applied_to_sheet'`.
-3. Cuando el operador corre `gg.py`, el GFK lo incluye automáticamente
-   porque ya está en el libro mensual.
-4. Si hay que revertir, se borra la fila del sheet (identificada por
-   `Remito="PSI-{id}"`) y pasa a `status='reverted'`.
-
-Ver `docs/10-modulo-comercial-fase1.md` §9 para schema y §11 para algoritmo
-de escritura.
+Ver `docs/10-modulo-comercial-fase1.md` para spec completa.
 """
 from __future__ import annotations
 
@@ -92,4 +84,39 @@ class SalesPsiAdjustment(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
+class PSIProductAlias(Base):
+    """Alias manual entre un SKU/descripción del GFK y un producto del catálogo.
+
+    Cuando el matcher SKU+Descripción no encuentra match automático, el gerente
+    asocia manualmente desde la bandeja "no catalogados". El alias queda
+    persistido — próxima vez el matcher lo resuelve sin intervención.
+
+    Al menos uno de ``alias_sku_norm`` o ``alias_desc_norm`` debe estar definido
+    (constraint a nivel DB en la migración).
+    """
+
+    __tablename__ = "psi_product_aliases"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # Alias (uno o ambos)
+    alias_sku_norm:  Mapped[Optional[str]] = mapped_column(Text, nullable=True, index=True)
+    alias_desc_norm: Mapped[Optional[str]] = mapped_column(Text, nullable=True, index=True)
+    # Snapshots originales (UI / auditoría)
+    alias_sku_raw:   Mapped[str] = mapped_column(Text, default="", nullable=False)
+    alias_desc_raw:  Mapped[str] = mapped_column(Text, default="", nullable=False)
+
+    # Audit
+    created_by_user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
     )

@@ -883,3 +883,47 @@ export async function createPSIAdjustment(payload: import('../types').PSIAdjustP
 export async function revertPSIAdjustment(id: number): Promise<import('../types').PSIRevertResponse> {
   return request(`/api/psi/adjust/${id}/revert`, { method: 'POST' });
 }
+
+// ── PSI Sprint 5: aliases manuales + búsqueda + PDF ───────────────────────
+
+export interface PSIAliasInfo {
+  id: number;
+  product_id: number;
+  product_sku: string;
+  product_descripcion: string;
+  alias_sku_raw: string;
+  alias_desc_raw: string;
+  created_at: string;
+}
+
+export interface PSIProductSearchRow {
+  id: number;
+  sku: string;
+  marca: string;
+  tipo: string;
+  descripcion: string;
+  condicion: string;
+}
+
+export interface PSIExportPDFPayload {
+  titulo: string;
+  logo: 'GV' | 'ABC' | 'NONE';
+  marcas: string[];
+  tipos: string[];
+  condicion: 'TODO' | 'PRIMERA' | 'OUTLET';
+  periodo_inicio: string;
+  periodo_fin: string;
+  mode: 'default' | 'advanced';
+}
+
+export async function searchPSIProducts(q: string, limit = 20): Promise<PSIProductSearchRow[]> {
+  return request(`/api/psi/products/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+}
+
+export async function createPSIAlias(payload: { product_id: number; alias_sku?: string; alias_desc?: string }): Promise<PSIAliasInfo> {
+  return request('/api/psi/aliases', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function exportPSIPdf(payload: PSIExportPDFPayload): Promise<Blob> {
+  return requestBlob('/api/psi/export-pdf', { method: 'POST', body: JSON.stringify(payload) });
+}

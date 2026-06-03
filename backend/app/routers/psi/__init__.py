@@ -26,7 +26,7 @@ from ...commercial.matching import build_product_indexes, normalize_descripcion,
 from ...commercial.stock_reader import load_stock_data
 from ...db import db_session
 from ...models.products import Product
-from ...models.sales_psi import SalesPsiAdjustment
+from ...models.sales_psi import PSIProductAlias, SalesPsiAdjustment
 
 
 router = APIRouter(prefix="/api/psi", tags=["psi"])
@@ -310,7 +310,10 @@ def psi_report(
 
     # Mantener todos los objetos en la sesión actual para evitar DetachedInstanceError.
     full_catalog = list(catalogo) + [p for p in full_catalog if p not in catalogo]
-    indexes = build_product_indexes(full_catalog)
+    # Cargar aliases manuales para el matcher
+    with db_session() as session_aliases:
+        aliases_list = session_aliases.scalars(select(PSIProductAlias)).all()
+    indexes = build_product_indexes(full_catalog, aliases=aliases_list)
 
     # Acumulador: product_id → datos agregados
     aggregated: dict[int, dict[str, Any]] = {}
@@ -689,3 +692,231 @@ def psi_adjust_revert(
             status="reverted",
             message=sheet_message,
         )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Aliases manuales — POST /api/psi/aliases, DELETE /api/psi/aliases/{id}
+# ──────────────────────────────────────────────────────────────────────────
+
+class PSIAliasCreatePayload(BaseModel):
+    product_id:    int = Field(gt=0)
+    alias_sku:     Optional[str] = None
+    alias_desc:    Optional[str] = None
+
+
+class PSIAliasInfo(BaseModel):
+    id:                 int
+    product_id:         int
+    product_sku:        str
+    product_descripcion: str
+    alias_sku_raw:      str
+    alias_desc_raw:     str
+    created_at:         str
+
+
+@router.get("/aliases", response_model=list[PSIAliasInfo])
+def list_aliases(_user: Annotated[Any, Depends(require_permission("psi.view"))]):
+    """Lista los aliases manuales cargados."""
+    from ...models.products import Product
+    with db_session() as session:
+        rows = session.scalars(
+            select(PSIProductAlias).order_by(PSIProductAlias.created_at.desc())
+        ).all()
+        out: list[PSIAliasInfo] = []
+        for a in rows:
+            prod = session.get(Product, a.product_id)
+            out.append(PSIAliasInfo(
+                id=int(a.id),
+                product_id=int(a.product_id),
+                product_sku=str(prod.sku or "") if prod else "",
+                product_descripcion=str(prod.descripcion or "") if prod else "",
+                alias_sku_raw=str(a.alias_sku_raw or ""),
+                alias_desc_raw=str(a.alias_desc_raw or ""),
+                created_at=a.created_at.isoformat() if a.created_at else "",
+            ))
+        return out
+
+
+@router.post("/aliases", response_model=PSIAliasInfo)
+def create_alias(
+    payload: PSIAliasCreatePayload,
+    user: Annotated[Any, Depends(require_permission("psi.adjust"))],
+):
+    """Crea un alias manual entre un SKU/descripción y un producto del catálogo.
+
+    Al menos uno de alias_sku o alias_desc debe estar presente. La próxima
+    consulta del PSI usará este alias para resolver el match.
+    """
+    from ...commercial.matching import normalize_descripcion
+    from ...models.products import Product
+    from ...product_catalog import sku_key as _sku_key
+
+    sku_raw = (payload.alias_sku or "").strip()
+    desc_raw = (payload.alias_desc or "").strip()
+    if not sku_raw and not desc_raw:
+        raise HTTPException(400, "Debe enviar al menos alias_sku o alias_desc")
+
+    sku_norm = _sku_key(sku_raw) if sku_raw else None
+    desc_norm = normalize_descripcion(desc_raw) if desc_raw else None
+    if not sku_norm and not desc_norm:
+        raise HTTPException(400, "Los valores enviados quedan vacíos al normalizar")
+
+    with db_session() as session:
+        product = session.get(Product, payload.product_id)
+        if not product or not product.is_active:
+            raise HTTPException(404, "Producto no encontrado o inactivo")
+
+        actor_id = _resolve_user_id(session, user)
+        alias = PSIProductAlias(
+            product_id=int(product.id),
+            alias_sku_norm=sku_norm,
+            alias_desc_norm=desc_norm,
+            alias_sku_raw=sku_raw,
+            alias_desc_raw=desc_raw,
+            created_by_user_id=actor_id,
+        )
+        session.add(alias)
+        session.commit()
+        session.refresh(alias)
+
+        # Invalidar caches para que el próximo /report aplique el alias
+        from ...commercial import cache_invalidate
+        cache_invalidate()
+
+        return PSIAliasInfo(
+            id=int(alias.id),
+            product_id=int(product.id),
+            product_sku=str(product.sku or ""),
+            product_descripcion=str(product.descripcion or ""),
+            alias_sku_raw=sku_raw,
+            alias_desc_raw=desc_raw,
+            created_at=alias.created_at.isoformat() if alias.created_at else "",
+        )
+
+
+@router.delete("/aliases/{alias_id}")
+def delete_alias(
+    alias_id: int,
+    _user: Annotated[Any, Depends(require_permission("psi.adjust"))],
+):
+    """Elimina un alias manual."""
+    with db_session() as session:
+        alias = session.get(PSIProductAlias, alias_id)
+        if not alias:
+            raise HTTPException(404, "Alias no encontrado")
+        session.delete(alias)
+        session.commit()
+        from ...commercial import cache_invalidate
+        cache_invalidate()
+    return {"ok": True, "id": alias_id}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# GET /api/psi/products/search — para el selector del modal "asociar"
+# ──────────────────────────────────────────────────────────────────────────
+
+class PSIProductSearchRow(BaseModel):
+    id:          int
+    sku:         str
+    marca:       str
+    tipo:        str
+    descripcion: str
+    condicion:   str
+
+
+@router.get("/products/search", response_model=list[PSIProductSearchRow])
+def psi_products_search(
+    _user: Annotated[Any, Depends(require_permission("psi.view"))],
+    q: str = Query(default="", min_length=0),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    """Búsqueda full-text del catálogo para asociar manualmente.
+
+    Busca en sku, descripción y marca (tokens AND).
+    """
+    from ...models.products import Product
+    from ...product_catalog import normalize_text
+
+    query_norm = normalize_text(q or "")
+    if len(query_norm) < 2:
+        return []
+    tokens = query_norm.split()[:5]
+
+    with db_session() as session:
+        stmt = select(Product).where(Product.is_active.is_(True))
+        for t in tokens:
+            stmt = stmt.where(Product.search_text.ilike(f"%{t}%"))
+        rows = session.scalars(stmt.order_by(Product.marca, Product.descripcion).limit(limit)).all()
+        return [
+            PSIProductSearchRow(
+                id=int(p.id),
+                sku=str(p.sku or ""),
+                marca=str(p.marca or ""),
+                tipo=str(p.tipo or ""),
+                descripcion=str(p.descripcion or ""),
+                condicion=str(p.condicion_producto or ""),
+            )
+            for p in rows
+        ]
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# POST /api/psi/export-pdf — generar PDF del reporte
+# ──────────────────────────────────────────────────────────────────────────
+
+class PSIExportPDFPayload(BaseModel):
+    titulo:         str = Field(min_length=1, max_length=200)
+    logo:           Literal["GV", "ABC", "NONE"] = "GV"
+    # Mismos filtros que /report
+    marcas:         list[str] = []
+    tipos:          list[str] = []
+    condicion:      Literal["TODO", "PRIMERA", "OUTLET"] = "TODO"
+    periodo_inicio: str
+    periodo_fin:    str
+    mode:           Literal["default", "advanced"] = "default"
+
+
+@router.post("/export-pdf")
+def psi_export_pdf(
+    payload: PSIExportPDFPayload,
+    user: Annotated[Any, Depends(require_permission("psi.export"))],
+):
+    """Genera un PDF del reporte PSI con los filtros aplicados.
+
+    Internamente llama al endpoint /report para tener los datos, después
+    renderiza con reportlab. Retorna application/pdf descargable.
+    """
+    from fastapi.responses import Response
+    from ...commercial.pdf_renderer import render_psi_pdf
+
+    # Reutilizar psi_report() pasando los mismos parámetros
+    report = psi_report(
+        _user=user,
+        marcas=",".join(payload.marcas),
+        tipos=",".join(payload.tipos),
+        condicion=payload.condicion,
+        periodo_inicio=payload.periodo_inicio,
+        periodo_fin=payload.periodo_fin,
+        mode=payload.mode,
+        force_refresh=False,
+    )
+
+    pdf_bytes = render_psi_pdf(
+        titulo=payload.titulo.strip(),
+        items=[i.model_dump() for i in report.items],
+        totals=report.totals.model_dump(),
+        filters_applied=report.filters_applied.model_dump(),
+        gfk_files_used=[g.model_dump() for g in report.data_freshness.gfk_files_used],
+        logo=payload.logo,
+    )
+
+    # Slug del filename
+    import re as _re
+    slug = _re.sub(r"[^A-Za-z0-9_-]+", "-", payload.titulo.strip()).strip("-").lower() or "psi"
+    filename = f"psi-{slug}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

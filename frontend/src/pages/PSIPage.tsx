@@ -1,14 +1,15 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, BarChart3, CheckCircle2, ChevronDown, Filter, History, Package,
-  PackageX, RefreshCw, Search, Settings2, Tag, Trash2, TrendingUp, X,
+  AlertTriangle, BarChart3, CheckCircle2, ChevronDown, FileDown, Filter, History,
+  Link2, Package, PackageX, RefreshCw, Search, Settings2, Tag, Trash2, TrendingUp, X,
 } from 'lucide-react';
 import {
-  can, createPSIAdjustment, fetchPSIOptions, fetchPSIReport, revertPSIAdjustment,
+  can, createPSIAdjustment, createPSIAlias, exportPSIPdf, fetchPSIOptions, fetchPSIReport,
+  revertPSIAdjustment, searchPSIProducts,
 } from '../api/client';
 import type {
-  PSIAdjustmentInfo, PSICondicionFilter, PSIMode, PSIOptionsResponse,
-  PSIReportResponse, PSIReportRow, PSITarget,
+  PSIAdjustmentInfo, PSICondicionFilter, PSIMode, PSINoCatalogadoRow, PSIOptionsResponse,
+  PSIProductSearchRow, PSIReportResponse, PSIReportRow, PSITarget,
 } from '../types';
 
 const inputClass =
@@ -162,6 +163,10 @@ export function PSIPage() {
   const [adjustRow, setAdjustRow] = useState<PSIReportRow | null>(null);
   // Drawer de historial
   const [historialRow, setHistorialRow] = useState<PSIReportRow | null>(null);
+  // Modal de asociar producto al catálogo (no-catalogados)
+  const [aliasRow, setAliasRow] = useState<PSINoCatalogadoRow | null>(null);
+  // Modal de exportar PDF
+  const [exportOpen, setExportOpen] = useState(false);
 
   const canExport = can('psi.export');
   const canAdjust = can('psi.adjust');
@@ -300,6 +305,15 @@ export function PSIPage() {
               <Settings2 size={14} /> {mode === 'advanced' ? 'Ajustes avanzados: ON' : 'Ajustes avanzados'}
             </button>
           )}
+          {canExport && report && (report.items.length > 0) && (
+            <button
+              type="button"
+              onClick={() => setExportOpen(true)}
+              className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-500/20"
+            >
+              <FileDown size={14} /> Exportar PDF
+            </button>
+          )}
           {report?.data_freshness?.gfk_files_used?.length ? (
             <span className="ml-auto text-xs text-slate-500">
               GFK consultados: <b className="text-slate-300">{report.data_freshness.gfk_files_used.map((f) => `#${f.correlativo}`).join(', ')}</b>
@@ -405,8 +419,9 @@ export function PSIPage() {
             <ChevronDown size={20} className={`text-amber-300 transition-transform ${showNoCatalogados ? 'rotate-180' : ''}`} />
           </button>
           <p className="mt-1 text-sm text-amber-200/80">
-            SKUs que aparecen en el libro mensual pero no están en el catálogo de productos. Sus ventas no se cuentan en el reporte.
-            Creá el producto en <code className="rounded bg-slate-800 px-1 text-amber-200">/admin/product-catalog</code> con el SKU correspondiente.
+            SKUs que aparecen en el GFK pero no matchean ningún producto del catálogo (ni por descripción ni por SKU).
+            Para incluir sus ventas en el reporte, podés <b>asociarlos manualmente</b> a un producto del catálogo.
+            La asociación se persiste y se aplica automáticamente las próximas veces.
           </p>
           {showNoCatalogados && (
             <div className="mt-4 overflow-x-auto">
@@ -417,6 +432,7 @@ export function PSIPage() {
                     <th className="px-3 py-2">Descripción</th>
                     <th className="px-3 py-2 text-right">Cantidad</th>
                     <th className="px-3 py-2">Sucursales</th>
+                    {canAdjust && <th className="px-3 py-2 text-center">Acción</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -426,6 +442,16 @@ export function PSIPage() {
                       <td className="px-3 py-2 max-w-md truncate" title={nc.descripcion_raw}>{nc.descripcion_raw}</td>
                       <td className="px-3 py-2 text-right font-bold">{nc.cantidad_total}</td>
                       <td className="px-3 py-2 text-xs text-amber-200/70">{nc.sucursales.join(', ')}</td>
+                      {canAdjust && (
+                        <td className="px-3 py-2 text-center">
+                          <button
+                            onClick={() => setAliasRow(nc)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs font-bold text-amber-200 hover:bg-amber-500/20"
+                          >
+                            <Link2 size={12} /> Asociar
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -477,6 +503,26 @@ export function PSIPage() {
           row={historialRow}
           onClose={() => setHistorialRow(null)}
           onReverted={() => { setHistorialRow(null); load(true); }}
+        />
+      )}
+
+      {/* Modal de asociar producto al catálogo (no-catalogados) */}
+      {aliasRow && (
+        <AliasModal
+          row={aliasRow}
+          onClose={() => setAliasRow(null)}
+          onSuccess={() => { setAliasRow(null); load(true); }}
+        />
+      )}
+
+      {/* Modal de exportar PDF */}
+      {exportOpen && report && (
+        <ExportPdfModal
+          filters={{
+            marcas, tipos, condicion,
+            periodo_inicio: periodoInicio, periodo_fin: periodoFin, mode,
+          }}
+          onClose={() => setExportOpen(false)}
         />
       )}
     </div>
@@ -858,6 +904,267 @@ function HistorialDrawer({ row, onClose, onReverted }: { row: PSIReportRow; onCl
               </div>
             );
           })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Modal: Asociar producto del catálogo a un SKU no catalogado
+// ──────────────────────────────────────────────────────────────────────────
+
+function AliasModal({
+  row, onClose, onSuccess,
+}: {
+  row: PSINoCatalogadoRow;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [query, setQuery] = useState<string>(row.descripcion_raw);
+  const [results, setResults] = useState<PSIProductSearchRow[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [selected, setSelected] = useState<PSIProductSearchRow | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  // Search con debounce simple
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) { setResults([]); return; }
+    const handle = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const r = await searchPSIProducts(trimmed, 20);
+        setResults(r);
+      } catch {
+        setResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [query]);
+
+  async function handleSave() {
+    if (!selected) return;
+    setSaving(true); setError('');
+    try {
+      await createPSIAlias({
+        product_id: selected.id,
+        alias_sku: row.sku_raw || undefined,
+        alias_desc: row.descripcion_raw || undefined,
+      });
+      onSuccess();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo guardar el alias.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-2xl rounded-3xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-black text-white">Asociar a producto del catálogo</h2>
+            <p className="mt-1 text-sm text-slate-400">
+              El SKU/descripción del GFK no matchea ningún producto. Asocialo manualmente —
+              quedará guardado para próximas consultas.
+            </p>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"><X size={18} /></button>
+        </div>
+
+        {/* Origen */}
+        <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-100/90">
+          <div className="text-xs text-amber-200/70 uppercase tracking-wide font-bold">Origen del GFK</div>
+          <div className="mt-1"><b className="font-mono text-amber-200">{row.sku_raw}</b></div>
+          <div className="text-xs">{row.descripcion_raw}</div>
+          <div className="mt-1 text-[11px] text-amber-200/70">{row.cantidad_total} unidades en {row.sucursales.join(', ')}</div>
+        </div>
+
+        {/* Búsqueda */}
+        <div className="mt-4">
+          <label className={labelClass}>Buscar producto del catálogo</label>
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Descripción, SKU o marca (mínimo 2 caracteres)"
+            className={inputClass}
+            autoFocus
+          />
+        </div>
+
+        {/* Resultados */}
+        <div className="mt-3 max-h-72 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/60">
+          {searching && (
+            <div className="p-4 text-center text-sm text-slate-500">Buscando...</div>
+          )}
+          {!searching && query.trim().length >= 2 && results.length === 0 && (
+            <div className="p-4 text-center text-sm text-slate-500">Sin resultados.</div>
+          )}
+          {!searching && results.length > 0 && (
+            <ul className="divide-y divide-slate-800">
+              {results.map((p) => (
+                <li
+                  key={p.id}
+                  onClick={() => setSelected(p)}
+                  className={`cursor-pointer p-3 text-sm hover:bg-slate-800/60 ${selected?.id === p.id ? 'bg-blue-500/15' : ''}`}
+                >
+                  <div className="flex items-baseline gap-2">
+                    <span className={`font-mono text-xs ${selected?.id === p.id ? 'text-blue-200' : 'text-slate-400'}`}>{p.sku}</span>
+                    <span className={`text-[10px] font-bold uppercase tracking-wide ${p.condicion === 'OUTLET' ? 'text-amber-300' : 'text-emerald-400'}`}>
+                      {p.condicion}
+                    </span>
+                    <span className="ml-auto text-xs text-slate-500">{p.marca} · {p.tipo}</span>
+                  </div>
+                  <div className={`mt-0.5 text-sm ${selected?.id === p.id ? 'text-white' : 'text-slate-300'}`}>{p.descripcion}</div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {selected && (
+          <div className="mt-3 rounded-xl border border-blue-500/40 bg-blue-500/10 p-3 text-sm text-blue-100">
+            <b>Se asociará con:</b> <span className="font-mono">{selected.sku}</span> — {selected.descripcion}
+          </div>
+        )}
+
+        {error && (
+          <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">{error}</div>
+        )}
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-bold text-slate-200 hover:bg-slate-900">Cancelar</button>
+          <button
+            onClick={handleSave}
+            disabled={saving || !selected}
+            className="inline-flex items-center gap-2 rounded-xl bg-blue-500 px-4 py-2 text-sm font-black text-white hover:bg-blue-400 disabled:opacity-60"
+          >
+            <Link2 size={14} /> {saving ? 'Asociando...' : 'Asociar al catálogo'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Modal: Exportar PDF
+// ──────────────────────────────────────────────────────────────────────────
+
+function ExportPdfModal({
+  filters, onClose,
+}: {
+  filters: {
+    marcas: string[]; tipos: string[]; condicion: PSICondicionFilter;
+    periodo_inicio: string; periodo_fin: string; mode: PSIMode;
+  };
+  onClose: () => void;
+}) {
+  // Título default sugerido
+  const defaultTitle = useMemo(() => {
+    const marca = filters.marcas[0] ? filters.marcas[0].toUpperCase() : 'GENERAL';
+    const pi = filters.periodo_inicio.split('-').slice(1).reverse().join('/');
+    const pf = filters.periodo_fin.split('-').slice(1).reverse().join('/');
+    return `PSI ${marca} ${pi} al ${pf}`;
+  }, [filters]);
+
+  const [titulo, setTitulo] = useState(defaultTitle);
+  const [logo, setLogo] = useState<'GV' | 'ABC' | 'NONE'>('GV');
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleGenerate() {
+    setGenerating(true); setError('');
+    try {
+      const blob = await exportPSIPdf({
+        titulo: titulo.trim() || 'PSI',
+        logo,
+        marcas: filters.marcas,
+        tipos: filters.tipos,
+        condicion: filters.condicion,
+        periodo_inicio: filters.periodo_inicio,
+        periodo_fin: filters.periodo_fin,
+        mode: filters.mode,
+      });
+      // Descargar
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const slug = (titulo.trim() || 'psi').replace(/[^A-Za-z0-9_-]+/g, '-').toLowerCase();
+      a.download = `psi-${slug}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo generar el PDF.');
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-md rounded-3xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <h2 className="text-lg font-black text-white">Exportar PSI a PDF</h2>
+          <button onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"><X size={18} /></button>
+        </div>
+
+        <div className="mt-4 grid gap-3">
+          <div>
+            <label className={labelClass}>Título</label>
+            <input
+              value={titulo}
+              onChange={(e) => setTitulo(e.target.value)}
+              className={inputClass}
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <label className={labelClass}>Logo</label>
+            <div className="grid grid-cols-3 gap-2">
+              {(['GV', 'ABC', 'NONE'] as const).map((opt) => (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => setLogo(opt)}
+                  className={`rounded-xl border px-3 py-2 text-sm font-bold ${
+                    logo === opt
+                      ? 'border-blue-400 bg-blue-500/15 text-blue-100'
+                      : 'border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800'
+                  }`}
+                >
+                  {opt === 'NONE' ? 'Sin logo' : opt}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {error && (
+          <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">{error}</div>
+        )}
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-bold text-slate-200 hover:bg-slate-900">Cancelar</button>
+          <button
+            onClick={handleGenerate}
+            disabled={generating || !titulo.trim()}
+            className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-black text-white hover:bg-emerald-400 disabled:opacity-60"
+          >
+            <FileDown size={14} /> {generating ? 'Generando...' : 'Generar y descargar'}
+          </button>
         </div>
       </div>
     </div>

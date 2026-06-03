@@ -1953,6 +1953,15 @@ export interface PSIAdjustResponse {
   message:                  string;
 }
 
+export interface PSIProductSearchRow {
+  id:          number;
+  sku:         string;
+  marca:       string;
+  tipo:        string;
+  descripcion: string;
+  condicion:   string;
+}
+
 export interface PSIRevertResponse {
   id:      number;
   status:  string;
