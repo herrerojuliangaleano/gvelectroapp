@@ -19,8 +19,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, distinct, func, select
 
 from ...auth import require_permission
+from ...commercial.gfk_reader import (
+    get_most_recent_gfk_for_range, load_gfk_sales_for_range,
+)
 from ...commercial.stock_reader import load_stock_map
-from ...commercial.ventas_reader import load_ventas
 from ...db import db_session
 from ...models.products import Product
 from ...models.sales_psi import SalesPsiAdjustment
@@ -58,10 +60,14 @@ class PSIReportRow(BaseModel):
     marca:                    str
     tipo:                     str
     condicion:                str
-    stock:                    int
-    sell_out:                 int
-    sell_out_base:            int
-    ajuste_delta:             int
+    # Stock
+    stock:                    int   # stock efectivo = base + ajustes de stock
+    stock_base:               int   # lo que dice la hoja Stock
+    stock_adjustment_delta:   int   # sum de ajustes target IN (stock, both)
+    # Sell out
+    sell_out:                 int   # GFK + ajustes pendientes
+    sell_out_base:            int   # lo que dice el GFK (sin ajustes)
+    ajuste_delta:             int   # sum de ajustes target IN (sell_out, both) PENDING
     has_pending_adjustment:   bool
     historial_ajustes:        list[PSIAdjustmentInfo]
 
@@ -90,10 +96,20 @@ class PSIReportFiltersApplied(BaseModel):
     mode:           str
 
 
+class PSIGFKFileInfo(BaseModel):
+    file_id:       str
+    file_name:     str
+    correlativo:   int
+    fecha_inicio:  str
+    fecha_fin:     str
+
+
 class PSIReportFreshness(BaseModel):
     stock_fetched_at:  Optional[str] = None
     ventas_fetched_at: Optional[str] = None
     months_used:       list[str] = []
+    gfk_files_used:    list[PSIGFKFileInfo] = []
+    no_gfk_available:  bool = False
 
 
 class PSIReportResponse(BaseModel):
@@ -230,26 +246,41 @@ def psi_report(
         stock_map = load_stock_map(force_refresh=force_refresh)
         stock_fetched_at = datetime.utcnow().isoformat() + "Z"
 
-        # 4. Ventas (lectura con cache)
-        ventas = load_ventas(pi, pf, force_refresh=force_refresh)
-        ventas_agg: dict[str, int] = ventas["ventas_agg"]
-        by_sku_meta: dict[str, dict[str, Any]] = ventas["by_sku_meta"]
-        months_used: list[tuple[int, int]] = ventas["months_used"]
+        # 4. Ventas (desde GFK output, no del libro mensual)
+        gfk_data = load_gfk_sales_for_range(pi, pf, force_refresh=force_refresh)
+        ventas_agg: dict[str, int] = gfk_data["agg_by_sku"]
+        by_sku_meta: dict[str, dict[str, Any]] = gfk_data["by_sku_meta"]
+        gfk_files_used: list[dict[str, Any]] = gfk_data["files_used"]
+        no_gfk_available: bool = gfk_data["no_gfk_available"]
         ventas_fetched_at = datetime.utcnow().isoformat() + "Z"
 
-        # 5. Ajustes pendientes (los applied ya están en ventas)
-        pending_rows: list[SalesPsiAdjustment] = session.scalars(
+        # 5. Ajustes del rango — separados por target
+        # Los applied_to_sheet de target=sell_out ya están reflejados en el GFK,
+        # así que solo sumamos los 'pending' para sell_out. Para stock, sumamos
+        # tanto pending como applied_to_sheet porque NUNCA se escriben al sheet
+        # (viven solo en Postgres).
+        all_in_range: list[SalesPsiAdjustment] = session.scalars(
             select(SalesPsiAdjustment).where(
                 and_(
-                    SalesPsiAdjustment.status == "pending",
                     SalesPsiAdjustment.periodo_semana >= pi,
                     SalesPsiAdjustment.periodo_semana <= pf,
+                    SalesPsiAdjustment.status.in_(["pending", "applied_to_sheet"]),
                 )
             )
         ).all()
         pending_by_product: dict[int, list[SalesPsiAdjustment]] = {}
-        for adj in pending_rows:
-            pending_by_product.setdefault(int(adj.product_id), []).append(adj)
+        stock_delta_by_product: dict[int, int] = {}
+        for adj in all_in_range:
+            pid = int(adj.product_id)
+            # sell_out: solo los pending de target sell_out/both
+            if adj.status == "pending" and adj.target in ("sell_out", "both"):
+                pending_by_product.setdefault(pid, []).append(adj)
+            # stock: pending+applied de target stock/both. Si target='both',
+            # el stock se decrementa por la venta (delta sell_out negativo en stock).
+            if adj.target == "stock":
+                stock_delta_by_product[pid] = stock_delta_by_product.get(pid, 0) + int(adj.cantidad_delta)
+            elif adj.target == "both":
+                stock_delta_by_product[pid] = stock_delta_by_product.get(pid, 0) - int(adj.cantidad_delta)
 
         # 6. Historial completo (todos los status) — para badges/drawer
         historial_rows: list[SalesPsiAdjustment] = session.scalars(
@@ -271,36 +302,42 @@ def psi_report(
     ajustes_count = 0
     for p in catalogo:
         sku_norm = str(p.sku_normalized or "")
-        stock_actual = int(stock_map.get(sku_norm, 0))
+        pid = int(p.id)
+        # Stock: efectivo = sheet + delta de ajustes stock/both
+        stock_base = int(stock_map.get(sku_norm, 0))
+        stock_delta = int(stock_delta_by_product.get(pid, 0))
+        stock_efectivo = stock_base + stock_delta
+        # Sell out: GFK + ajustes pending sell_out/both
         sell_out_base = int(ventas_agg.get(sku_norm, 0))
-        pending_for_p = pending_by_product.get(int(p.id), [])
+        pending_for_p = pending_by_product.get(pid, [])
         ajuste_delta = sum(int(a.cantidad_delta) for a in pending_for_p)
         sell_out_final = sell_out_base + ajuste_delta
 
         # Regla de inclusión (default): stock>0 OR sell_out>0 OR ajuste
         if mode == "default":
-            if stock_actual <= 0 and sell_out_final <= 0 and ajuste_delta == 0:
+            if stock_efectivo <= 0 and sell_out_final <= 0 and ajuste_delta == 0 and stock_delta == 0:
                 continue
-        # mode == 'advanced' incluye todos los productos del filtro
 
-        historial_p = [_adjustment_to_info(a) for a in historial_by_product.get(int(p.id), [])]
+        historial_p = [_adjustment_to_info(a) for a in historial_by_product.get(pid, [])]
         rows.append(PSIReportRow(
-            product_id=int(p.id),
+            product_id=pid,
             sku=str(p.sku or ""),
             descripcion=str(p.descripcion or ""),
             marca=str(p.marca or ""),
             tipo=str(p.tipo or ""),
             condicion=str(p.condicion_producto or ""),
-            stock=stock_actual,
+            stock=stock_efectivo,
+            stock_base=stock_base,
+            stock_adjustment_delta=stock_delta,
             sell_out=sell_out_final,
             sell_out_base=sell_out_base,
             ajuste_delta=ajuste_delta,
-            has_pending_adjustment=ajuste_delta != 0,
+            has_pending_adjustment=(ajuste_delta != 0) or (stock_delta != 0),
             historial_ajustes=historial_p,
         ))
-        total_stock += stock_actual
+        total_stock += stock_efectivo
         total_sell_out += sell_out_final
-        if ajuste_delta != 0:
+        if ajuste_delta != 0 or stock_delta != 0:
             ajustes_count += 1
 
     # 8. SKUs en ventas que no están en catálogo
@@ -351,7 +388,9 @@ def psi_report(
         data_freshness=PSIReportFreshness(
             stock_fetched_at=stock_fetched_at,
             ventas_fetched_at=ventas_fetched_at,
-            months_used=[f"{y:04d}-{m:02d}" for (y, m) in months_used],
+            months_used=[],  # ya no aplica: ahora leemos de GFKs específicos
+            gfk_files_used=[PSIGFKFileInfo(**f) for f in gfk_files_used],
+            no_gfk_available=no_gfk_available,
         ),
     )
 
@@ -369,6 +408,7 @@ class PSIAdjustPayload(BaseModel):
     fecha_mode:     Literal["manual", "random"] = "random"
     fecha_manual:   Optional[str] = None
     reason:         str = ""
+    target:         Literal["sell_out", "stock", "both"] = "sell_out"
 
 
 class PSIAdjustResponse(BaseModel):
@@ -410,10 +450,18 @@ def psi_adjust(
     payload: PSIAdjustPayload,
     user: Annotated[Any, Depends(require_permission("psi.adjust"))],
 ):
-    """Crea un ajuste manual y lo escribe al libro mensual en una sola op."""
+    """Crea un ajuste manual y lo aplica.
+
+    Comportamiento según target:
+      - sell_out / both: escribe una fila al GFK más reciente del rango.
+      - stock         : solo persiste en Postgres (no toca Sheets).
+
+    En 'both' el sell_out se escribe al GFK; el stock se descuenta lógicamente
+    al mostrar el reporte (stock_efectivo = base - delta).
+    """
     from ...models.products import Product
     from ...commercial import cache_invalidate
-    from ...commercial.adjustments_writer import write_adjustment_to_monthly_book
+    from ...commercial.adjustments_writer import write_adjustment_to_gfk
 
     if payload.cantidad_delta == 0:
         raise HTTPException(400, "cantidad_delta no puede ser 0")
@@ -462,35 +510,54 @@ def psi_adjust(
             reason=str(payload.reason or "").strip(),
             fecha_mode=payload.fecha_mode,
             status="pending",
+            target=payload.target,
             created_by_user_id=actor_id,
         )
         session.add(adj)
         session.flush()
         adjustment_id = int(adj.id)
 
-        try:
-            book_id, sheet_range = write_adjustment_to_monthly_book(
-                adjustment_id=adjustment_id,
-                inserted_date=inserted,
-                sucursal=payload.sucursal,
-                descripcion=adj.descripcion_snapshot,
-                sku=adj.sku_snapshot,
-                cantidad_delta=adj.cantidad_delta,
-                valor_estimado=adj.valor_estimado,
-            )
-        except HTTPException:
-            adj.status = "failed"
-            session.commit()
-            raise
+        # Si el target involucra sell_out → escribir al GFK.
+        # Si es solo stock → no se escribe a ningún Sheet, queda solo en Postgres.
+        wrote_to_gfk = payload.target in ("sell_out", "both")
+        book_id: str | None = None
+        sheet_range: str | None = None
+        if wrote_to_gfk:
+            try:
+                book_id, sheet_range = write_adjustment_to_gfk(
+                    adjustment_id=adjustment_id,
+                    inserted_date=inserted,
+                    sucursal=payload.sucursal,
+                    descripcion=adj.descripcion_snapshot,
+                    marca=adj.marca_snapshot,
+                    sku=adj.sku_snapshot,
+                    cantidad_delta=adj.cantidad_delta,
+                    valor_estimado=adj.valor_estimado,
+                    periodo_inicio=pi,
+                    periodo_fin=pf,
+                )
+            except HTTPException:
+                adj.status = "failed"
+                session.commit()
+                raise
+            adj.applied_to_book = book_id
+            adj.applied_to_sheet_range = sheet_range
 
         adj.status = "applied_to_sheet"
         adj.applied_at = datetime.utcnow()
-        adj.applied_to_book = book_id
-        adj.applied_to_sheet_range = sheet_range
         adj.applied_by_user_id = actor_id
         session.commit()
 
-        cache_invalidate(f"ventas:{inserted.year}:{inserted.month:02d}")
+        # Invalidar caches relevantes
+        if wrote_to_gfk and book_id:
+            cache_invalidate(f"gfk:{book_id}")
+
+        if wrote_to_gfk:
+            msg = f"Ajuste aplicado al GFK ({sheet_range})"
+            if payload.target == "both":
+                msg += " · stock descontado lógicamente"
+        else:
+            msg = "Ajuste de stock registrado (solo Postgres, no se escribe al Sheet)"
 
         return PSIAdjustResponse(
             id=adjustment_id,
@@ -500,7 +567,7 @@ def psi_adjust(
             cantidad_delta=adj.cantidad_delta,
             applied_to_book=book_id,
             applied_to_sheet_range=sheet_range,
-            message=f"Ajuste aplicado al libro mensual ({sheet_range})",
+            message=msg,
         )
 
 
@@ -519,9 +586,9 @@ def psi_adjust_revert(
     adjustment_id: int,
     user: Annotated[Any, Depends(require_permission("psi.adjust"))],
 ):
-    """Borra la fila del ajuste del libro mensual y marca el ajuste como reverted."""
+    """Revierte un ajuste: si tenía fila en el GFK, la borra; marca reverted."""
     from ...commercial import cache_invalidate
-    from ...commercial.adjustments_writer import revert_adjustment_in_monthly_book
+    from ...commercial.adjustments_writer import revert_adjustment_in_gfk
 
     with db_session() as session:
         adj = session.get(SalesPsiAdjustment, adjustment_id)
@@ -529,34 +596,38 @@ def psi_adjust_revert(
             raise HTTPException(404, "Ajuste no encontrado")
         if adj.status == "reverted":
             return PSIRevertResponse(id=adjustment_id, status="reverted", message="Ya estaba revertido")
-        if adj.status != "applied_to_sheet" or not adj.applied_to_book:
+        if adj.status != "applied_to_sheet":
             raise HTTPException(
                 400,
                 f"Solo se pueden revertir ajustes en estado 'applied_to_sheet'. Status actual: {adj.status}",
             )
 
         actor_id = _resolve_user_id(session, user)
-        found = revert_adjustment_in_monthly_book(
-            adjustment_id=adjustment_id,
-            book_id=adj.applied_to_book,
-            sucursal=adj.sucursal,
-        )
+
+        # Solo intentar borrar del GFK si el ajuste se había escrito ahí
+        # (target = sell_out o both). Ajustes de stock puro no tocan el sheet.
+        sheet_message = "Ajuste revertido."
+        if adj.target in ("sell_out", "both") and adj.applied_to_book:
+            found = revert_adjustment_in_gfk(
+                adjustment_id=adjustment_id,
+                book_id=adj.applied_to_book,
+            )
+            if found:
+                sheet_message = "Fila eliminada del GFK. Ajuste revertido."
+                cache_invalidate(f"gfk:{adj.applied_to_book}")
+            else:
+                sheet_message = (
+                    "No encontré la fila en el GFK (puede haberse regenerado o "
+                    "borrado). Marcado como reverted igual."
+                )
 
         adj.status = "reverted"
         adj.reverted_at = datetime.utcnow()
         adj.reverted_by_user_id = actor_id
         session.commit()
 
-        cache_invalidate(f"ventas:{adj.inserted_date.year}:{adj.inserted_date.month:02d}")
-
-        if not found:
-            return PSIRevertResponse(
-                id=adjustment_id,
-                status="reverted",
-                message="No encontré la fila en el sheet (puede haberse borrado a mano). Marcado como reverted igual.",
-            )
         return PSIRevertResponse(
             id=adjustment_id,
             status="reverted",
-            message="Fila eliminada del libro mensual. Ajuste revertido.",
+            message=sheet_message,
         )

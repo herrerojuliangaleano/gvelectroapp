@@ -8,7 +8,7 @@ import {
 } from '../api/client';
 import type {
   PSIAdjustmentInfo, PSICondicionFilter, PSIMode, PSIOptionsResponse,
-  PSIReportResponse, PSIReportRow,
+  PSIReportResponse, PSIReportRow, PSITarget,
 } from '../types';
 
 const inputClass =
@@ -300,9 +300,9 @@ export function PSIPage() {
               <Settings2 size={14} /> {mode === 'advanced' ? 'Ajustes avanzados: ON' : 'Ajustes avanzados'}
             </button>
           )}
-          {report?.data_freshness?.months_used?.length ? (
+          {report?.data_freshness?.gfk_files_used?.length ? (
             <span className="ml-auto text-xs text-slate-500">
-              Meses leídos: <b className="text-slate-300">{report.data_freshness.months_used.join(', ')}</b>
+              GFK consultados: <b className="text-slate-300">{report.data_freshness.gfk_files_used.map((f) => `#${f.correlativo}`).join(', ')}</b>
             </span>
           ) : null}
         </div>
@@ -435,15 +435,28 @@ export function PSIPage() {
         </section>
       )}
 
+      {/* Aviso si no hay GFK para el rango */}
+      {report?.data_freshness?.no_gfk_available && (
+        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+          <AlertTriangle size={14} className="mr-2 inline text-amber-300" />
+          <b>No hay archivo GFK que cubra este rango.</b> Generá el GFK con la herramienta{' '}
+          <a href="/herramientas" className="underline">Herramientas → Generar GFK</a> con un rango que incluya este período y volvé a aplicar los filtros.
+          Sin GFK, el sell out aparece en cero (pero el stock se sigue mostrando).
+        </div>
+      )}
+
       {/* Footer informativo */}
       {report && (
         <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-3 text-xs text-slate-500">
           <BarChart3 size={12} className="mr-2 inline" />
           Cache stock: {report.data_freshness.stock_fetched_at?.slice(11, 19) || '—'} ·
-          Cache ventas: {report.data_freshness.ventas_fetched_at?.slice(11, 19) || '—'} ·
+          Cache GFK: {report.data_freshness.ventas_fetched_at?.slice(11, 19) || '—'}
+          {report.data_freshness.gfk_files_used.length > 0 && (
+            <> · <span className="text-slate-400">{report.data_freshness.gfk_files_used.length} GFK consultados</span></>
+          )}
           <Tag size={12} className="mx-2 inline" />
           Filtros activos: {report.filters_applied.marcas.length} marcas · {report.filters_applied.tipos.length} tipos · {report.filters_applied.condicion}
-          {!canExport && <span className="ml-3 text-slate-600">· Export PDF no disponible (Fase 1 — Sprint 4)</span>}
+          {!canExport && <span className="ml-3 text-slate-600">· Export PDF no disponible (Sprint 5)</span>}
         </div>
       )}
 
@@ -486,6 +499,7 @@ function AdjustModal({
   onClose: () => void;
   onSuccess: () => void;
 }) {
+  const [target, setTarget] = useState<PSITarget>('sell_out');
   const [sucursal, setSucursal] = useState<string>('CASEROS');
   const [delta, setDelta] = useState<number>(1);
   const [fechaMode, setFechaMode] = useState<'manual' | 'random'>('random');
@@ -494,7 +508,12 @@ function AdjustModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const sellOutNew = row.sell_out + delta;
+  // Previews
+  const sellOutNew = target === 'stock' ? row.sell_out : row.sell_out + delta;
+  const stockNew = target === 'sell_out' ? row.stock
+    : target === 'stock' ? row.stock + delta
+    : row.stock - delta;  // both: vendi 1 más → -1 stock
+
   const valid = delta !== 0 && (fechaMode === 'random' || (!!fechaManual && fechaManual >= periodoInicio && fechaManual <= periodoFin));
 
   async function handleSave() {
@@ -509,6 +528,7 @@ function AdjustModal({
         fecha_mode: fechaMode,
         fecha_manual: fechaMode === 'manual' ? fechaManual : null,
         reason: reason.trim(),
+        target,
       });
       onSuccess();
     } catch (err) {
@@ -531,16 +551,53 @@ function AdjustModal({
           <button onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"><X size={18} /></button>
         </div>
 
-        <div className="mt-4 rounded-xl bg-slate-950/60 p-3 text-sm">
-          <div className="flex items-baseline justify-between">
-            <span className="text-slate-400">Sell out actual</span>
-            <span className="text-2xl font-black text-slate-200">{row.sell_out}</span>
+        {/* Selector de target */}
+        <div className="mt-4">
+          <label className={labelClass}>Tipo de ajuste</label>
+          <div className="grid grid-cols-3 gap-2">
+            {([
+              { value: 'sell_out', label: 'Venta', desc: 'Solo sell out (al GFK)' },
+              { value: 'stock',    label: 'Stock', desc: 'Solo stock (Postgres)' },
+              { value: 'both',     label: 'Ambos', desc: 'Venta +Δ y stock −Δ' },
+            ] as { value: PSITarget; label: string; desc: string }[]).map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setTarget(opt.value)}
+                className={`rounded-xl border px-3 py-2 text-left text-xs ${
+                  target === opt.value
+                    ? 'border-blue-400 bg-blue-500/15 text-blue-100'
+                    : 'border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                <div className="font-black">{opt.label}</div>
+                <div className="mt-0.5 opacity-70">{opt.desc}</div>
+              </button>
+            ))}
           </div>
-          <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-slate-400">Nuevo</span>
-            <span className={`text-2xl font-black ${delta > 0 ? 'text-emerald-300' : delta < 0 ? 'text-red-300' : 'text-slate-500'}`}>
-              {sellOutNew}
-            </span>
+        </div>
+
+        {/* Preview de valores */}
+        <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl bg-slate-950/60 p-3 text-sm">
+          <div>
+            <div className="text-xs text-slate-500">Sell out</div>
+            <div className="mt-1 flex items-baseline gap-2">
+              <span className="text-lg text-slate-400">{row.sell_out}</span>
+              <span className="text-slate-600">→</span>
+              <span className={`text-2xl font-black ${target === 'stock' ? 'text-slate-500' : sellOutNew > row.sell_out ? 'text-emerald-300' : sellOutNew < row.sell_out ? 'text-red-300' : 'text-slate-500'}`}>
+                {sellOutNew}
+              </span>
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-slate-500">Stock</div>
+            <div className="mt-1 flex items-baseline gap-2">
+              <span className="text-lg text-slate-400">{row.stock}</span>
+              <span className="text-slate-600">→</span>
+              <span className={`text-2xl font-black ${target === 'sell_out' ? 'text-slate-500' : stockNew > row.stock ? 'text-emerald-300' : stockNew < row.stock ? 'text-red-300' : 'text-slate-500'}`}>
+                {stockNew}
+              </span>
+            </div>
           </div>
         </div>
 
@@ -602,7 +659,9 @@ function AdjustModal({
 
         <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-100/90">
           <AlertTriangle size={12} className="mr-1 inline" />
-          Esta acción escribe una fila al libro mensual del rango (TipoVenta=AJUSTE, Remito=PSI-id). Es reversible.
+          {target === 'stock'
+            ? 'Solo se registra en la base. El stock efectivo del PSI se ajusta; el sheet de Stock no se toca. Es reversible.'
+            : 'Escribe una fila al GFK que cubre la fecha del ajuste (TipoVendedor=AJUSTE, Nombre=PSI-id). Es reversible.'}
         </div>
 
         {error && (

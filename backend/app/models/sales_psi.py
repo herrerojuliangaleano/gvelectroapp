@@ -56,6 +56,13 @@ class SalesPsiAdjustment(Base):
     # Opcional: PVP * cantidad_delta para la columna Valor del sheet.
     reason: Mapped[str] = mapped_column(Text, default="", nullable=False)
 
+    # ── Target ─────────────────────────────────────────────────────────
+    # Qué dimensión ajusta este registro:
+    #  'sell_out': solo ventas (escribe al GFK con +delta).
+    #  'stock':    solo stock (solo Postgres; PSI muestra stock efectivo).
+    #  'both':     ambos (escribe al GFK +delta, y descuenta del stock efectivo).
+    target: Mapped[str] = mapped_column(Text, default="sell_out", nullable=False)
+
     # ── Modo de fecha (auditoría) ──────────────────────────────────────
     fecha_mode: Mapped[str] = mapped_column(Text, nullable=False)
     # 'manual' | 'random'

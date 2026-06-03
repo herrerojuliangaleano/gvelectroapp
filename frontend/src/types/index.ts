@@ -1851,6 +1851,8 @@ export interface PSIAdjustmentInfo {
   created_at:  string;
 }
 
+export type PSITarget = 'sell_out' | 'stock' | 'both';
+
 export interface PSIReportRow {
   product_id:               number;
   sku:                      string;
@@ -1858,12 +1860,24 @@ export interface PSIReportRow {
   marca:                    string;
   tipo:                     string;
   condicion:                string;  // PRIMERA | OUTLET
-  stock:                    number;
+  // Stock
+  stock:                    number;  // efectivo (base + delta de ajustes)
+  stock_base:               number;
+  stock_adjustment_delta:   number;
+  // Sell out
   sell_out:                 number;
   sell_out_base:            number;
   ajuste_delta:             number;
   has_pending_adjustment:   boolean;
   historial_ajustes:        PSIAdjustmentInfo[];
+}
+
+export interface PSIGFKFileInfo {
+  file_id:       string;
+  file_name:     string;
+  correlativo:   number;
+  fecha_inicio:  string;
+  fecha_fin:     string;
 }
 
 export interface PSINoCatalogadoRow {
@@ -1894,6 +1908,8 @@ export interface PSIReportFreshness {
   stock_fetched_at:  string | null;
   ventas_fetched_at: string | null;
   months_used:       string[];
+  gfk_files_used:    PSIGFKFileInfo[];
+  no_gfk_available:  boolean;
 }
 
 export interface PSIReportResponse {
@@ -1923,6 +1939,7 @@ export interface PSIAdjustPayload {
   fecha_mode:     'manual' | 'random';
   fecha_manual?:  string | null;
   reason?:        string;
+  target?:        PSITarget;
 }
 
 export interface PSIAdjustResponse {
