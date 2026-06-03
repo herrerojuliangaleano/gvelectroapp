@@ -168,8 +168,8 @@ def _default_config() -> dict[str, Any]:
             "cache_ttl_seconds": 900,
             # Logos para el export PDF. Paths relativos a backend/.
             "logos": {
-                "gv_path": "storage/brand/gv-electro.png",
-                "abc_path": "storage/brand/abc-electro.png",
+                "gv_path": "storage/logos/gv_electro.png",
+                "abc_path": "storage/logos/abc_electro.png",
             },
         },
     }

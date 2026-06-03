@@ -927,3 +927,7 @@ export async function createPSIAlias(payload: { product_id: number; alias_sku?: 
 export async function exportPSIPdf(payload: PSIExportPDFPayload): Promise<Blob> {
   return requestBlob('/api/psi/export-pdf', { method: 'POST', body: JSON.stringify(payload) });
 }
+
+export async function exportPSIXlsx(payload: PSIExportPDFPayload): Promise<Blob> {
+  return requestBlob('/api/psi/export-xlsx', { method: 'POST', body: JSON.stringify(payload) });
+}

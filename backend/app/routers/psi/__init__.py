@@ -5,7 +5,8 @@ Endpoints (Fase 1):
   GET  /api/psi/report     — tabla del PSI con filtros aplicados
   POST /api/psi/adjust     — crear ajuste + escribir al libro mensual (próximo)
   POST /api/psi/adjust/{id}/revert — revertir ajuste                 (próximo)
-  POST /api/psi/export-pdf — generar PDF del reporte                 (próximo)
+  POST /api/psi/export-pdf  — generar PDF del reporte
+  POST /api/psi/export-xlsx — generar Excel del reporte
 
 Spec completa en docs/10-modulo-comercial-fase1.md §10.
 """
@@ -933,5 +934,64 @@ def psi_export_pdf(
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# POST /api/psi/export-xlsx — generar Excel del reporte
+# ──────────────────────────────────────────────────────────────────────────
+
+@router.post("/export-xlsx")
+def psi_export_xlsx(
+    payload: PSIExportPDFPayload,
+    user: Annotated[Any, Depends(require_permission("psi.export"))],
+):
+    """Genera un Excel (.xlsx) del reporte PSI con los filtros aplicados.
+
+    Mismo payload que /export-pdf — reutiliza la generación del /report y
+    serializa a Excel con openpyxl.
+    """
+    from fastapi.responses import Response
+    from ...commercial.pdf_renderer import render_psi_xlsx
+
+    report = psi_report(
+        _user=user,
+        marcas=",".join(payload.marcas),
+        tipos=",".join(payload.tipos),
+        condicion=payload.condicion,
+        periodo_inicio=payload.periodo_inicio,
+        periodo_fin=payload.periodo_fin,
+        mode=payload.mode,
+        force_refresh=False,
+    )
+
+    # Responsable solo si el usuario es GERENTE_COMERCIAL
+    user_roles = set(getattr(user, "roles", []) or [])
+    responsable_name: Optional[str] = None
+    if "GERENTE_COMERCIAL" in user_roles:
+        responsable_name = (
+            getattr(user, "display_name", None)
+            or getattr(user, "username", None)
+            or None
+        )
+
+    xlsx_bytes = render_psi_xlsx(
+        titulo=payload.titulo.strip(),
+        items=[i.model_dump() for i in report.items],
+        totals=report.totals.model_dump(),
+        filters_applied=report.filters_applied.model_dump(),
+        logo=payload.logo,
+        responsable=responsable_name,
+        responsable_area="Comercial",
+    )
+
+    import re as _re
+    slug = _re.sub(r"[^A-Za-z0-9_-]+", "-", payload.titulo.strip()).strip("-").lower() or "psi"
+    filename = f"psi-{slug}.xlsx"
+
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

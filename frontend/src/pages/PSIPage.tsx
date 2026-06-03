@@ -4,7 +4,7 @@ import {
   Link2, Package, PackageX, RefreshCw, Search, Settings2, Tag, Trash2, TrendingUp, X,
 } from 'lucide-react';
 import {
-  can, createPSIAdjustment, createPSIAlias, exportPSIPdf, fetchPSIOptions, fetchPSIReport,
+  can, createPSIAdjustment, createPSIAlias, exportPSIPdf, exportPSIXlsx, fetchPSIOptions, fetchPSIReport,
   revertPSIAdjustment, searchPSIProducts,
 } from '../api/client';
 import {
@@ -175,7 +175,7 @@ export function PSIPage() {
   const [historialRow, setHistorialRow] = useState<PSIReportRow | null>(null);
   // Modal de asociar producto al catálogo (no-catalogados)
   const [aliasRow, setAliasRow] = useState<PSINoCatalogadoRow | null>(null);
-  // Modal de exportar PDF
+  // Modal de exportar reporte
   const [exportOpen, setExportOpen] = useState(false);
 
   const canExport = can('psi.export');
@@ -223,7 +223,7 @@ export function PSIPage() {
             </button>
             {canExport && report && (report.items.length > 0) && (
               <button type="button" onClick={() => setExportOpen(true)} className={erpBtnPrimary}>
-                <FileDown size={14} /> Exportar PDF
+                <FileDown size={14} /> Exportar
               </button>
             )}
           </>
@@ -467,9 +467,9 @@ export function PSIPage() {
         />
       )}
 
-      {/* Modal de exportar PDF */}
+      {/* Modal de exportar reporte */}
       {exportOpen && report && (
-        <ExportPdfModal
+        <ExportReportModal
           filters={{
             marcas, tipos, condicion,
             periodo_inicio: periodoInicio, periodo_fin: periodoFin, mode,
@@ -1008,10 +1008,10 @@ function AliasModal({
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Modal: Exportar PDF
+// Modal: Exportar reporte
 // ──────────────────────────────────────────────────────────────────────────
 
-function ExportPdfModal({
+function ExportReportModal({
   filters, onClose,
 }: {
   filters: {
@@ -1020,7 +1020,6 @@ function ExportPdfModal({
   };
   onClose: () => void;
 }) {
-  // Título default sugerido
   const defaultTitle = useMemo(() => {
     const marca = filters.marcas[0] ? filters.marcas[0].toUpperCase() : 'GENERAL';
     const pi = filters.periodo_inicio.split('-').slice(1).reverse().join('/');
@@ -1030,13 +1029,13 @@ function ExportPdfModal({
 
   const [titulo, setTitulo] = useState(defaultTitle);
   const [logo, setLogo] = useState<'GV' | 'ABC' | 'NONE'>('GV');
-  const [generating, setGenerating] = useState(false);
+  const [generating, setGenerating] = useState<'pdf' | 'xlsx' | null>(null);
   const [error, setError] = useState('');
 
-  async function handleGenerate() {
-    setGenerating(true); setError('');
+  async function handleGenerate(format: 'pdf' | 'xlsx') {
+    setGenerating(format); setError('');
     try {
-      const blob = await exportPSIPdf({
+      const payload = {
         titulo: titulo.trim() || 'PSI',
         logo,
         marcas: filters.marcas,
@@ -1045,22 +1044,22 @@ function ExportPdfModal({
         periodo_inicio: filters.periodo_inicio,
         periodo_fin: filters.periodo_fin,
         mode: filters.mode,
-      });
-      // Descargar
+      };
+      const blob = format === 'pdf' ? await exportPSIPdf(payload) : await exportPSIXlsx(payload);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       const slug = (titulo.trim() || 'psi').replace(/[^A-Za-z0-9_-]+/g, '-').toLowerCase();
-      a.download = `psi-${slug}.pdf`;
+      a.download = `psi-${slug}.${format}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo generar el PDF.');
+      setError(err instanceof Error ? err.message : `No se pudo generar el ${format.toUpperCase()}.`);
     } finally {
-      setGenerating(false);
+      setGenerating(null);
     }
   }
 
@@ -1068,7 +1067,7 @@ function ExportPdfModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-md rounded-3xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
         <div className="flex items-start justify-between gap-4">
-          <h2 className="text-lg font-black text-white">Exportar PSI a PDF</h2>
+          <h2 className="text-lg font-black text-white">Exportar PSI</h2>
           <button onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"><X size={18} /></button>
         </div>
 
@@ -1111,11 +1110,18 @@ function ExportPdfModal({
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-bold text-slate-200 hover:bg-slate-900">Cancelar</button>
           <button
-            onClick={handleGenerate}
-            disabled={generating || !titulo.trim()}
+            onClick={() => handleGenerate('xlsx')}
+            disabled={!!generating || !titulo.trim()}
+            className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm font-black text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60"
+          >
+            <FileDown size={14} /> {generating === 'xlsx' ? 'Generando...' : 'Excel (.xlsx)'}
+          </button>
+          <button
+            onClick={() => handleGenerate('pdf')}
+            disabled={!!generating || !titulo.trim()}
             className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-black text-white hover:bg-emerald-400 disabled:opacity-60"
           >
-            <FileDown size={14} /> {generating ? 'Generando...' : 'Generar y descargar'}
+            <FileDown size={14} /> {generating === 'pdf' ? 'Generando...' : 'PDF'}
           </button>
         </div>
       </div>
