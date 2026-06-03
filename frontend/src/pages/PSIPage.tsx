@@ -490,6 +490,69 @@ export function PSIPage() {
 
 const SUCURSALES = ['CASEROS', 'SUR', 'NORTE', 'CANNING'];
 
+/**
+ * Input numérico con botones + arriba y − abajo. El número en el medio es
+ * editable a mano. Acepta enteros (incluyendo negativos).
+ */
+function DeltaStepper({
+  label, value, onChange, tone = 'blue', hint,
+}: {
+  label: string;
+  value: number;
+  onChange: (n: number) => void;
+  tone?: 'blue' | 'emerald' | 'amber';
+  hint?: string;
+}) {
+  const accent =
+    tone === 'emerald' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/20'
+    : tone === 'amber' ? 'border-amber-500/40 bg-amber-500/10 text-amber-100 hover:bg-amber-500/20'
+    : 'border-blue-500/40 bg-blue-500/10 text-blue-100 hover:bg-blue-500/20';
+  const numColor =
+    value > 0 ? 'text-emerald-300'
+    : value < 0 ? 'text-red-300'
+    : 'text-slate-400';
+
+  function parseValue(text: string): number {
+    if (text === '' || text === '-') return 0;
+    const n = parseInt(text, 10);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  return (
+    <div>
+      <label className={labelClass}>{label}</label>
+      <div className="flex flex-col items-stretch overflow-hidden rounded-xl border border-slate-700 bg-slate-950">
+        <button
+          type="button"
+          onClick={() => onChange(value + 1)}
+          className={`flex items-center justify-center border-b border-slate-800 px-3 py-2 text-xl font-black ${accent}`}
+          aria-label="Aumentar"
+        >
+          +
+        </button>
+        <input
+          type="text"
+          inputMode="numeric"
+          pattern="-?[0-9]*"
+          value={value}
+          onChange={(e) => onChange(parseValue(e.target.value))}
+          className={`bg-transparent px-3 py-3 text-center text-3xl font-black outline-none focus:bg-slate-900 ${numColor}`}
+        />
+        <button
+          type="button"
+          onClick={() => onChange(value - 1)}
+          className={`flex items-center justify-center border-t border-slate-800 px-3 py-2 text-xl font-black ${accent}`}
+          aria-label="Disminuir"
+        >
+          −
+        </button>
+      </div>
+      {hint && <p className="mt-1 text-[11px] text-slate-500">{hint}</p>}
+    </div>
+  );
+}
+
+
 function AdjustModal({
   row, periodoInicio, periodoFin, onClose, onSuccess,
 }: {
@@ -501,7 +564,13 @@ function AdjustModal({
 }) {
   const [target, setTarget] = useState<PSITarget>('sell_out');
   const [sucursal, setSucursal] = useState<string>('CASEROS');
+  // En modo 'sell_out' o 'stock' usamos `delta`. En 'both' se usan independientes:
+  //   ventaDelta → suma a sell_out (y se escribe al GFK)
+  //   stockDelta → suma al stock (negativo descuenta). Default −ventaDelta cuando el
+  //                gerente activa 'Ambos' (caso típico "vendí N más, descontar N").
   const [delta, setDelta] = useState<number>(1);
+  const [ventaDelta, setVentaDelta] = useState<number>(1);
+  const [stockDelta, setStockDelta] = useState<number>(-1);
   const [fechaMode, setFechaMode] = useState<'manual' | 'random'>('random');
   const [fechaManual, setFechaManual] = useState<string>('');
   const [reason, setReason] = useState<string>('');
@@ -509,27 +578,43 @@ function AdjustModal({
   const [error, setError] = useState('');
 
   // Previews
-  const sellOutNew = target === 'stock' ? row.sell_out : row.sell_out + delta;
+  const sellOutNew = target === 'stock' ? row.sell_out
+    : target === 'both' ? row.sell_out + ventaDelta
+    : row.sell_out + delta;
   const stockNew = target === 'sell_out' ? row.stock
     : target === 'stock' ? row.stock + delta
-    : row.stock - delta;  // both: vendi 1 más → -1 stock
+    : row.stock + stockDelta;
 
-  const valid = delta !== 0 && (fechaMode === 'random' || (!!fechaManual && fechaManual >= periodoInicio && fechaManual <= periodoFin));
+  // Validación según target
+  const valid =
+    (fechaMode === 'random' || (!!fechaManual && fechaManual >= periodoInicio && fechaManual <= periodoFin)) &&
+    (target === 'both' ? (ventaDelta !== 0 || stockDelta !== 0) : delta !== 0);
 
   async function handleSave() {
     setSaving(true); setError('');
     try {
-      await createPSIAdjustment({
+      const base = {
         product_id: row.product_id,
         sucursal,
-        cantidad_delta: delta,
         periodo_inicio: periodoInicio,
         periodo_fin: periodoFin,
         fecha_mode: fechaMode,
         fecha_manual: fechaMode === 'manual' ? fechaManual : null,
         reason: reason.trim(),
-        target,
-      });
+      } as const;
+
+      if (target === 'both') {
+        // Disparamos 2 ajustes (uno para venta, otro para stock) si ambos != 0.
+        // Uno solo si alguno es 0.
+        if (ventaDelta !== 0) {
+          await createPSIAdjustment({ ...base, target: 'sell_out', cantidad_delta: ventaDelta });
+        }
+        if (stockDelta !== 0) {
+          await createPSIAdjustment({ ...base, target: 'stock', cantidad_delta: stockDelta });
+        }
+      } else {
+        await createPSIAdjustment({ ...base, target, cantidad_delta: delta });
+      }
       onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo guardar el ajuste.');
@@ -602,19 +687,30 @@ function AdjustModal({
         </div>
 
         <div className="mt-4 grid gap-3">
-          <div>
-            <label className={labelClass}>Cantidad del ajuste (delta)</label>
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={() => setDelta(delta - 1)} className="rounded-xl border border-slate-700 px-3 py-2 text-lg font-black text-slate-200 hover:bg-slate-800">−</button>
-              <input
-                type="number"
-                value={delta}
-                onChange={(e) => setDelta(parseInt(e.target.value || '0', 10) || 0)}
-                className={`${inputClass} text-center text-lg font-bold`}
+          {target === 'both' ? (
+            <div className="grid grid-cols-2 gap-3">
+              <DeltaStepper
+                label="Δ Venta (al GFK)"
+                value={ventaDelta}
+                onChange={setVentaDelta}
+                tone="emerald"
               />
-              <button type="button" onClick={() => setDelta(delta + 1)} className="rounded-xl border border-slate-700 px-3 py-2 text-lg font-black text-slate-200 hover:bg-slate-800">+</button>
+              <DeltaStepper
+                label="Δ Stock"
+                value={stockDelta}
+                onChange={setStockDelta}
+                tone="amber"
+                hint="Negativo descuenta del stock."
+              />
             </div>
-          </div>
+          ) : (
+            <DeltaStepper
+              label="Cantidad del ajuste"
+              value={delta}
+              onChange={setDelta}
+              tone="blue"
+            />
+          )}
 
           <div>
             <label className={labelClass}>Sucursal del ajuste</label>

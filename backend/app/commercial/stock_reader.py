@@ -64,13 +64,17 @@ def _parse_int(value: Any) -> int:
         return 0
 
 
-def load_stock_map(force_refresh: bool = False) -> dict[str, int]:
-    """Carga el stock desde la hoja Stock como dict {sku_normalized: cantidad}.
+def load_stock_data(force_refresh: bool = False) -> dict[str, Any]:
+    """Carga la hoja Stock con todos los campos necesarios para matching.
 
-    Idempotente y con cache. Si force_refresh=True, ignora cache.
+    Returns:
+        {
+          "stock_map":      {sku_norm: int}  cantidades
+          "meta_by_sku":    {sku_norm: {sku_raw, descripcion_raw, marca, tipo}}
+        }
     """
     book_id, sheet_name = _stock_config()
-    cache_key = f"stock:{book_id}:{sheet_name}"
+    cache_key = f"stock_full:{book_id}:{sheet_name}"
 
     if not force_refresh:
         cached = cache_get(cache_key)
@@ -88,24 +92,40 @@ def load_stock_map(force_refresh: bool = False) -> dict[str, int]:
     rows = result.get("values", [])
 
     if not rows:
-        cache_set(cache_key, {})
-        return {}
+        empty = {"stock_map": {}, "meta_by_sku": {}}
+        cache_set(cache_key, empty)
+        return empty
 
-    # Header en fila 1 — saltar.
+    # Esperado: A=MARCA, B=TIPO, C=DESCRIPCION, D=SKU, E=PVP, F=COSTO, G=STOCK
     stock_map: dict[str, int] = {}
+    meta_by_sku: dict[str, dict[str, Any]] = {}
     for raw in rows[1:]:
         if len(raw) < 4:
             continue
-        sku_raw = raw[3] if len(raw) > 3 else ""
-        # Columna G es índice 6 (0-based). Header garantiza ese formato.
+        marca_raw = str(raw[0] if len(raw) > 0 else "").strip()
+        tipo_raw = str(raw[1] if len(raw) > 1 else "").strip()
+        desc_raw = str(raw[2] if len(raw) > 2 else "").strip()
+        sku_raw = str(raw[3] if len(raw) > 3 else "").strip()
         stock_raw = raw[6] if len(raw) > 6 else 0
         key = sku_key(sku_raw)
         if not key:
             continue
         stock_map[key] = _parse_int(stock_raw)
+        meta_by_sku[key] = {
+            "sku_raw": sku_raw,
+            "descripcion_raw": desc_raw,
+            "marca": marca_raw,
+            "tipo": tipo_raw,
+        }
 
-    cache_set(cache_key, stock_map)
-    return stock_map
+    payload = {"stock_map": stock_map, "meta_by_sku": meta_by_sku}
+    cache_set(cache_key, payload)
+    return payload
+
+
+def load_stock_map(force_refresh: bool = False) -> dict[str, int]:
+    """Wrapper de compatibilidad: solo el dict {sku_norm: cantidad}."""
+    return load_stock_data(force_refresh=force_refresh)["stock_map"]
 
 
 def lookup_stock(sku: str, stock_map: dict[str, int] | None = None) -> int:

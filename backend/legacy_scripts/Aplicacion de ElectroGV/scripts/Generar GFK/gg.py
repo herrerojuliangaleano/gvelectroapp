@@ -262,12 +262,64 @@ def transformar_tipo_venta(valor, sucursal: str) -> str:
     return f"{sucursal}-OTRO"
 
 
+# Detecta la marca de outlet en sus variantes reales:
+#   "(O)", "(o)", "(0)", "( O )", con o sin espacios alrededor.
+OUTLET_MARK_RX = re.compile(r"\s*\(\s*[Oo0]\s*\)\s*")
+
+
 def limpiar_modelo(valor) -> str:
+    """Devuelve el SKU sin la marca de outlet ni espacios sobrantes.
+
+    Usado para hacer match contra el catálogo de precios (que tiene los SKUs
+    base). El SKU final que va al GFK se decide después con `modelo_para_gfk`.
+    """
     if pd.isna(valor):
         return ""
-    texto = str(valor).replace(" (O)", "").strip()
+    texto = OUTLET_MARK_RX.sub("", str(valor)).strip()
     texto = re.sub(r"\s+", " ", texto)
     return texto
+
+
+def es_outlet(sku_raw, descripcion_raw) -> bool:
+    """Devuelve True si el producto es outlet.
+
+    Heurística robusta:
+      1. Si el SKU tiene (O)/(o)/(0) → outlet.
+      2. Si la descripción tiene (O)/(o)/(0) → outlet (aunque el SKU no).
+      3. Si la descripción contiene la palabra "OUTLET" → outlet.
+
+    Esto cierra el bug histórico de gg.py donde el SKU se "limpiaba" y se
+    perdía la condición outlet en el GFK, aunque la descripción la marcaba.
+    """
+    for raw in (sku_raw, descripcion_raw):
+        if raw is None:
+            continue
+        try:
+            if pd.isna(raw):
+                continue
+        except (TypeError, ValueError):
+            pass
+        text = str(raw)
+        if OUTLET_MARK_RX.search(text):
+            return True
+        if "OUTLET" in text.upper():
+            return True
+    return False
+
+
+def modelo_para_gfk(sku_raw, descripcion_raw) -> str:
+    """SKU como debe quedar en el GFK output.
+
+    Si el producto es outlet (por SKU o descripción), se conserva el sufijo
+    ``" (O)"`` aunque el SKU venga sin él. Si no es outlet, se devuelve el SKU
+    limpio.
+    """
+    base = limpiar_modelo(sku_raw)
+    if not base:
+        return ""
+    if es_outlet(sku_raw, descripcion_raw):
+        return f"{base} (O)"
+    return base
 
 
 def clave_modelo(valor) -> str:
@@ -632,7 +684,15 @@ def leer_ventas_desde_archivo(
             continue
 
         modelo_limpio = df["sku"].apply(limpiar_modelo)
+        # Precio: se busca por modelo limpio (sin (O)), porque el catálogo
+        # PVP tiene los SKUs base. El outlet hereda el precio del primera.
         precio_gmv = modelo_limpio.apply(lambda x: calcular_precio_gmv(x, price_map))
+        # Modelo del item (output del GFK): preservar (O) si descripción dice
+        # OUTLET o tiene (O), aunque el SKU venga limpio. Fix del bug histórico.
+        modelo_para_output = df.apply(
+            lambda row: modelo_para_gfk(row["sku"], row["descripcion"]),
+            axis=1,
+        )
 
         salida = pd.DataFrame({
             "Fecha de venta": df["fecha_limpia"],
@@ -641,7 +701,7 @@ def leer_ventas_desde_archivo(
             "EAN del item": "",
             "Descripcion del item": df["descripcion"],
             "Marca del item": df["marca"],
-            "Modelo del item": modelo_limpio,
+            "Modelo del item": modelo_para_output,
             "Familia de productos (por ejemplo MDA, Telecom, etc)": "",
             "Tipo de vendedor (tienda oficial o categoria similar)": "",
             "Nombre / identificacion del vendedor": "",

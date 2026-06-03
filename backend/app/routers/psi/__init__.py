@@ -22,7 +22,8 @@ from ...auth import require_permission
 from ...commercial.gfk_reader import (
     get_most_recent_gfk_for_range, load_gfk_sales_for_range,
 )
-from ...commercial.stock_reader import load_stock_map
+from ...commercial.matching import build_product_indexes, normalize_descripcion, resolve_product
+from ...commercial.stock_reader import load_stock_data
 from ...db import db_session
 from ...models.products import Product
 from ...models.sales_psi import SalesPsiAdjustment
@@ -242,8 +243,10 @@ def psi_report(
             stmt = stmt.where(Product.condicion_producto == condicion)
         catalogo: list[Product] = session.scalars(stmt).all()
 
-        # 3. Stock (lectura con cache)
-        stock_map = load_stock_map(force_refresh=force_refresh)
+        # 3. Stock (lectura con cache) — ahora con metadata para matching híbrido
+        stock_data = load_stock_data(force_refresh=force_refresh)
+        stock_map: dict[str, int] = stock_data["stock_map"]
+        stock_meta_by_sku: dict[str, dict[str, Any]] = stock_data["meta_by_sku"]
         stock_fetched_at = datetime.utcnow().isoformat() + "Z"
 
         # 4. Ventas (desde GFK output, no del libro mensual)
@@ -295,20 +298,86 @@ def psi_report(
         for adj in historial_rows:
             historial_by_product.setdefault(int(adj.product_id), []).append(adj)
 
-    # 7. Construcción de filas
+    # 7. Construcción de filas con matching híbrido SKU → Descripción
+    # ──────────────────────────────────────────────────────────────────
+    # Necesitamos también el catálogo COMPLETO (no solo el subset filtrado)
+    # para que el matching por descripción funcione contra todo el universo,
+    # y luego filtrar el resultado por los criterios del usuario.
+    with db_session() as session_full:
+        full_catalog: list[Product] = session_full.scalars(
+            select(Product).where(Product.is_active.is_(True))
+        ).all()
+
+    # Mantener todos los objetos en la sesión actual para evitar DetachedInstanceError.
+    full_catalog = list(catalogo) + [p for p in full_catalog if p not in catalogo]
+    indexes = build_product_indexes(full_catalog)
+
+    # Acumulador: product_id → datos agregados
+    aggregated: dict[int, dict[str, Any]] = {}
+
+    def _ensure_entry(p: Product) -> dict[str, Any]:
+        pid = int(p.id)
+        if pid not in aggregated:
+            aggregated[pid] = {
+                "product": p,
+                "stock_base": 0,
+                "sell_out_base": 0,
+            }
+        return aggregated[pid]
+
+    # 7a. Stock: matcheamos cada SKU de la hoja stock contra catálogo
+    for sku_norm, qty in stock_map.items():
+        meta = stock_meta_by_sku.get(sku_norm, {})
+        product = resolve_product(
+            sku_normalized=sku_norm,
+            descripcion=meta.get("descripcion_raw"),
+            indexes=indexes,
+        )
+        if product is None:
+            continue  # SKUs sin catálogo no aparecen como stock huérfano (no son críticos)
+        entry = _ensure_entry(product)
+        entry["stock_base"] += int(qty)
+
+    # 7b. Sell out: matcheamos cada SKU del GFK contra catálogo
+    skus_gfk_no_catalogados: set[str] = set()
+    for sku_norm, qty in ventas_agg.items():
+        meta = by_sku_meta.get(sku_norm, {})
+        product = resolve_product(
+            sku_normalized=sku_norm,
+            descripcion=meta.get("first_descripcion"),
+            indexes=indexes,
+        )
+        if product is None:
+            skus_gfk_no_catalogados.add(sku_norm)
+            continue
+        entry = _ensure_entry(product)
+        entry["sell_out_base"] += int(qty)
+
+    # 7c. Garantizar entradas para productos del filtro aunque no tengan stock ni ventas
+    # (necesario para mode='advanced' y para mostrar productos con solo ajustes pending)
+    for p in catalogo:
+        if mode == "advanced":
+            _ensure_entry(p)
+        elif int(p.id) in pending_by_product or int(p.id) in stock_delta_by_product:
+            _ensure_entry(p)
+
     rows: list[PSIReportRow] = []
     total_stock = 0
     total_sell_out = 0
     ajustes_count = 0
-    for p in catalogo:
-        sku_norm = str(p.sku_normalized or "")
-        pid = int(p.id)
-        # Stock: efectivo = sheet + delta de ajustes stock/both
-        stock_base = int(stock_map.get(sku_norm, 0))
+    # Set de IDs del catálogo filtrado (para filter del output)
+    filtered_ids = {int(p.id) for p in catalogo}
+
+    for pid, entry in aggregated.items():
+        # Aplicar filtros del usuario contra el catálogo del filtro
+        if pid not in filtered_ids:
+            continue
+        p: Product = entry["product"]
+        stock_base = int(entry["stock_base"])
         stock_delta = int(stock_delta_by_product.get(pid, 0))
         stock_efectivo = stock_base + stock_delta
-        # Sell out: GFK + ajustes pending sell_out/both
-        sell_out_base = int(ventas_agg.get(sku_norm, 0))
+
+        sell_out_base = int(entry["sell_out_base"])
         pending_for_p = pending_by_product.get(pid, [])
         ajuste_delta = sum(int(a.cantidad_delta) for a in pending_for_p)
         sell_out_final = sell_out_base + ajuste_delta
@@ -340,20 +409,9 @@ def psi_report(
         if ajuste_delta != 0 or stock_delta != 0:
             ajustes_count += 1
 
-    # 8. SKUs en ventas que no están en catálogo
-    skus_en_ventas = set(ventas_agg.keys())
-    skus_del_catalogo = {str(p.sku_normalized or "") for p in catalogo}
-    # Si el usuario filtró por marca/tipo/condición, el catálogo es un subset.
-    # Para no catalogados, comparamos contra TODO el catálogo activo (no contra el subset).
-    if marcas_list or tipos_list or condicion != "TODO":
-        with db_session() as session:
-            all_skus = session.execute(
-                select(Product.sku_normalized).where(Product.is_active.is_(True))
-            ).scalars().all()
-            skus_del_catalogo = {str(s or "") for s in all_skus}
-
+    # 8. Bandeja "no catalogados" — SKUs del GFK que no matchearon ni por SKU ni por descripción
     no_catalogados: list[PSINoCatalogadoRow] = []
-    for sku_huerfano in sorted(skus_en_ventas - skus_del_catalogo):
+    for sku_huerfano in sorted(skus_gfk_no_catalogados):
         if not sku_huerfano:
             continue
         meta = by_sku_meta.get(sku_huerfano, {})
