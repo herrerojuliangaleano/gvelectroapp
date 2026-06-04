@@ -69,6 +69,12 @@ function matchesSearch(item: PriceCostUpdate, query: string) {
   return [item.sku, item.producto, item.marca || ''].join(' ').toLowerCase().includes(query);
 }
 
+function stateTone(item: PriceCostUpdate): 'success' | 'warning' | 'info' {
+  if (item.estado === 'Completado') return 'success';
+  if (item.estado === 'Pendiente') return 'warning';
+  return 'info';
+}
+
 export function PriceAnnouncementsPage() {
   const user = getCurrentUserFromStorage();
   const canUse = canUsePriceAnnouncements(user);
@@ -232,16 +238,16 @@ export function PriceAnnouncementsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-5">
+    <div className="mx-auto max-w-7xl space-y-5 pb-24 md:pb-0">
       <ErpPageHeader
         title="Anuncios de precios"
         description="Placas comerciales con precios nuevos agrupados por marca."
         actions={(
           <>
-            <ErpButton variant="secondary" onClick={load} disabled={loading} leftIcon={<RefreshCw size={16} />}>
+            <ErpButton variant="secondary" onClick={load} disabled={loading} leftIcon={<RefreshCw size={16} />} className="w-full justify-center sm:w-auto">
               Refrescar
             </ErpButton>
-            <ErpButton variant="primary" onClick={generate} loading={generating} disabled={!selectedIds.size} leftIcon={<Wand2 size={16} />}>
+            <ErpButton variant="primary" onClick={generate} loading={generating} disabled={!selectedIds.size} leftIcon={<Wand2 size={16} />} className="w-full justify-center sm:w-auto">
               Generar imagen
             </ErpButton>
           </>
@@ -287,11 +293,11 @@ export function PriceAnnouncementsPage() {
               <option value="abc_electro">ABC Electro</option>
             </ErpSelect>
           </ErpField>
-          <div className="flex flex-wrap gap-2 lg:justify-end">
-            <ErpButton variant="secondary" onClick={selectFiltered} leftIcon={<CheckSquare size={15} />}>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap lg:justify-end">
+            <ErpButton variant="secondary" onClick={selectFiltered} leftIcon={<CheckSquare size={15} />} fullWidth className="justify-center lg:w-auto">
               Seleccionar vista
             </ErpButton>
-            <ErpButton variant="ghost" onClick={resetFilters} leftIcon={<XCircle size={15} />}>
+            <ErpButton variant="ghost" onClick={resetFilters} leftIcon={<XCircle size={15} />} fullWidth className="justify-center lg:w-auto">
               Limpiar filtros
             </ErpButton>
           </div>
@@ -334,10 +340,10 @@ export function PriceAnnouncementsPage() {
           <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-2)] px-4 py-3">
             <Layers3 size={15} className="text-[color:var(--text-3)]" />
             <span className="text-xs font-black uppercase tracking-wide text-[color:var(--text-3)]">Agrupar por</span>
-            <ErpSelect value="brand" disabled style={{ height: 30, minWidth: 130, fontSize: 12 }}>
+            <ErpSelect value="brand" disabled className="hidden sm:block" style={{ height: 30, minWidth: 130, fontSize: 12 }}>
               <option value="brand">Marca</option>
             </ErpSelect>
-            <span className="text-[11.5px] text-[color:var(--text-3)]">-</span>
+            <span className="hidden text-[11.5px] text-[color:var(--text-3)] sm:inline">-</span>
             <span className="text-xs text-[color:var(--text-2)]">
               <strong className="text-[color:var(--text)]">{filtered.length}</strong> en vista
             </span>
@@ -367,7 +373,7 @@ export function PriceAnnouncementsPage() {
                     <button
                       type="button"
                       onClick={() => setRowsSelected(group.rows, !allSelected)}
-                      className={`inline-flex h-8 items-center gap-2 rounded-lg border px-2.5 text-xs font-black transition ${
+                      className={`inline-flex min-h-10 flex-1 items-center gap-2 rounded-xl border px-3 text-left text-xs font-black transition sm:flex-none sm:h-8 sm:min-h-0 sm:px-2.5 ${
                         allSelected
                           ? 'border-blue-400/60 bg-blue-500/15 text-blue-100'
                           : someSelected
@@ -381,19 +387,68 @@ export function PriceAnnouncementsPage() {
                     <ErpBadge tone={group.selectedCount ? 'primary' : 'neutral'} withDot={false}>
                       {group.selectedCount}/{group.rows.length}
                     </ErpBadge>
-                    <div className="ml-auto flex flex-wrap gap-2">
-                      <ErpButton variant="secondary" size="sm" onClick={() => setRowsSelected(group.rows, true)}>
+                    <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-wrap">
+                      <ErpButton
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setRowsSelected(group.rows, true)}
+                        fullWidth
+                        className={`${group.selectedCount > 0 ? '' : 'col-span-2'} justify-center sm:w-auto`}
+                      >
                         Seleccionar marca
                       </ErpButton>
                       {group.selectedCount > 0 && (
-                        <ErpButton variant="ghost" size="sm" onClick={() => setRowsSelected(group.rows, false)}>
+                        <ErpButton variant="ghost" size="sm" onClick={() => setRowsSelected(group.rows, false)} fullWidth className="justify-center sm:w-auto">
                           Quitar
                         </ErpButton>
                       )}
                     </div>
                   </div>
 
-                  <div className="overflow-x-auto rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)]">
+                  <div className="space-y-2 md:hidden">
+                    {group.rows.map((item) => {
+                      const selected = selectedIds.has(item.id);
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => toggle(item.id)}
+                          className={`w-full rounded-2xl border p-3 text-left transition ${
+                            selected
+                              ? 'border-blue-400/70 bg-blue-500/10 shadow-[0_0_0_1px_rgba(96,165,250,0.22)]'
+                              : 'border-[color:var(--border)] bg-[color:var(--surface)] active:bg-[color:var(--surface-hover)]'
+                          }`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <span className={`mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border ${
+                              selected ? 'border-blue-400 bg-blue-500 text-white' : 'border-[color:var(--border-strong)] text-[color:var(--text-3)]'
+                            }`}>
+                              {selected ? <CheckSquare size={16} /> : <Square size={16} />}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-start justify-between gap-2">
+                                <span className="font-mono text-[12px] font-black text-[color:var(--text)]">{item.sku}</span>
+                                <ErpBadge tone={stateTone(item)} withDot={false}>{item.estado}</ErpBadge>
+                              </span>
+                              <span className="mt-1 block text-[13px] font-semibold leading-snug text-[color:var(--text)]">{item.producto}</span>
+                              <span className="mt-3 grid grid-cols-2 gap-2">
+                                <span className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] px-3 py-2">
+                                  <span className="block text-[10px] font-black uppercase tracking-wide text-[color:var(--text-3)]">Precio nuevo</span>
+                                  <span className="mt-1 block text-base font-black text-white">{item.valor_nuevo}</span>
+                                </span>
+                                <span className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] px-3 py-2">
+                                  <span className="block text-[10px] font-black uppercase tracking-wide text-[color:var(--text-3)]">Fecha</span>
+                                  <span className="mt-1 block text-[12px] font-semibold text-[color:var(--text-2)]">{formatDate(item.created_at)}</span>
+                                </span>
+                              </span>
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="hidden overflow-x-auto rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)] md:block">
                     <table className="erp-table erp-table-compact" style={{ minWidth: 760 }}>
                       <thead>
                         <tr>
@@ -429,7 +484,7 @@ export function PriceAnnouncementsPage() {
                               </td>
                               <td>
                                 <div className="flex flex-col gap-1">
-                                  <ErpBadge tone={item.estado === 'Completado' ? 'success' : item.estado === 'Pendiente' ? 'warning' : 'info'} withDot={false}>
+                                  <ErpBadge tone={stateTone(item)} withDot={false}>
                                     {item.estado}
                                   </ErpBadge>
                                   <span className="text-[11px] text-[color:var(--text-3)]">{formatDate(item.created_at)}</span>
@@ -467,18 +522,18 @@ export function PriceAnnouncementsPage() {
                     <div className="text-sm text-[color:var(--text-2)]">
                       {image.product_count} productos - {image.brand_names.join(', ')}
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <ErpButton variant="secondary" size="sm" onClick={() => downloadImage(image)} leftIcon={<Download size={15} />}>
+                    <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
+                      <ErpButton variant="secondary" size="sm" onClick={() => downloadImage(image)} leftIcon={<Download size={15} />} fullWidth className="justify-center sm:w-auto">
                         Descargar
                       </ErpButton>
-                      <ErpButton variant="primary" size="sm" onClick={() => shareImage(image)} leftIcon={<Share2 size={15} />}>
+                      <ErpButton variant="primary" size="sm" onClick={() => shareImage(image)} leftIcon={<Share2 size={15} />} fullWidth className="justify-center sm:w-auto">
                         Compartir
                       </ErpButton>
                       <a
                         href={`https://wa.me/?text=${encodeURIComponent(result.message)}`}
                         target="_blank"
                         rel="noreferrer"
-                        className="erp-btn erp-btn-secondary erp-btn-sm"
+                        className="erp-btn erp-btn-secondary erp-btn-sm w-full justify-center sm:w-auto"
                       >
                         <MessageCircle size={15} />
                         <span>WhatsApp</span>
@@ -491,6 +546,27 @@ export function PriceAnnouncementsPage() {
           )}
         </ErpCard>
       </section>
+
+      {selectedIds.size > 0 && (
+        <div className="fixed inset-x-3 bottom-3 z-40 md:hidden">
+          <div className="rounded-2xl border border-blue-400/40 bg-slate-950/95 p-3 shadow-2xl shadow-black/50 backdrop-blur">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-black text-white">{selectedIds.size} productos seleccionados</div>
+                <div className="truncate text-xs text-[color:var(--text-2)]">{selectionSummary}</div>
+              </div>
+              <button type="button" onClick={clearSelection} className="shrink-0 text-xs font-black text-[color:var(--text-3)]">
+                Limpiar
+              </button>
+            </div>
+            <div className="mt-3">
+              <ErpButton variant="primary" onClick={generate} loading={generating} fullWidth leftIcon={<Wand2 size={16} />}>
+                Generar imagen
+              </ErpButton>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
