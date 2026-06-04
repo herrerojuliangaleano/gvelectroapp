@@ -1540,6 +1540,9 @@ export interface PriceCostUpdateCheck {
   checked_by?: string | null;
   checked_by_name?: string | null;
   checked_at?: string | null;
+  can_check?: boolean;
+  required_permission?: string;
+  required_permissions?: string[];
 }
 
 export interface PriceCostUpdate {
@@ -1597,6 +1600,30 @@ export interface PriceCostUpdateHistory {
   display_name: string;
   action: string;
   detail: Record<string, unknown>;
+}
+
+export interface PriceAnnouncementImage {
+  filename: string;
+  mime_type: string;
+  data_url: string;
+  brand_names: string[];
+  product_count: number;
+  page: number;
+  total_pages: number;
+}
+
+export interface PriceAnnouncementImagesResponse {
+  message: string;
+  generated_at: string;
+  brand_names: string[];
+  product_count: number;
+  images: PriceAnnouncementImage[];
+}
+
+export interface PriceAnnouncementImagesPayload {
+  update_ids: number[];
+  logo_brand?: 'gv_electro' | 'abc_electro' | string;
+  title?: string;
 }
 
 

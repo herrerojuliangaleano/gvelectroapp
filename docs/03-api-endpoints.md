@@ -183,9 +183,10 @@ Bearer token salvo endpoints publicos como `/api/health` y login.
 | POST | `/api/price-cost-updates` | Crea actualizacion. |
 | GET | `/api/price-cost-updates/{update_id}` | Detalle. |
 | PATCH | `/api/price-cost-updates/{update_id}` | Edita. |
-| POST | `/api/price-cost-updates/{update_id}/check` | Marca/desmarca check. |
+| POST | `/api/price-cost-updates/{update_id}/check` | Marca/desmarca check. Backend valida permiso por destino (`web`, `puma`, `planilla_madre`). |
 | POST | `/api/price-cost-updates/{update_id}/cancel` | Cancela. |
 | GET | `/api/price-cost-updates/{update_id}/history` | Historial. |
+| POST | `/api/price-cost-updates/announcements/images` | Genera PNGs comerciales con precios nuevos seleccionados. Devuelve imagenes en base64 y mensaje para compartir. |
 
 ## Empleados
 

@@ -25,6 +25,7 @@ import { MyUserPage } from './pages/MyUserPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { PayrollReceiptsPage } from './pages/PayrollReceiptsPage';
 import { PriceCostUpdatesPage } from './pages/PriceCostUpdatesPage';
+import { PriceAnnouncementsPage } from './pages/PriceAnnouncementsPage';
 import { ProductCatalogPage } from './pages/ProductCatalogPage';
 import { OperationalConfigPage } from './pages/OperationalConfigPage';
 import { PSIPage } from './pages/PSIPage';
@@ -54,6 +55,7 @@ import { WarrantyRemitoTrackingPage } from './pages/WarrantyRemitoTrackingPage';
 import { SalesBIImportPage } from './pages/SalesBIImportPage';
 import { SalesBIHistoryPage } from './pages/SalesBIHistoryPage';
 import { SalesBIDetailPage } from './pages/SalesBIDetailPage';
+import { canUsePriceAnnouncements } from './priceAnnouncementsAccess';
 
 function RequireAuth({ children }: { children: ReactNode }) {
   if (!getToken()) return <Navigate to="/login" replace />;
@@ -178,6 +180,7 @@ export default function App() {
       <Route path="/productos" element={<ProtectedLayout permission="products.view"><ProductCatalogPage /></ProtectedLayout>} />
       <Route path="/admin/productos" element={<Navigate to="/productos" replace />} />
       <Route path="/precios-costos" element={<ProtectedLayout anyPermission={["price_updates.view", "cost_updates.view"]}><PriceCostUpdatesPage /></ProtectedLayout>} />
+      <Route path="/comercial/anuncios-precios" element={<ProtectedLayout allowed={() => canUsePriceAnnouncements(getCurrentUserFromStorage())}><PriceAnnouncementsPage /></ProtectedLayout>} />
       <Route path="/recibos" element={<ProtectedLayout anyPermission={["payroll_receipts.view_own", "payroll_receipts.view_all"]}><PayrollReceiptsPage /></ProtectedLayout>} />
       <Route path="/payroll" element={<Navigate to="/recibos" replace />} />
       <Route path="/price-cost-updates" element={<Navigate to="/precios-costos" replace />} />

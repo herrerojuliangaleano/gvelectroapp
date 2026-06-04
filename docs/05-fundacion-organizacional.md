@@ -62,6 +62,9 @@ Employee  ────►  User  (opcional, puede haber empleado sin user)
   - `level` (entero — más alto = más privilegio; para jerarquía visual).
   - `permissions: list[str]` (JSONB) — array de claves del catálogo.
 - **Catálogo de roles en código:** [`app/permissions.py:DEFAULT_ROLES`](../backend/app/permissions.py). El seed los inserta. Crear/editar roles desde la UI escribe en esta tabla, no en archivos.
+- Rol operativo específico de página web: `ENCARGADO_WEB`
+  (`Editor / Encargado de página web`). Puede recibir avisos y marcar checks
+  web de cambios de precio; no marca Puma ni costos.
 
 ### 4. Permission (permiso)
 

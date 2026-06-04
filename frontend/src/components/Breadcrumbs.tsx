@@ -28,6 +28,8 @@ const SEGMENT_LABELS: Record<string, string> = {
   historial: 'Historial',
   importar: 'Importar planilla',
   importaciones: 'Importación',
+  comercial: 'Comercial',
+  'anuncios-precios': 'Anuncios de precios',
   notificaciones: 'Notificaciones',
   productos: 'Productos',
   'precios-costos': 'Precios y costos',

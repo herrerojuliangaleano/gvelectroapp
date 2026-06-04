@@ -84,4 +84,4 @@ def list_updates(
             else_=9,
         )
         rows = session.scalars(stmt.order_by(status_order, PriceCostUpdateModel.id.desc()).limit(limit)).all()
-        return [PriceCostUpdateOut(**row_to_update(session, row)) for row in rows]
+        return [PriceCostUpdateOut(**row_to_update(session, row, user=user)) for row in rows]

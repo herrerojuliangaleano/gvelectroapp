@@ -315,16 +315,50 @@ checklist y estado.
 - Ver lista con filtros.
 - Ver detalle.
 - Editar.
-- Marcar checks.
+- Marcar checks por destino segun permiso: web, Puma o Planilla Madre.
 - Cancelar.
 - Ver historial.
+- Recibir notificaciones agrupadas por marca, por ejemplo
+  `Cambios de precios en Samsung`, para evitar avisos individuales por SKU.
 
 ### Permisos relevantes
 
 `price_updates.view`, `price_updates.create`, `price_updates.check`,
-`price_updates.edit`, `price_updates.delete`, `cost_updates.view`,
-`cost_updates.create`, `cost_updates.check`, `cost_updates.edit`,
+`price_updates.check.web`, `price_updates.check.puma`,
+`price_updates.check.master`, `price_updates.edit`, `price_updates.delete`,
+`cost_updates.view`, `cost_updates.create`, `cost_updates.check`,
+`cost_updates.check.puma`, `cost_updates.check.master`, `cost_updates.edit`,
 `cost_updates.delete`.
+
+Rol operativo nuevo: `ENCARGADO_WEB` (`Editor / Encargado de pagina web`).
+Puede ver cambios de precio, recibir notificaciones y marcar solo los checks
+web. No marca Puma, no toca costos, no crea ni cancela actualizaciones.
+
+## Comercial - anuncios de precios
+
+Ruta: `/comercial/anuncios-precios`
+
+API: `/api/price-cost-updates/announcements/images`
+
+### Objetivo
+
+Generar imagenes comerciales con cambios de precios para compartir por WhatsApp
+u otros canales, usando solo el precio nuevo.
+
+### Funciones
+
+- Listar cambios de precio disponibles.
+- Filtrar por marca, estado o busqueda libre.
+- Seleccionar productos manualmente o por marca/filtro.
+- Generar una o varias imagenes PNG agrupadas por marca.
+- Descargar cada imagen.
+- Compartir cada imagen con mensaje automatico:
+  `Cambios de precios {fecha y hora} en {marcas}.`
+
+### Permisos relevantes
+
+`price_updates.view`, `price_announcements.view`,
+`price_announcements.generate`.
 
 ## Recibos de sueldo
 

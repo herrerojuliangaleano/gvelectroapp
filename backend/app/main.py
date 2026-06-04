@@ -32,6 +32,8 @@ async def lifespan(_app: FastAPI):
             has_real_issues,
             validate_permissions_catalog,
         )
+        from .users import ensure_missing_default_roles
+        ensure_missing_default_roles()
         with db_session() as session:
             rows = session.scalars(_select(Role)).all()
             roles_in_db = {r.name: list(r.permissions or []) for r in rows}

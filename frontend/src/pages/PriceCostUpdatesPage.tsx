@@ -29,6 +29,13 @@ function canCheck(type: PriceCostUpdateType) {
   return can(type === 'price' ? 'price_updates.check' : 'cost_updates.check');
 }
 
+function canCheckItem(item: PriceCostUpdate, check: PriceCostUpdate['checks'][number]) {
+  if (typeof check.can_check === 'boolean') return check.can_check;
+  const required = check.required_permissions?.length ? check.required_permissions : [check.required_permission].filter(Boolean) as string[];
+  if (required.some((permission) => can(permission))) return true;
+  return canCheck(item.type);
+}
+
 function canCancel(type: PriceCostUpdateType) {
   return can(type === 'price' ? 'price_updates.delete' : 'cost_updates.delete');
 }
@@ -289,10 +296,10 @@ function DetailPanel({ item, history, busy, onToggle, onCancel }: { item: PriceC
         <div className="space-y-2">
           {item.checks.map((check) => (
             <label key={check.key} className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-3 ${check.checked ? 'border-green-400/30 bg-green-500/10' : 'border-slate-800 bg-slate-900/60'}`}>
-              <input type="checkbox" checked={check.checked} disabled={busy || !canCheck(item.type) || item.estado === 'Cancelado'} onChange={(e) => onToggle(item, check.key, e.target.checked)} className="mt-1 h-5 w-5 accent-blue-500" />
+              <input type="checkbox" checked={check.checked} disabled={busy || !canCheckItem(item, check) || item.estado === 'Cancelado'} onChange={(e) => onToggle(item, check.key, e.target.checked)} className="mt-1 h-5 w-5 accent-blue-500" />
               <div className="min-w-0 flex-1">
                 <div className="font-bold text-white">{check.label}</div>
-                <div className="text-xs text-slate-400">{check.checked ? `Marcado por ${check.checked_by_name || check.checked_by || '-'} · ${formatDateTime(check.checked_at)}` : 'Pendiente de actualizar'}</div>
+                <div className="text-xs text-slate-400">{check.checked ? `Marcado por ${check.checked_by_name || check.checked_by || '-'} · ${formatDateTime(check.checked_at)}` : canCheckItem(item, check) ? 'Pendiente de actualizar' : 'Sin permiso para este check'}</div>
               </div>
             </label>
           ))}

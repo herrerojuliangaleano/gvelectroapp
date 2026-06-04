@@ -17,24 +17,11 @@ from .models.auth import User
 from .models.products import BrandProvider, Product, ProductBrand, ProductSyncLog, Provider
 from .models.system import PriceCostUpdate, PriceCostUpdateCheck, PriceCostUpdateHistory
 from .operational_config import extract_spreadsheet_id, load_operational_config
+from .price_cost_rules import CHECKS_BY_TYPE, notify_grouped_price_cost_updates
 
 AR_TZ = ZoneInfo("America/Argentina/Buenos_Aires")
 
 PRODUCT_MASTER_HEADERS = ["MARCA", "TIPO", "DESCRIPCION", "SKU", "PVP", "COSTO VIGENTE"]
-
-_CHECKS_BY_TYPE: dict[str, list[tuple[str, str]]] = {
-    "price": [
-        ("puma", "Puma actualizado"),
-        ("web_gv", "Web ElectroGV actualizada"),
-        ("web_abc", "Web ABC actualizada"),
-        ("planilla_madre", "Planilla Madre actualizada"),
-    ],
-    "cost": [
-        ("puma", "Puma actualizado"),
-        ("planilla_madre", "Planilla Madre actualizada"),
-    ],
-}
-
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -339,9 +326,9 @@ def _try_create_price_cost_update(
     product_id: int,
     sync_log_id: int,
     now: datetime,
-) -> bool:
+) -> dict[str, Any] | None:
     if valor_nuevo is None:
-        return False
+        return None
     existing = session.scalar(
         select(PriceCostUpdate.id).where(
             PriceCostUpdate.sku == sku,
@@ -351,7 +338,7 @@ def _try_create_price_cost_update(
         )
     )
     if existing:
-        return False
+        return None
     update = PriceCostUpdate(
         type=change_type,
         producto=producto,
@@ -370,7 +357,7 @@ def _try_create_price_cost_update(
     )
     session.add(update)
     session.flush()
-    for key, label in _CHECKS_BY_TYPE[change_type]:
+    for key, label in CHECKS_BY_TYPE[change_type]:
         is_planilla = key == "planilla_madre"
         session.add(
             PriceCostUpdateCheck(
@@ -391,7 +378,14 @@ def _try_create_price_cost_update(
             detail={"source": "catalog_sync", "sync_log_id": sync_log_id},
         )
     )
-    return True
+    return {
+        "id": int(update.id),
+        "type": change_type,
+        "marca": marca,
+        "sku": sku,
+        "producto": producto,
+        "valor_nuevo": money_text(valor_nuevo),
+    }
 
 
 def sync_products_from_sheet(actor: Any) -> dict[str, Any]:
@@ -406,6 +400,8 @@ def sync_products_from_sheet(actor: Any) -> dict[str, Any]:
     created = updated = skipped = processed = brands_created = 0
     price_changes_detected = cost_changes_detected = 0
     price_cost_updates_created = price_cost_updates_skipped = 0
+    created_price_updates: list[dict[str, Any]] = []
+    created_cost_updates: list[dict[str, Any]] = []
     status_value = "success"
 
     with db_session() as session:
@@ -496,14 +492,18 @@ def sync_products_from_sheet(actor: Any) -> dict[str, Any]:
 
                     if pvp_dec is not None and old_pvp is not None and abs(pvp_dec - old_pvp) > Decimal("0.005"):
                         price_changes_detected += 1
-                        if _try_create_price_cost_update(session, "price", sku, descripcion, marca, old_pvp, pvp_dec, int(product.id), int(log.id), now):
+                        created_update = _try_create_price_cost_update(session, "price", sku, descripcion, marca, old_pvp, pvp_dec, int(product.id), int(log.id), now)
+                        if created_update:
                             price_cost_updates_created += 1
+                            created_price_updates.append(created_update)
                         else:
                             price_cost_updates_skipped += 1
                     if costo_dec is not None and old_costo is not None and abs(costo_dec - old_costo) > Decimal("0.005"):
                         cost_changes_detected += 1
-                        if _try_create_price_cost_update(session, "cost", sku, descripcion, marca, old_costo, costo_dec, int(product.id), int(log.id), now):
+                        created_update = _try_create_price_cost_update(session, "cost", sku, descripcion, marca, old_costo, costo_dec, int(product.id), int(log.id), now)
+                        if created_update:
                             price_cost_updates_created += 1
+                            created_cost_updates.append(created_update)
                         else:
                             price_cost_updates_skipped += 1
                 else:
@@ -548,6 +548,10 @@ def sync_products_from_sheet(actor: Any) -> dict[str, Any]:
         log.price_cost_updates_created = price_cost_updates_created
         log.price_cost_updates_skipped = price_cost_updates_skipped
         session.commit()
+
+    if status_value in {"success", "partial"}:
+        notify_grouped_price_cost_updates("price", created_price_updates)
+        notify_grouped_price_cost_updates("cost", created_cost_updates)
 
     return {
         "ok": status_value in {"success", "partial"},

@@ -20,6 +20,15 @@ from ...models.system import (
     PriceCostUpdateCheck as PriceCostUpdateCheckModel,
     PriceCostUpdateHistory as PriceCostUpdateHistoryModel,
 )
+from ...price_cost_rules import (
+    CHECKS_BY_TYPE,
+    check_permissions,
+    default_checks as rules_default_checks,
+    normalize_change_type,
+    notify_grouped_price_cost_updates,
+    require_check_permission,
+    user_can_mark_check,
+)
 from ...product_catalog import lookup_product_by_sku_or_text, utc_now_dt
 from ...users import CurrentUser
 from ..budgets import (
@@ -38,18 +47,6 @@ router = APIRouter()
 
 LOCK = threading.RLock()
 STATUSES = ["Pendiente", "En proceso", "Completado", "Cancelado"]
-CHECKS_BY_TYPE: dict[str, list[tuple[str, str]]] = {
-    "price": [
-        ("puma", "Puma actualizado"),
-        ("web_gv", "Web ElectroGV actualizada"),
-        ("web_abc", "Web ABC actualizada"),
-        ("planilla_madre", "Planilla Madre actualizada"),
-    ],
-    "cost": [
-        ("puma", "Puma actualizado"),
-        ("planilla_madre", "Planilla Madre actualizada"),
-    ],
-}
 
 
 def utc_now() -> str:
@@ -82,12 +79,7 @@ def visible_types(user: CurrentUser) -> list[str]:
 
 
 def normalize_type(value: str) -> str:
-    text = str(value or "").strip().lower()
-    if text in {"precio", "price", "pvp"}:
-        return "price"
-    if text in {"costo", "cost"}:
-        return "cost"
-    return text
+    return normalize_change_type(value)
 
 
 def normalize_money_text(value: Any) -> str:
@@ -126,8 +118,9 @@ def _user_public(session, user_id: int | None, *, fallback_system: bool = False)
     return str(user.username or ""), str(user.display_name or user.username or "")
 
 
-def row_to_check(session, row: PriceCostUpdateCheckModel) -> dict[str, Any]:
+def row_to_check(session, row: PriceCostUpdateCheckModel, *, user: CurrentUser | None = None, change_type: str = "") -> dict[str, Any]:
     checked_by, checked_by_name = _user_public(session, row.checked_by_user_id)
+    required_permissions = check_permissions(change_type, str(row.check_key)) if change_type else []
     return {
         "key": str(row.check_key),
         "label": str(row.label),
@@ -135,16 +128,19 @@ def row_to_check(session, row: PriceCostUpdateCheckModel) -> dict[str, Any]:
         "checked_by": checked_by,
         "checked_by_name": checked_by_name,
         "checked_at": _dt(row.checked_at),
+        "can_check": user_can_mark_check(user, change_type, str(row.check_key)) if user and change_type else False,
+        "required_permission": required_permissions[0] if required_permissions else "",
+        "required_permissions": required_permissions,
     }
 
 
-def load_checks(session, update_id: int) -> list[dict[str, Any]]:
+def load_checks(session, update_id: int, *, user: CurrentUser | None = None, change_type: str = "") -> list[dict[str, Any]]:
     rows = session.scalars(
         select(PriceCostUpdateCheckModel)
         .where(PriceCostUpdateCheckModel.update_id == update_id)
         .order_by(PriceCostUpdateCheckModel.id.asc())
     ).all()
-    return [row_to_check(session, row) for row in rows]
+    return [row_to_check(session, row, user=user, change_type=change_type) for row in rows]
 
 
 def calculate_status(checks: list[dict[str, Any]], current: str = "") -> str:
@@ -170,8 +166,8 @@ def _money_out(value: Any) -> str:
     return sheet_money(dec) if dec is not None else ""
 
 
-def row_to_update(session, row: PriceCostUpdateModel) -> dict[str, Any]:
-    checks = load_checks(session, int(row.id))
+def row_to_update(session, row: PriceCostUpdateModel, *, user: CurrentUser | None = None) -> dict[str, Any]:
+    checks = load_checks(session, int(row.id), user=user, change_type=str(row.type or ""))
     checked_count = sum(1 for item in checks if item["checked"])
     total_checks = len(checks)
     old_dec = money_decimal_or_none(row.valor_anterior)
@@ -228,7 +224,7 @@ def notify_users_with_permission(permission: str, title: str, message: str) -> N
 
 
 def default_checks(change_type: str) -> list[tuple[str, str]]:
-    return CHECKS_BY_TYPE[change_type]
+    return rules_default_checks(change_type)
 
 
 def find_column_value(row: list[Any], col: int | None) -> str:
@@ -358,6 +354,9 @@ class PriceCostUpdateCheck(BaseModel):
     checked_by: str | None = None
     checked_by_name: str | None = None
     checked_at: str | None = None
+    can_check: bool = False
+    required_permission: str = ""
+    required_permissions: list[str] = Field(default_factory=list)
 
 
 class PriceCostUpdateOut(BaseModel):
@@ -451,11 +450,13 @@ def _get_visible_update(session, update_id: int, user: CurrentUser) -> PriceCost
 from . import lookup as _lookup_module  # noqa: E402
 from . import listing as _listing_module  # noqa: E402
 from . import creation as _creation_module  # noqa: E402
+from . import announcements as _announcements_module  # noqa: E402
 from . import lifecycle as _lifecycle_module  # noqa: E402
 from . import history as _history_module  # noqa: E402
 
 router.include_router(_lookup_module.router)
 router.include_router(_listing_module.router)
 router.include_router(_creation_module.router)
+router.include_router(_announcements_module.router)
 router.include_router(_lifecycle_module.router)
 router.include_router(_history_module.router)

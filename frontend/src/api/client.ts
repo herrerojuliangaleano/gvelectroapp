@@ -53,6 +53,8 @@ import type {
   PayrollReceipt,
   PayrollReceiptListResponse,
   PriceCostProductLookup,
+  PriceAnnouncementImagesPayload,
+  PriceAnnouncementImagesResponse,
   PriceCostUpdate,
   PriceCostUpdateCreatePayload,
   PriceCostUpdateHistory,
@@ -701,6 +703,9 @@ export async function cancelPriceCostUpdate(id: string | number, cancelReason = 
 }
 export async function fetchPriceCostUpdateHistory(id: string | number): Promise<PriceCostUpdateHistory[]> {
   return request(`/api/price-cost-updates/${encodeURIComponent(String(id))}/history`);
+}
+export async function generatePriceAnnouncementImages(payload: PriceAnnouncementImagesPayload): Promise<PriceAnnouncementImagesResponse> {
+  return request('/api/price-cost-updates/announcements/images', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 

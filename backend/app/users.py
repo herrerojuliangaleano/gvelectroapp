@@ -198,6 +198,21 @@ def save_roles(roles: dict[str, dict[str, Any]]) -> None:
     users_db.save_roles_pg(clean)
 
 
+def ensure_missing_default_roles() -> dict[str, Any]:
+    """Crea roles nuevos del catalogo sin pisar roles existentes en Postgres."""
+    current = load_roles()
+    missing: list[str] = []
+    merged = dict(current)
+    for name, info in DEFAULT_ROLES.items():
+        if name in merged:
+            continue
+        merged[name] = dict(info)
+        missing.append(name)
+    if missing:
+        save_roles(merged)
+    return {"created": missing, "created_count": len(missing)}
+
+
 def _record_from_payload(payload: dict[str, Any]) -> UserRecord:
     """Convierte el dict que devuelve users_db en un UserRecord, cacheando las
     branches resueltas como atributo `_pg_branches` para que `public()` no

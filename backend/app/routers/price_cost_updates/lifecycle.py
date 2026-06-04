@@ -35,6 +35,7 @@ from . import (
     normalize_type,
     notify_users_with_permission,
     record_history,
+    require_check_permission,
     require_current_user,
     require_type_permission,
     row_to_update,
@@ -49,7 +50,7 @@ router = APIRouter(prefix="/api/price-cost-updates", tags=["price-cost-updates"]
 def get_update(update_id: int, user: Annotated[CurrentUser, Depends(require_current_user)]):
     with db_session() as session:
         row = _get_visible_update(session, update_id, user)
-        return PriceCostUpdateOut(**row_to_update(session, row))
+        return PriceCostUpdateOut(**row_to_update(session, row, user=user))
 
 @router.patch("/{update_id}", response_model=PriceCostUpdateOut)
 def patch_update(update_id: int, data: PriceCostUpdatePatch, user: Annotated[CurrentUser, Depends(require_current_user)]):
@@ -83,7 +84,7 @@ def patch_update(update_id: int, data: PriceCostUpdatePatch, user: Annotated[Cur
             row.updated_at = utc_now_dt()
             record_history(session, update_id, user, "editado", detail)
             session.flush()
-        result = PriceCostUpdateOut(**row_to_update(session, row))
+        result = PriceCostUpdateOut(**row_to_update(session, row, user=user))
         session.commit()
     audit("price_cost_update.updated", user=user, resource_type="price_cost_update", resource_id=str(update_id), message="Actualizacion editada", details=detail)
     return result
@@ -93,12 +94,12 @@ def set_check(update_id: int, data: CheckPayload, user: Annotated[CurrentUser, D
     with LOCK, db_session() as session:
         row = _get_update_or_404(session, update_id)
         change_type = str(row.type)
-        require_type_permission(user, change_type, "check")
         if str(row.estado) == "Cancelado":
             raise HTTPException(status_code=400, detail="No se puede marcar una actualizacion cancelada")
         allowed = {key for key, _label in default_checks(change_type)}
         if data.check_key not in allowed:
             raise HTTPException(status_code=400, detail="Check invalido para este tipo de actualizacion")
+        require_check_permission(user, change_type, data.check_key)
         check = session.scalar(
             select(PriceCostUpdateCheckModel).where(
                 PriceCostUpdateCheckModel.update_id == update_id,
@@ -119,7 +120,7 @@ def set_check(update_id: int, data: CheckPayload, user: Annotated[CurrentUser, D
         estado = apply_status(session, row)
         record_history(session, update_id, user, "check_marcado" if data.checked else "check_desmarcado", {"check_key": data.check_key, "estado": estado})
         session.flush()
-        result = PriceCostUpdateOut(**row_to_update(session, row))
+        result = PriceCostUpdateOut(**row_to_update(session, row, user=user))
         session.commit()
     audit("price_cost_update.check", user=user, resource_type="price_cost_update", resource_id=str(update_id), message="Checklist actualizado", details={"check_key": data.check_key, "checked": data.checked, "estado": result.estado})
     return result
@@ -138,7 +139,7 @@ def cancel_update(update_id: int, data: CancelPayload, user: Annotated[CurrentUs
         row.updated_at = now
         record_history(session, update_id, user, "cancelado", {"cancel_reason": data.cancel_reason or ""})
         session.flush()
-        result = PriceCostUpdateOut(**row_to_update(session, row))
+        result = PriceCostUpdateOut(**row_to_update(session, row, user=user))
         session.commit()
     audit("price_cost_update.cancelled", user=user, resource_type="price_cost_update", resource_id=str(update_id), message="Actualizacion cancelada", details={"reason": data.cancel_reason or ""})
     return result

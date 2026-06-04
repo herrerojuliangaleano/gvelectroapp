@@ -33,6 +33,7 @@ from . import (
     lookup_from_sheets,
     money_decimal_or_none,
     normalize_type,
+    notify_grouped_price_cost_updates,
     notify_users_with_permission,
     record_history,
     require_current_user,
@@ -86,10 +87,15 @@ def create_update(data: PriceCostUpdateCreate, user: Annotated[CurrentUser, Depe
             "valor_nuevo": sheet_money(valor_nuevo),
         })
         session.flush()
-        result = PriceCostUpdateOut(**row_to_update(session, row))
+        result = PriceCostUpdateOut(**row_to_update(session, row, user=user))
         session.commit()
 
     audit("price_cost_update.created", user=user, resource_type="price_cost_update", resource_id=str(update_id), message="Actualizacion urgente creada", details={"type": change_type, "sku": result.sku})
-    label = "precio" if change_type == "price" else "costo"
-    notify_users_with_permission(f"{change_type}_updates.view", f"Actualizacion urgente de {label}", f"{result.sku} - {result.producto}: nuevo {label} {result.valor_nuevo}")
+    notify_grouped_price_cost_updates(change_type, [{
+        "id": result.id,
+        "marca": result.marca or "",
+        "sku": result.sku,
+        "producto": result.producto,
+        "valor_nuevo": result.valor_nuevo,
+    }])
     return result
