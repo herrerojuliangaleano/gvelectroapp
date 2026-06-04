@@ -520,8 +520,8 @@ export function WarrantyQuickCreateModal({
                 <ErpField label="Teléfono" required>
                   <ErpInput value={form.cliente_telefono} onChange={(e) => update({ cliente_telefono: e.target.value })} placeholder="Número de contacto" />
                 </ErpField>
-                <ErpField label="Email" hint="Opcional">
-                  <ErpInput type="email" value={form.cliente_email} onChange={(e) => update({ cliente_email: e.target.value })} placeholder="cliente@email.com" />
+                <ErpField label="Email (opcional)">
+                  <ErpInput type="email" value={form.cliente_email} onChange={(e) => update({ cliente_email: e.target.value })} placeholder="cliente@email.com (si lo tenés a mano)" />
                 </ErpField>
                 <ErpField label="N° factura / ticket" required>
                   <ErpInput value={form.numero_factura} onChange={(e) => update({ numero_factura: e.target.value })} placeholder="Ej: 0001-00012345" />

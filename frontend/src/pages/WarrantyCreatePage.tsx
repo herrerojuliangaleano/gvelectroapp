@@ -491,7 +491,13 @@ export function WarrantyCreatePage() {
         </ErpNotice>
       )}
 
-      <form onSubmit={submit} className="erp-stack-4">
+      {/*
+        noValidate: nuestra validación corre en JS (`validate()`). Sin esto, el
+        browser dispara HTML5 validation sobre `type="email"` y bloquea el
+        submit cuando alguien tipea algo que no parece un mail — el usuario lo
+        lee como "el email es obligatorio" cuando en realidad es opcional.
+      */}
+      <form onSubmit={submit} noValidate className="erp-stack-4">
         {/* Opción: agrupar bajo un mismo ID */}
         <ErpCard>
           <label className="flex items-start gap-3 cursor-pointer">
@@ -524,8 +530,8 @@ export function WarrantyCreatePage() {
               <ErpField label="Teléfono" required>
                 <ErpInput value={sharedClientData.cliente_telefono} onChange={(e) => updateSharedClientData({ cliente_telefono: e.target.value })} placeholder="Número de contacto" />
               </ErpField>
-              <ErpField label="Correo electrónico" hint="Opcional" wide>
-                <ErpInput type="email" value={sharedClientData.cliente_email} onChange={(e) => updateSharedClientData({ cliente_email: e.target.value })} placeholder="cliente@email.com" />
+              <ErpField label="Correo electrónico (opcional)" wide>
+                <ErpInput type="email" value={sharedClientData.cliente_email} onChange={(e) => updateSharedClientData({ cliente_email: e.target.value })} placeholder="cliente@email.com (si lo tenés a mano)" />
               </ErpField>
               <ErpField label="N° factura / ticket" required>
                 <ErpInput value={sharedClientData.numero_factura} onChange={(e) => updateSharedClientData({ numero_factura: e.target.value })} placeholder="Ej: 0001-00012345" />
@@ -765,8 +771,8 @@ export function WarrantyCreatePage() {
                         <ErpField label={<>Teléfono {isClientIngreso(row.tipo_ingreso) && <span className="erp-field-required">*</span>}</>}>
                           <ErpInput value={row.cliente_telefono || ''} onChange={(e) => updateRow(row.localId, { cliente_telefono: e.target.value })} placeholder="Número de contacto" />
                         </ErpField>
-                        <ErpField label="Correo electrónico" hint="Opcional" wide>
-                          <ErpInput type="email" value={row.cliente_email || ''} onChange={(e) => updateRow(row.localId, { cliente_email: e.target.value })} placeholder="cliente@email.com" />
+                        <ErpField label="Correo electrónico (opcional)" wide>
+                          <ErpInput type="email" value={row.cliente_email || ''} onChange={(e) => updateRow(row.localId, { cliente_email: e.target.value })} placeholder="cliente@email.com (si lo tenés a mano)" />
                         </ErpField>
                         <ErpField label={<>N° factura / ticket {isClientIngreso(row.tipo_ingreso) && <span className="erp-field-required">*</span>}</>}>
                           <ErpInput value={row.numero_factura || ''} onChange={(e) => updateRow(row.localId, { numero_factura: e.target.value })} placeholder="Ej: 0001-00012345" />
