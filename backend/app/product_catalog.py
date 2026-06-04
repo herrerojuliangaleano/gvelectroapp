@@ -490,7 +490,7 @@ def sync_products_from_sheet(actor: Any) -> dict[str, Any]:
                     product.updated_at = now
                     updated += 1
 
-                    if pvp_dec is not None and old_pvp is not None and abs(pvp_dec - old_pvp) > Decimal("0.005"):
+                    if pvp_dec is not None and (old_pvp is None or abs(pvp_dec - old_pvp) > Decimal("0.005")):
                         price_changes_detected += 1
                         created_update = _try_create_price_cost_update(session, "price", sku, descripcion, marca, old_pvp, pvp_dec, int(product.id), int(log.id), now)
                         if created_update:
@@ -498,7 +498,7 @@ def sync_products_from_sheet(actor: Any) -> dict[str, Any]:
                             created_price_updates.append(created_update)
                         else:
                             price_cost_updates_skipped += 1
-                    if costo_dec is not None and old_costo is not None and abs(costo_dec - old_costo) > Decimal("0.005"):
+                    if costo_dec is not None and (old_costo is None or abs(costo_dec - old_costo) > Decimal("0.005")):
                         cost_changes_detected += 1
                         created_update = _try_create_price_cost_update(session, "cost", sku, descripcion, marca, old_costo, costo_dec, int(product.id), int(log.id), now)
                         if created_update:

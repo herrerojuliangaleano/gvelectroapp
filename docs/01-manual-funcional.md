@@ -362,6 +362,8 @@ u otros canales, usando solo el precio nuevo.
 - Generar una o varias imagenes PNG agrupadas por marca.
 - Si una imagen se llena, el backend divide automaticamente la tanda en
   varias imagenes para que ninguna placa quede cortada.
+- Si una placa tiene pocos productos, el PNG se genera con menor altura para
+  evitar espacio en blanco excesivo.
 - Los ingresos nuevos se ordenan arriba; la placa que contiene ingresos usa
   `Nuevos precios e ingresos` si mezcla cambios e ingresos, `Nuevos precios`
   si solo hay cambios y `Nuevo ingreso`/`Nuevos ingresos` si solo hay altas.

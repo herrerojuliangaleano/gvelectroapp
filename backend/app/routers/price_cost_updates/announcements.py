@@ -63,12 +63,14 @@ AR_TZ = ZoneInfo("America/Argentina/Buenos_Aires")
 # ── Lienzo ─────────────────────────────────────────────────────────────────
 IMAGE_W = 1080
 IMAGE_H = 1800
+MIN_IMAGE_H = 1080
 MAX_PRODUCTS_PER_PAGE = 18
 ANNOUNCEMENT_PRICE_DISPLAY_OFFSET = Decimal("10")
 HERO_H = 220
 FOOTER_H = 56
 BODY_PADDING_TOP = 28
 BODY_PADDING_BOTTOM = 28
+PAGE_HEIGHT_SAFETY = 36
 PAGE_BODY_AVAILABLE_H = IMAGE_H - HERO_H - FOOTER_H - BODY_PADDING_TOP - BODY_PADDING_BOTTOM
 BRAND_HEADER_ESTIMATED_H = 58
 CARD_ESTIMATED_H = 112
@@ -240,6 +242,28 @@ def _page_entry_mix(entries: list[dict[str, Any]]) -> tuple[int, int]:
     return new_count, price_count
 
 
+def _page_estimated_body_height(entries: list[dict[str, Any]]) -> int:
+    height = 0
+    for entry in entries:
+        if entry.get("kind") == "brand":
+            height += BRAND_HEADER_ESTIMATED_H
+        elif entry.get("kind") == "row":
+            height += _estimated_row_height(entry)
+    return height
+
+
+def _page_image_height(entries: list[dict[str, Any]]) -> int:
+    content_height = (
+        HERO_H
+        + BODY_PADDING_TOP
+        + _page_estimated_body_height(entries)
+        + BODY_PADDING_BOTTOM
+        + FOOTER_H
+        + PAGE_HEIGHT_SAFETY
+    )
+    return max(MIN_IMAGE_H, min(IMAGE_H, content_height))
+
+
 def _page_brand_counts(entries: list[dict[str, Any]]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for entry in entries:
@@ -326,16 +350,18 @@ def _render_announcement_rows(
     logo_path = brand_logo_path(logo_brand)
     logo_uri = logo_path.as_uri() if logo_path else ""
     pages = _paginate(rows)
+    page_heights = [_page_image_height(entries) for entries in pages]
     html_pages = [
         _build_html(
             page_entries=entries,
             vigencia=vigencia_text,
             total_productos=len(rows),
             logo_uri=logo_uri,
+            image_height=page_heights[index],
         )
-        for entries in pages
+        for index, entries in enumerate(pages)
     ]
-    return pages, _render_pages_to_png(html_pages)
+    return pages, _render_pages_to_png(html_pages, page_heights)
 
 
 def _batch_out(session, batch: PriceAnnouncementBatchModel) -> AnnouncementBatchOut:
@@ -462,7 +488,7 @@ html, body {
 
 .page {
   width: 1080px;
-  height: 1800px;
+  height: __PAGE_HEIGHT__px;
   position: relative;
   background: #F5F7FB;
   overflow: hidden;
@@ -690,6 +716,7 @@ def _build_html(
     vigencia: str,
     total_productos: int,
     logo_uri: str,
+    image_height: int = IMAGE_H,
 ) -> str:
     """Construye el HTML completo de una página."""
 
@@ -697,6 +724,7 @@ def _build_html(
         _CSS_TEMPLATE
         .replace("__INTER_URI__", _file_uri(INTER_PATH))
         .replace("__MONO_URI__", _file_uri(MONO_PATH))
+        .replace("__PAGE_HEIGHT__", str(int(image_height)))
     )
 
     # Hero — logo a la derecha (mas grande, sin label de texto)
@@ -792,8 +820,8 @@ def _build_html(
 # Render via Chromium headless
 # ──────────────────────────────────────────────────────────────────────────
 
-def _render_pages_to_png(html_pages: list[str]) -> list[bytes]:
-    """Lanza Chromium una sola vez y renderiza N páginas a PNG 1080×1800."""
+def _render_pages_to_png(html_pages: list[str], page_heights: list[int] | None = None) -> list[bytes]:
+    """Lanza Chromium una sola vez y renderiza N paginas a PNG 1080 x alto variable."""
     # Import lazy: si Playwright no está instalado, error 500 con mensaje claro.
     try:
         from playwright.sync_api import sync_playwright
@@ -827,9 +855,10 @@ def _render_pages_to_png(html_pages: list[str]) -> list[bytes]:
                 args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
             )
             try:
-                for fp in html_files:
+                heights = page_heights or [IMAGE_H for _ in html_files]
+                for fp, page_height in zip(html_files, heights):
                     context = browser.new_context(
-                        viewport={"width": IMAGE_W, "height": IMAGE_H},
+                        viewport={"width": IMAGE_W, "height": int(page_height)},
                         device_scale_factor=1,
                     )
                     page = context.new_page()
@@ -838,7 +867,7 @@ def _render_pages_to_png(html_pages: list[str]) -> list[bytes]:
                     page.evaluate("async () => { await document.fonts.ready; }")
                     png = page.screenshot(
                         type="png",
-                        clip={"x": 0, "y": 0, "width": IMAGE_W, "height": IMAGE_H},
+                        clip={"x": 0, "y": 0, "width": IMAGE_W, "height": int(page_height)},
                         omit_background=False,
                     )
                     output.append(png)
@@ -914,12 +943,13 @@ def generate_announcement_images(
             vigencia=vigencia_text,
             total_productos=len(rows),
             logo_uri=logo_uri,
+            image_height=_page_image_height(entries),
         )
         for entries in pages
     ]
 
     # Render todas las páginas en una sola sesión de Chromium
-    png_bytes_list = _render_pages_to_png(html_pages)
+    png_bytes_list = _render_pages_to_png(html_pages, [_page_image_height(entries) for entries in pages])
 
     batch_id: int | None = None
     now_db = utc_now_dt()
