@@ -1,9 +1,10 @@
 import {
   CheckSquare,
+  ClipboardCheck,
+  Copy,
   Download,
   ImageDown,
   Layers3,
-  MessageCircle,
   RefreshCw,
   Search,
   Share2,
@@ -88,6 +89,8 @@ export function PriceAnnouncementsPage() {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<PriceAnnouncementImagesResponse | null>(null);
+  const [shareHint, setShareHint] = useState('');
+  const [copiedFor, setCopiedFor] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -215,17 +218,46 @@ export function PriceAnnouncementsPage() {
 
   async function shareImage(image: PriceAnnouncementImage) {
     if (!result) return;
+    setShareHint('');
     const file = dataUrlToFile(image.data_url, image.filename, image.mime_type);
     const nav = navigator as Navigator & {
       canShare?: (data: ShareData) => boolean;
       share?: (data: ShareData) => Promise<void>;
     };
+    // Camino feliz mobile (Android/iOS): Web Share API Level 2 abre el menú
+    // del sistema con la imagen adjunta + el mensaje como caption. El usuario
+    // elige WhatsApp en el menú y manda directamente.
     if (nav.share && nav.canShare?.({ files: [file] })) {
-      await nav.share({ title: 'Cambios de precios', text: result.message, files: [file] });
-      return;
+      try {
+        await nav.share({ title: 'Cambios de precios', text: result.message, files: [file] });
+        return;
+      } catch (err) {
+        // Usuario canceló el share-sheet — no es error real.
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+      }
     }
+    // Fallback desktop: WhatsApp Web no soporta adjuntos por URL.
+    // Lo mejor que podemos hacer es bajar la imagen, copiar el mensaje
+    // al portapapeles y abrir wa.me. El usuario adjunta a mano y pega.
     downloadImage(image);
+    try {
+      await navigator.clipboard.writeText(result.message);
+      setShareHint('Imagen descargada y mensaje copiado. Abrí WhatsApp Web, adjuntá la imagen y pegá el mensaje en el caption.');
+    } catch {
+      setShareHint('Imagen descargada. Copiá el mensaje desde el botón "Copiar mensaje" y adjuntá la imagen en WhatsApp Web.');
+    }
     window.open(`https://wa.me/?text=${encodeURIComponent(result.message)}`, '_blank', 'noopener,noreferrer');
+  }
+
+  async function copyMessage(image: PriceAnnouncementImage) {
+    if (!result) return;
+    try {
+      await navigator.clipboard.writeText(result.message);
+      setCopiedFor(image.filename);
+      window.setTimeout(() => setCopiedFor((current) => (current === image.filename ? null : current)), 1800);
+    } catch {
+      setShareHint('No se pudo copiar al portapapeles. El navegador puede estar bloqueando el acceso.');
+    }
   }
 
   if (!canUse) {
@@ -515,33 +547,39 @@ export function PriceAnnouncementsPage() {
 
           {result && (
             <div className="space-y-4">
-              {result.images.map((image) => (
-                <article key={image.filename} className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3">
-                  <img src={image.data_url} alt={image.filename} className="w-full rounded-xl border border-[color:var(--border)] bg-white" />
-                  <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="text-sm text-[color:var(--text-2)]">
-                      {image.product_count} productos - {image.brand_names.join(', ')}
+              {shareHint && (
+                <ErpNotice tone="info" title="Cómo compartir en WhatsApp Web">
+                  {shareHint}
+                </ErpNotice>
+              )}
+              {result.images.map((image) => {
+                const justCopied = copiedFor === image.filename;
+                return (
+                  <article key={image.filename} className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3">
+                    <img src={image.data_url} alt={image.filename} className="w-full rounded-xl border border-[color:var(--border)] bg-white" />
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="text-sm text-[color:var(--text-2)]">
+                        {image.product_count} productos - {image.brand_names.join(', ')}
+                      </div>
+                      <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
+                        <ErpButton variant="secondary" size="sm" onClick={() => downloadImage(image)} leftIcon={<Download size={15} />} fullWidth className="justify-center sm:w-auto">
+                          Descargar
+                        </ErpButton>
+                        <ErpButton variant="secondary" size="sm" onClick={() => copyMessage(image)} leftIcon={justCopied ? <ClipboardCheck size={15} /> : <Copy size={15} />} fullWidth className="justify-center sm:w-auto">
+                          {justCopied ? 'Copiado' : 'Copiar mensaje'}
+                        </ErpButton>
+                        <ErpButton variant="primary" size="sm" onClick={() => shareImage(image)} leftIcon={<Share2 size={15} />} fullWidth className="justify-center sm:w-auto">
+                          Compartir
+                        </ErpButton>
+                      </div>
                     </div>
-                    <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
-                      <ErpButton variant="secondary" size="sm" onClick={() => downloadImage(image)} leftIcon={<Download size={15} />} fullWidth className="justify-center sm:w-auto">
-                        Descargar
-                      </ErpButton>
-                      <ErpButton variant="primary" size="sm" onClick={() => shareImage(image)} leftIcon={<Share2 size={15} />} fullWidth className="justify-center sm:w-auto">
-                        Compartir
-                      </ErpButton>
-                      <a
-                        href={`https://wa.me/?text=${encodeURIComponent(result.message)}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="erp-btn erp-btn-secondary erp-btn-sm w-full justify-center sm:w-auto"
-                      >
-                        <MessageCircle size={15} />
-                        <span>WhatsApp</span>
-                      </a>
-                    </div>
-                  </div>
-                </article>
-              ))}
+                    <p className="mt-2 text-[11px] leading-snug text-[color:var(--text-3)]">
+                      En el celular se abre el menú de compartir con la imagen adjunta y el mensaje listo.
+                      En la PC se descarga la imagen y se copia el mensaje para WhatsApp Web.
+                    </p>
+                  </article>
+                );
+              })}
             </div>
           )}
         </ErpCard>

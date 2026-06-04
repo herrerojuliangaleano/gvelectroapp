@@ -149,7 +149,8 @@ def _format_vigencia(value: str) -> str:
     dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
     meses = ["enero", "febrero", "marzo", "abril", "mayo", "junio",
              "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
-    return f"{dias[now.weekday()]} {now.day} de {meses[now.month - 1]} {now.year}"
+    # Incluye hora porque el mismo día puede haber dos listas (mañana / tarde).
+    return f"{dias[now.weekday()]} {now.day} de {meses[now.month - 1]} {now.year} · {now.strftime('%H:%M')}"
 
 
 def _safe_filename(value: str) -> str:
@@ -380,6 +381,7 @@ html, body {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
+  gap: 4px;
   font-family: 'Inter', sans-serif;
   font-size: 11px;
   font-weight: 700;
@@ -389,7 +391,14 @@ html, body {
   white-space: nowrap;
   text-transform: uppercase;
 }
-.badge.AUMENTO { background: #FEE2E2; color: #991B1B; }
+.badge .icon {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  font-family: 'Inter', sans-serif;
+}
+/* Ámbar para AUMENTO (hace juego con "precios" del título). */
+.badge.AUMENTO { background: #FEF3C7; color: #92400E; }
 .badge.BAJA    { background: #D1FAE5; color: #065F46; }
 .badge.NUEVO   { background: #DBEAFE; color: #1E40AF; }
 
@@ -420,7 +429,8 @@ html, body {
   letter-spacing: -0.01em;
   white-space: nowrap;
 }
-.card.AUMENTO .price-new { color: #DC2626; }
+/* AUMENTO ahora va en ámbar (mismo lenguaje visual que el título). */
+.card.AUMENTO .price-new { color: #D97706; }
 .card.BAJA    .price-new { color: #059669; }
 .card.NUEVO   .price-new { color: #2563EB; }
 
@@ -430,19 +440,16 @@ html, body {
   bottom: 0;
   left: 0;
   right: 0;
-  height: 64px;
+  height: 56px;
   background: #0B1224;
-  color: #CBD5E1;
+  color: #FFFFFF;
   padding: 0 40px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   font-size: 14px;
-  font-weight: 500;
-}
-.footer .right {
-  color: #FFFFFF;
   font-weight: 600;
+  letter-spacing: 0.01em;
 }
 """
 
@@ -494,13 +501,16 @@ def _build_html(
             f'<div class="price-old">{_esc(price_old)}</div>'
             if change in ("AUMENTO", "BAJA") and price_old else ""
         )
+        # Icono inline en el badge: ↑ aumento, ↓ baja, ★ nuevo.
+        # Usamos Unicode geométrico (no emoji) para que mantenga el color del badge.
+        badge_icon = {"AUMENTO": "↑", "BAJA": "↓", "NUEVO": "★"}.get(change, "")
         body_html.append(
             f'''<div class="card {change}">
                 <div class="info">
                   <div class="desc">{_esc(entry.get("producto", ""))}</div>
                   <div class="sku-row">
                     <span class="sku">{_esc(entry.get("sku", ""))}</span>
-                    <span class="badge {change}">{_esc(change)}</span>
+                    <span class="badge {change}"><span class="icon">{badge_icon}</span>{_esc(change)}</span>
                   </div>
                 </div>
                 <div class="prices">
@@ -514,7 +524,7 @@ def _build_html(
     body_html.append("</div>")  # cierra el ultimo brand-block
 
     productos_label = "producto actualizado" if total_productos == 1 else "productos actualizados"
-    footer_right = f"Generado por {_esc(generado_por)}" if generado_por else "ELECTRO GV"
+    footer_text = f"Generado por {_esc(generado_por)}" if generado_por else "ELECTRO GV"
 
     html_doc = f"""<!DOCTYPE html>
 <html lang="es">
@@ -534,10 +544,7 @@ def _build_html(
   <div class="body">
     {''.join(body_html)}
   </div>
-  <div class="footer">
-    <div class="left">Lista sujeta a stock · Precios finales sin IVA</div>
-    <div class="right">{footer_right}</div>
-  </div>
+  <div class="footer">{footer_text}</div>
 </div>
 </body>
 </html>
