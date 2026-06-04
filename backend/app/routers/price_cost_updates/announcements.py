@@ -9,10 +9,10 @@ Spec exacta del gerente:
     Inter Medium (wrap natural, sin truncar) + badge inline.
   - Precios con tabular-nums; antiguo tachado arriba en gris, nuevo coloreado
     por tipo abajo (AUMENTO rojo, BAJA verde, NUEVO azul).
-  - Footer dark con "Generado por <usuario>".
+  - Footer dark con la fecha de vigencia.
 
 Render pipeline:
-  1. Pre-paginar items (25 por página, manteniendo agrupación por marca).
+  1. Pre-paginar items por alto visual, manteniendo agrupación por marca.
   2. Por cada página: generar HTML+CSS y guardar en storage/runs/announcements/.
   3. Levantar Chromium una vez por request, abrir el HTML por `page.goto(file://)`,
      esperar a que las fuentes carguen y screenshotear 1080×1800.
@@ -50,7 +50,14 @@ AR_TZ = ZoneInfo("America/Argentina/Buenos_Aires")
 # ── Lienzo ─────────────────────────────────────────────────────────────────
 IMAGE_W = 1080
 IMAGE_H = 1800
-MAX_PRODUCTS_PER_PAGE = 25
+MAX_PRODUCTS_PER_PAGE = 18
+HERO_H = 220
+FOOTER_H = 56
+BODY_PADDING_TOP = 28
+BODY_PADDING_BOTTOM = 28
+PAGE_BODY_AVAILABLE_H = IMAGE_H - HERO_H - FOOTER_H - BODY_PADDING_TOP - BODY_PADDING_BOTTOM
+BRAND_HEADER_ESTIMATED_H = 58
+CARD_ESTIMATED_H = 112
 
 # ── Paths ──────────────────────────────────────────────────────────────────
 _BACKEND_ROOT = Path(__file__).resolve().parents[3]
@@ -171,27 +178,77 @@ def _file_uri(path: Path) -> str:
     return path.as_uri() if path.exists() else ""
 
 
+def _is_new_entry(row: dict[str, Any]) -> bool:
+    return str(row.get("change") or "").upper() == "NUEVO"
+
+
+def _estimated_row_height(row: dict[str, Any]) -> int:
+    height = CARD_ESTIMATED_H
+    product_len = len(str(row.get("producto") or ""))
+    sku_len = len(str(row.get("sku") or ""))
+    if product_len > 64:
+        height += 14
+    if product_len > 100:
+        height += 12
+    if sku_len > 24:
+        height += 8
+    return height
+
+
+def _page_has_new_entries(entries: list[dict[str, Any]]) -> bool:
+    return any(entry.get("kind") == "row" and _is_new_entry(entry) for entry in entries)
+
+
+def _page_brand_counts(entries: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for entry in entries:
+        if entry.get("kind") != "row":
+            continue
+        marca = str(entry.get("marca") or "Sin marca")
+        counts[marca] = counts.get(marca, 0) + 1
+    return counts
+
+
+def _hero_title_html(has_new_entries: bool) -> str:
+    if has_new_entries:
+        return 'Nuevos <span class="accent-new">ingresos</span> y <span class="accent-price">precios</span>'
+    return 'Nuevos <span class="accent-price">precios</span>'
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Paginación
 # ──────────────────────────────────────────────────────────────────────────
 
 def _paginate(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    """Páginas de hasta MAX_PRODUCTS_PER_PAGE productos, manteniendo agrupación por marca."""
+    """Paginas por alto visual, manteniendo agrupacion por marca."""
     pages: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     products_on_page = 0
+    estimated_height = 0
     last_brand = ""
     for row in rows:
         brand = str(row["marca"] or "Sin marca")
-        if products_on_page >= MAX_PRODUCTS_PER_PAGE:
+        row_height = _estimated_row_height(row)
+        needs_brand_header = brand != last_brand
+        extra_height = row_height + (BRAND_HEADER_ESTIMATED_H if needs_brand_header else 0)
+
+        if current and (
+            products_on_page >= MAX_PRODUCTS_PER_PAGE
+            or estimated_height + extra_height > PAGE_BODY_AVAILABLE_H
+        ):
             pages.append(current)
             current = []
             products_on_page = 0
+            estimated_height = 0
             last_brand = ""
-        if brand != last_brand:
+            needs_brand_header = True
+
+        if needs_brand_header:
             current.append({"kind": "brand", "marca": brand})
+            estimated_height += BRAND_HEADER_ESTIMATED_H
             last_brand = brand
         current.append({"kind": "row", **row})
+        estimated_height += row_height
         products_on_page += 1
     if current:
         pages.append(current)
@@ -261,7 +318,9 @@ html, body {
   letter-spacing: -0.01em;
   line-height: 1.05;
 }
-.hero h1 .accent { color: #F5B544; }
+.hero h1 .accent,
+.hero h1 .accent-price { color: #F5B544; }
+.hero h1 .accent-new { color: #2563EB; }
 .hero .vigencia {
   margin-top: 24px;
   font-size: 18px;
@@ -460,8 +519,6 @@ def _build_html(
     vigencia: str,
     total_productos: int,
     logo_uri: str,
-    generado_por: str,
-    brand_count_global: dict[str, int],
 ) -> str:
     """Construye el HTML completo de una página."""
 
@@ -477,12 +534,17 @@ def _build_html(
     else:
         hero_logo = '<div class="logo-fallback">GV</div>'
 
+    brand_count_page = _page_brand_counts(page_entries)
+    hero_title = _hero_title_html(_page_has_new_entries(page_entries))
     body_html: list[str] = []
+    brand_block_open = False
     for entry in page_entries:
         if entry["kind"] == "brand":
+            if brand_block_open:
+                body_html.append("</div>")
             marca = str(entry["marca"])
             bar_color = _brand_color(marca)
-            count = brand_count_global.get(marca, 0)
+            count = brand_count_page.get(marca, 0)
             count_text = f"{count} cambio" if count == 1 else f"{count} cambios"
             body_html.append(
                 f'''<div class="brand-block">
@@ -492,6 +554,7 @@ def _build_html(
                       <div class="brand-count">{_esc(count_text)}</div>
                     </div>'''
             )
+            brand_block_open = True
             continue
         # Card de producto
         change = entry.get("change") or "NUEVO"
@@ -521,10 +584,11 @@ def _build_html(
         )
 
     # Cerrar el último brand-block (todos los products terminan dentro de un brand-block abierto)
-    body_html.append("</div>")  # cierra el ultimo brand-block
+    if brand_block_open:
+        body_html.append("</div>")
 
     productos_label = "producto actualizado" if total_productos == 1 else "productos actualizados"
-    footer_text = f"Generado por {_esc(generado_por)}" if generado_por else "ELECTRO GV"
+    footer_text = f"Vigencia: {_esc(vigencia)}"
 
     html_doc = f"""<!DOCTYPE html>
 <html lang="es">
@@ -536,7 +600,7 @@ def _build_html(
 <div class="page">
   <div class="hero">
     <div class="hero-content">
-      <h1>Nuevos <span class="accent">precios</span></h1>
+      <h1>{hero_title}</h1>
       <div class="vigencia">Vigencia: {_esc(vigencia)} · {total_productos} {productos_label}</div>
     </div>
     {hero_logo}
@@ -656,15 +720,21 @@ def generate_announcement_images(
             "valor_nuevo_dec": valor_new,
             "valor_anterior_text": _money_display(valor_ant),
             "valor_nuevo_text": _money_display(valor_new),
+            "auto_created": bool(row.auto_created),
         }
         rec["change"] = _classify(rec)
+        rec["is_new_entry"] = _is_new_entry(rec)
         rows.append(rec)
-    rows.sort(key=lambda item: (item["marca"].lower(), item["producto"].lower(), item["sku"].lower()))
+    rows.sort(
+        key=lambda item: (
+            0 if item["is_new_entry"] else 1,
+            item["marca"].lower(),
+            item["producto"].lower(),
+            item["sku"].lower(),
+        )
+    )
 
     brands = list(dict.fromkeys(row["marca"] for row in rows))
-    brand_count_global: dict[str, int] = {}
-    for r in rows:
-        brand_count_global[r["marca"]] = brand_count_global.get(r["marca"], 0) + 1
 
     aumentos_total = sum(1 for r in rows if r["change"] == "AUMENTO")
     bajas_total    = sum(1 for r in rows if r["change"] == "BAJA")
@@ -673,7 +743,6 @@ def generate_announcement_images(
     now = datetime.now(AR_TZ)
     generated_at = now.strftime("%d/%m/%Y %H:%M")
     vigencia_text = _format_vigencia(payload.vigencia)
-    generado_por = str(getattr(user, "display_name", "") or getattr(user, "username", "") or "").strip()
 
     # Mensaje (para WhatsApp share / log)
     msg_parts = []
@@ -681,7 +750,8 @@ def generate_announcement_images(
     if bajas_total:    msg_parts.append(f"{bajas_total} baja{'s' if bajas_total != 1 else ''}")
     if nuevos_total:   msg_parts.append(f"{nuevos_total} nuevo{'s' if nuevos_total != 1 else ''}")
     detail = ", ".join(msg_parts) if msg_parts else "sin cambios"
-    message = f"Nuevos precios {generated_at} — {detail}."
+    message_title = "Nuevos ingresos y precios" if nuevos_total else "Nuevos precios"
+    message = f"{message_title} {generated_at} - {detail}."
 
     # Logo
     logo_path = brand_logo_path(payload.logo_brand)
@@ -696,8 +766,6 @@ def generate_announcement_images(
             vigencia=vigencia_text,
             total_productos=len(rows),
             logo_uri=logo_uri,
-            generado_por=generado_por,
-            brand_count_global=brand_count_global,
         )
         for entries in pages
     ]
@@ -709,7 +777,8 @@ def generate_announcement_images(
     images: list[AnnouncementImageOut] = []
     for index, (entries, png) in enumerate(zip(pages, png_bytes_list), start=1):
         page_brands = list(dict.fromkeys(str(entry.get("marca") or "") for entry in entries if entry.get("kind") == "row"))
-        filename = f"nuevos-precios-{stamp}-{index:02d}-{_safe_filename('-'.join(page_brands[:2]))}.png"
+        prefix = "nuevos-ingresos-precios" if _page_has_new_entries(entries) else "nuevos-precios"
+        filename = f"{prefix}-{stamp}-{index:02d}-{_safe_filename('-'.join(page_brands[:2]))}.png"
         data_url = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
         images.append(
             AnnouncementImageOut(

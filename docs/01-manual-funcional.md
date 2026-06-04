@@ -351,6 +351,12 @@ u otros canales, usando solo el precio nuevo.
 - Filtrar por marca, estado o busqueda libre.
 - Seleccionar productos manualmente o por marca/filtro.
 - Generar una o varias imagenes PNG agrupadas por marca.
+- Si una imagen se llena, el backend divide automaticamente la tanda en
+  varias imagenes para que ninguna placa quede cortada.
+- Los ingresos nuevos se ordenan arriba; la placa que contiene ingresos usa
+  el titulo `Nuevos ingresos y precios`.
+- El footer de cada placa repite la vigencia, sin mostrar quien genero la
+  imagen.
 - Descargar cada imagen.
 - Compartir cada imagen con mensaje automatico:
   `Cambios de precios {fecha y hora} en {marcas}.`
