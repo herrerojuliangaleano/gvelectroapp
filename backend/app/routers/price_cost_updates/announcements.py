@@ -23,9 +23,26 @@ router = APIRouter(prefix="/api/price-cost-updates", tags=["price-cost-updates"]
 AR_TZ = ZoneInfo("America/Argentina/Buenos_Aires")
 
 # ── Lienzo ────────────────────────────────────────────────────────────────
+# Formato historia (Instagram / WhatsApp): 1080×1920 ratio 9:16.
 IMAGE_W = 1080
-IMAGE_H = 1620                      # vertical alargado para que entre todo el contenido
+IMAGE_H = 1920
 MARGIN = 56
+
+# ── Tipografía ────────────────────────────────────────────────────────────
+# Inter como variable font (un solo archivo con todos los pesos).
+# Pillow >= 9.2 soporta fonts variables vía set_variation_by_axes / by_name.
+# Si la fuente no carga, caemos a DejaVuSans / default.
+import os
+from pathlib import Path
+
+_BACKEND_ROOT = Path(__file__).resolve().parents[3]  # backend/
+INTER_PATH = _BACKEND_ROOT / "storage" / "fonts" / "Inter-Variable.ttf"
+# Pesos disponibles en Inter (axis `wght`): 100, 200, 300, 400, 500, 600, 700, 800, 900.
+WEIGHT_REGULAR  = 400
+WEIGHT_MEDIUM   = 500
+WEIGHT_SEMIBOLD = 600
+WEIGHT_BOLD     = 700
+WEIGHT_BLACK    = 900
 
 # ── Tipos de cambio ───────────────────────────────────────────────────────
 CHANGE_AUMENTO = "AUMENTO"
@@ -105,13 +122,46 @@ class AnnouncementImagesOut(BaseModel):
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────
 
-def _font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    names = ["DejaVuSans-Bold.ttf", "Arial Bold.ttf"] if bold else ["DejaVuSans.ttf", "Arial.ttf"]
-    for name in names:
-        try:
-            return ImageFont.truetype(name, size)
-        except Exception:
-            continue
+def _font(size: int, *, weight: int = WEIGHT_REGULAR, bold: bool | None = None) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """Carga Inter Variable con el peso pedido.
+
+    - `weight`: 100-900 (eje wght de la fuente variable).
+    - `bold`: shortcut legacy (compat). Si True → WEIGHT_BOLD.
+
+    Fallback: DejaVuSans → fuentes Vera de reportlab → load_default.
+    """
+    if bold is True and weight == WEIGHT_REGULAR:
+        weight = WEIGHT_BOLD
+
+    # 1) Inter Variable con set_variation_by_axes
+    try:
+        if INTER_PATH.exists():
+            font = ImageFont.truetype(str(INTER_PATH), size)
+            try:
+                font.set_variation_by_axes([weight])
+            except Exception:
+                # Algunas versiones de Pillow ignoran si no es variable; sigue siendo Regular.
+                pass
+            return font
+    except Exception:
+        pass
+
+    # 2) DejaVuSans (algunas imágenes Docker la traen)
+    try:
+        name = "DejaVuSans-Bold.ttf" if weight >= WEIGHT_BOLD else "DejaVuSans.ttf"
+        return ImageFont.truetype(name, size)
+    except Exception:
+        pass
+
+    # 3) Vera (viene con reportlab, está garantizado en este container)
+    try:
+        import reportlab as _rl  # type: ignore
+        vera_dir = Path(_rl.__file__).parent / "fonts"
+        vera_name = "VeraBd.ttf" if weight >= WEIGHT_BOLD else "Vera.ttf"
+        return ImageFont.truetype(str(vera_dir / vera_name), size)
+    except Exception:
+        pass
+
     return ImageFont.load_default()
 
 
@@ -164,6 +214,26 @@ def _load_logo(logo_brand: str) -> Image.Image | None:
         return logo
     except Exception:
         return None
+
+
+def _money_display(value: Any) -> str:
+    """Formatea un Decimal/float como '$ 449.000' (locale AR, sin centavos si son .00).
+
+    Para el PNG no usamos `sheet_money` directo porque ese formato es para
+    Google Sheets (sin '$', con dos decimales fijos).
+    """
+    if value is None or value == "":
+        return ""
+    try:
+        d = Decimal(str(value))
+    except Exception:
+        return str(value)
+    # Si los centavos son 0, ocultarlos para que se vea más limpio.
+    if d == d.to_integral_value():
+        body = f"{int(d):,}".replace(",", ".")
+    else:
+        body = f"{d:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"$ {body}"
 
 
 def _classify(row: dict[str, Any]) -> str:
@@ -291,7 +361,7 @@ def _draw_hero(
         image.alpha_composite(logo, (lx, ly))
     else:
         # Texto "GV" como placeholder
-        ph_font = _font(36, bold=True)
+        ph_font = _font(38, weight=WEIGHT_BLACK)
         ph_text = "GV"
         pw = _text_width(draw, ph_text, ph_font)
         draw.text(
@@ -300,7 +370,7 @@ def _draw_hero(
         )
 
     # ── Empresa al costado del logo
-    empresa_font = _font(34, bold=True)
+    empresa_font = _font(32, weight=WEIGHT_BOLD)
     draw.text(
         (logo_box_x + logo_box_size + 22, logo_box_y + 28),
         (empresa_label or "ELECTRO GV").upper(),
@@ -313,7 +383,7 @@ def _draw_hero(
     parts = title.strip().split()
     if not parts:
         parts = ["Nuevos", "precios"]
-    title_font = _font(74, bold=True)
+    title_font = _font(88, weight=WEIGHT_BLACK)
     title_y = logo_box_y + logo_box_size + 30
     cursor_x = MARGIN
     for idx, word in enumerate(parts):
@@ -323,7 +393,7 @@ def _draw_hero(
         cursor_x += int(_text_width(draw, word, title_font)) + 18
 
     # ── Vigencia + total productos
-    sub_font = _font(22)
+    sub_font = _font(22, weight=WEIGHT_MEDIUM)
     sub_text = f"Vigencia: {vigencia} · {total_productos} productos actualizados"
     draw.text((MARGIN, title_y + 92), sub_text, fill=COL_HERO_SUB, font=sub_font)
 
@@ -337,8 +407,8 @@ def _draw_brand_header(
     bar_color: str,
 ) -> int:
     """Header de sección por marca. Devuelve nuevo y."""
-    brand_font = _font(30, bold=True)
-    count_font = _font(18)
+    brand_font = _font(38, weight=WEIGHT_BLACK)
+    count_font = _font(18, weight=WEIGHT_MEDIUM)
 
     # Barra vertical de color
     bar_w = 6
@@ -379,9 +449,9 @@ def _draw_product_row(
     )
 
     # ── Columna izquierda: DESCRIPCIÓN grande + SKU + badge debajo
-    desc_font = _font(24, bold=True)
-    sku_font  = _font(20, bold=True)
-    badge_font = _font(14, bold=True)
+    desc_font  = _font(28, weight=WEIGHT_SEMIBOLD)
+    sku_font   = _font(22, weight=WEIGHT_BOLD)
+    badge_font = _font(14, weight=WEIGHT_BOLD)
 
     inner_x = row_left + 24
     desc_max_w = (row_right - 380) - inner_x   # reservar derecha para los precios
@@ -425,8 +495,8 @@ def _draw_product_row(
     price_new = str(entry.get("valor_nuevo") or "")
     price_old = str(entry.get("valor_anterior_text") or "")
 
-    price_new_font = _font(34, bold=True)
-    price_old_font = _font(18)
+    price_new_font = _font(40, weight=WEIGHT_BLACK)
+    price_old_font = _font(18, weight=WEIGHT_MEDIUM)
 
     if change == CHANGE_AUMENTO:
         price_color = COL_AUMENTO_PRICE
@@ -463,8 +533,8 @@ def _draw_footer(draw: ImageDraw.ImageDraw, *, contacto: str) -> None:
     """Franja oscura abajo con texto de aviso + contacto."""
     draw.rectangle((0, IMAGE_H - FOOTER_H, IMAGE_W, IMAGE_H), fill=COL_FOOTER_BG)
 
-    foot_font = _font(16)
-    foot_bold = _font(16, bold=True)
+    foot_font = _font(16, weight=WEIGHT_MEDIUM)
+    foot_bold = _font(16, weight=WEIGHT_SEMIBOLD)
 
     left_text = "Lista sujeta a stock · Precios finales sin IVA"
     draw.text((MARGIN, IMAGE_H - FOOTER_H + 22), left_text, fill=COL_FOOTER_TEXT, font=foot_font)
@@ -566,8 +636,8 @@ def generate_announcement_images(
             "producto": str(row.producto or ""),
             "valor_anterior_dec": valor_ant,
             "valor_nuevo_dec": valor_new,
-            "valor_anterior_text": sheet_money(valor_ant) if valor_ant is not None else "",
-            "valor_nuevo": sheet_money(valor_new),
+            "valor_anterior_text": _money_display(valor_ant),
+            "valor_nuevo": _money_display(valor_new),
         }
         rec["change"] = _classify(rec)
         rows.append(rec)

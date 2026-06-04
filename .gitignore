@@ -25,11 +25,16 @@ backend/secrets/*.json
 frontend/android/app/google-services.json
 backend/app/google-services.json
 backend/storage/secrets/*.json
-backend/storage/
+backend/storage/*
 backend/storage-prod/
+# Excepciones: assets compartidos que se versionan (logos, fonts)
+!backend/storage/logos/
+!backend/storage/logos/**
+!backend/storage/fonts/
+!backend/storage/fonts/**
 backend/backups/
 backend/backups-prod/
-storage/
+/storage/
 !backend/storage/.gitkeep
 *.pem
 *.key
