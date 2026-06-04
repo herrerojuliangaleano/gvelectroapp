@@ -159,6 +159,17 @@ class PriceCostUpdate(Base):
     )
     cancel_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    archived_by_user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    archive_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    announcement_archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    announcement_archived_by_user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
     # Origen automático (cuando viene de sync de catálogo).
     source: Mapped[str] = mapped_column(Text, default="", nullable=False)
     source_product_id: Mapped[Optional[int]] = mapped_column(
@@ -175,6 +186,52 @@ class PriceCostUpdate(Base):
     history: Mapped[list["PriceCostUpdateHistory"]] = relationship(
         back_populates="update", cascade="all, delete-orphan", order_by="PriceCostUpdateHistory.id.desc()"
     )
+
+
+class PriceAnnouncementBatch(Base):
+    """Lote regenerable de anuncios comerciales de precios."""
+    __tablename__ = "price_announcement_batches"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    message: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    logo_brand: Mapped[str] = mapped_column(Text, default="gv_electro", nullable=False)
+    vigencia: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    brand_names: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    product_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    image_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    generated_by_user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+
+    items: Mapped[list["PriceAnnouncementBatchItem"]] = relationship(
+        back_populates="batch", cascade="all, delete-orphan", order_by="PriceAnnouncementBatchItem.sort_order.asc()"
+    )
+
+
+class PriceAnnouncementBatchItem(Base):
+    """Snapshot de un producto incluido en un lote de anuncios."""
+    __tablename__ = "price_announcement_batch_items"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("price_announcement_batches.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    update_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("price_cost_updates.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    type: Mapped[str] = mapped_column(Text, default="price", nullable=False)
+    producto: Mapped[str] = mapped_column(Text, nullable=False)
+    sku: Mapped[str] = mapped_column(Text, nullable=False)
+    marca: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    valor_anterior: Mapped[Optional[Numeric]] = mapped_column(Numeric(14, 2), nullable=True)
+    valor_nuevo: Mapped[Numeric] = mapped_column(Numeric(14, 2), nullable=False)
+    change_kind: Mapped[str] = mapped_column(Text, default="NUEVO", nullable=False)
+    auto_created: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    batch: Mapped["PriceAnnouncementBatch"] = relationship(back_populates="items")
 
 
 class PriceCostUpdateCheck(Base):

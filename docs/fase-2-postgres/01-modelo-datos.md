@@ -154,7 +154,8 @@ Precios/costos → `numeric(14,2)`.
 - `fcm_tokens (id)` · `user_id → users (CASCADE)` · `token`.
 - `jobs (id TEXT PK)` · ejecuciones de herramientas · `payload jsonb`.
 - `app_events (id)` · auditoría · `actor_user_id → users (SET NULL)` · `detail jsonb`.
-- `price_cost_updates (id)` ──< `price_cost_update_checks (id, update_id→ CASCADE)` y `price_cost_update_history (id, update_id→ CASCADE)`; importes `numeric(14,2)`.
+- `price_cost_updates (id)` ──< `price_cost_update_checks (id, update_id→ CASCADE)` y `price_cost_update_history (id, update_id→ CASCADE)`; importes `numeric(14,2)`. Incluye archivo operativo (`archived_at`) y archivo comercial de anuncios (`announcement_archived_at`).
+- `price_announcement_batches (id)` ──< `price_announcement_batch_items (id, batch_id→ CASCADE)`. Guarda lotes regenerables de anuncios de precios con snapshot de SKU, producto, marca, precio anterior/nuevo y tipo de cambio; no guarda el PNG final.
 
 ---
 

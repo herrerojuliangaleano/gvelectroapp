@@ -12,6 +12,7 @@ import {
 import type { PriceCostProductLookup, PriceCostUpdate, PriceCostUpdateHistory, PriceCostUpdateType } from '../types';
 
 const STATUS_ORDER = ['Pendiente', 'En proceso', 'Completado', 'Cancelado'];
+type ArchiveMode = 'active' | 'archived' | 'all';
 
 function typeLabel(type: PriceCostUpdateType) {
   return type === 'price' ? 'Precio' : 'Costo';
@@ -49,6 +50,12 @@ function formatDateTime(value?: string | null) {
   }
 }
 
+function archiveReasonLabel(value?: string | null) {
+  if (value === 'checks_completed') return 'checks completos';
+  if (value === 'cancelled') return 'cancelado';
+  return value || '';
+}
+
 export function PriceCostUpdatesPage() {
   const canViewPrice = can('price_updates.view');
   const canViewCost = can('cost_updates.view');
@@ -58,6 +65,7 @@ export function PriceCostUpdatesPage() {
   const [history, setHistory] = useState<PriceCostUpdateHistory[]>([]);
   const [type, setType] = useState<PriceCostUpdateType | ''>('');
   const [estado, setEstado] = useState('');
+  const [archiveMode, setArchiveMode] = useState<ArchiveMode>('active');
   const [q, setQ] = useState('');
   const [showNew, setShowNew] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -68,7 +76,7 @@ export function PriceCostUpdatesPage() {
     setLoading(true);
     setError('');
     try {
-      const rows = await fetchPriceCostUpdates({ type, estado, q, limit: 250 });
+      const rows = await fetchPriceCostUpdates({ type, estado, q, archive: archiveMode, limit: 250 });
       setItems(rows);
       if (selected) {
         const fresh = rows.find((item) => item.id === selected.id);
@@ -82,7 +90,7 @@ export function PriceCostUpdatesPage() {
     }
   }
 
-  useEffect(() => { load(); }, [type, estado]);
+  useEffect(() => { load(); }, [type, estado, archiveMode]);
 
   async function search(e: FormEvent) {
     e.preventDefault();
@@ -105,7 +113,11 @@ export function PriceCostUpdatesPage() {
     setError('');
     try {
       const updated = await setPriceCostUpdateCheck(item.id, checkKey, checked);
-      setItems((prev) => prev.map((row) => row.id === updated.id ? updated : row));
+      setItems((prev) => {
+        if (archiveMode === 'active' && updated.archived_at) return prev.filter((row) => row.id !== updated.id);
+        if (archiveMode === 'archived' && !updated.archived_at) return prev.filter((row) => row.id !== updated.id);
+        return prev.map((row) => row.id === updated.id ? updated : row);
+      });
       setSelected(updated);
       const rows = await fetchPriceCostUpdateHistory(updated.id).catch(() => []);
       setHistory(rows);
@@ -123,7 +135,7 @@ export function PriceCostUpdatesPage() {
     setError('');
     try {
       const updated = await cancelPriceCostUpdate(item.id, 'Cancelado desde el panel');
-      setItems((prev) => prev.map((row) => row.id === updated.id ? updated : row));
+      setItems((prev) => archiveMode === 'active' ? prev.filter((row) => row.id !== updated.id) : prev.map((row) => row.id === updated.id ? updated : row));
       setSelected(updated);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo cancelar.');
@@ -186,7 +198,7 @@ export function PriceCostUpdatesPage() {
         {canViewCost && <StatCard label="Costos" value={counts.cost || 0} tone="red" />}
       </div>
 
-      <form onSubmit={search} className="grid gap-3 rounded-3xl border border-slate-800 bg-slate-950/60 p-4 lg:grid-cols-[1fr_180px_180px_auto]">
+      <form onSubmit={search} className="grid gap-3 rounded-3xl border border-slate-800 bg-slate-950/60 p-4 lg:grid-cols-[1fr_170px_170px_160px_auto]">
         <div className="relative">
           <Search className="absolute left-3 top-3.5 text-slate-500" size={18} />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por SKU, producto o marca" className="w-full rounded-xl border border-slate-700 bg-slate-900 px-10 py-3 outline-none focus:border-blue-400" />
@@ -199,6 +211,11 @@ export function PriceCostUpdatesPage() {
         <select value={estado} onChange={(e) => setEstado(e.target.value)} className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 outline-none focus:border-blue-400">
           <option value="">Todos los estados</option>
           {STATUS_ORDER.map((st) => <option key={st} value={st}>{st}</option>)}
+        </select>
+        <select value={archiveMode} onChange={(e) => setArchiveMode(e.target.value as ArchiveMode)} className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 outline-none focus:border-blue-400">
+          <option value="active">Activos</option>
+          <option value="archived">Archivo</option>
+          <option value="all">Todo</option>
         </select>
         <button className="rounded-xl bg-blue-500 px-5 py-3 font-black text-white">Buscar</button>
       </form>
@@ -251,7 +268,9 @@ function UpdateCard({ item, selected, onClick }: { item: PriceCostUpdate; select
         <div className="min-w-0">
           <div className="truncate font-black text-white">{item.producto}</div>
           <div className="text-sm text-slate-400">SKU {item.sku} {item.marca ? `· ${item.marca}` : ''}</div>
+          {item.is_new_entry && <div className="mt-1 text-xs font-bold text-blue-300">Nuevo ingreso</div>}
           {item.auto_created && <div className="mt-1 text-xs font-bold text-violet-300">Origen: Actualización de catálogo</div>}
+          {item.archived_at && <div className="mt-1 text-xs font-bold text-emerald-300">Archivado · {formatDateTime(item.archived_at)}</div>}
           {item.lookup_warning && <div className="mt-1 text-xs text-amber-200">{item.lookup_warning}</div>}
         </div>
         <div>
@@ -276,9 +295,19 @@ function DetailPanel({ item, history, busy, onToggle, onCancel }: { item: PriceC
           <TypeBadge type={item.type} />
           <h2 className="mt-3 text-2xl font-black text-white">{item.producto}</h2>
           <p className="text-sm text-slate-400">SKU {item.sku} {item.marca ? `· ${item.marca}` : ''}</p>
+          {item.is_new_entry && (
+            <p className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 py-1 text-xs font-bold text-blue-300">
+              Nuevo ingreso
+            </p>
+          )}
           {item.auto_created && (
             <p className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-violet-500/30 bg-violet-500/10 px-2.5 py-1 text-xs font-bold text-violet-300">
               Origen: Actualización de catálogo
+            </p>
+          )}
+          {item.archived_at && (
+            <p className="mt-2 block rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2 text-xs font-bold text-emerald-200">
+              Archivado {formatDateTime(item.archived_at)}{item.archive_reason ? ` · ${archiveReasonLabel(item.archive_reason)}` : ''}
             </p>
           )}
         </div>

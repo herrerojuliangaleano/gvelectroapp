@@ -93,6 +93,22 @@ def user_can_generate_price_announcement(user: Any) -> bool:
     return bool(user_role_keys(user) & ANNOUNCEMENT_ROLES)
 
 
+def user_can_view_price_announcements(user: Any) -> bool:
+    if not user or getattr(user, "must_change_password", False):
+        return False
+    if is_superadmin(user):
+        return True
+    if user_has_any(user, ["price_announcements.view", "price_announcements.generate"]):
+        return True
+    return bool(user_role_keys(user) & ANNOUNCEMENT_ROLES)
+
+
+def require_price_announcement_view_permission(user: Any) -> None:
+    ensure_active_user(user)
+    if not user_can_view_price_announcements(user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tenes permiso para ver anuncios de precios")
+
+
 def require_price_announcement_permission(user: Any) -> None:
     ensure_active_user(user)
     if not user_can_generate_price_announcement(user):

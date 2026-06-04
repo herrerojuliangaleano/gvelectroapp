@@ -1563,12 +1563,20 @@ export interface PriceCostUpdate {
   cancelled_at?: string | null;
   cancelled_by?: string | null;
   cancel_reason?: string | null;
+  archived_at?: string | null;
+  archived_by?: string | null;
+  archived_by_name?: string | null;
+  archive_reason?: string | null;
+  announcement_archived_at?: string | null;
+  announcement_archived_by?: string | null;
+  announcement_archived_by_name?: string | null;
   checks: PriceCostUpdateCheck[];
   checked_count: number;
   total_checks: number;
   progress_percent: number;
   source?: string;
   auto_created?: boolean;
+  is_new_entry?: boolean;
 }
 
 export interface PriceCostUpdateCreatePayload {
@@ -1613,11 +1621,25 @@ export interface PriceAnnouncementImage {
 }
 
 export interface PriceAnnouncementImagesResponse {
+  batch_id?: number | null;
   message: string;
   generated_at: string;
   brand_names: string[];
   product_count: number;
   images: PriceAnnouncementImage[];
+}
+
+export interface PriceAnnouncementBatch {
+  id: number;
+  message: string;
+  generated_at: string;
+  generated_by?: string | null;
+  generated_by_name?: string | null;
+  brand_names: string[];
+  product_count: number;
+  image_count: number;
+  logo_brand: string;
+  vigencia: string;
 }
 
 export interface PriceAnnouncementImagesPayload {

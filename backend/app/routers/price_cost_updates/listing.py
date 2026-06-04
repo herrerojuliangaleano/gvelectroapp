@@ -51,6 +51,8 @@ def list_updates(
     type: str = Query(default=""),
     estado: str = Query(default=""),
     q: str = Query(default=""),
+    archive: str = Query(default="active"),
+    announcement_pending: bool = Query(default=False),
     limit: int = Query(default=200, ge=1, le=500),
 ):
     types = visible_types(user)
@@ -67,6 +69,18 @@ def list_updates(
 
     with db_session() as session:
         stmt = select(PriceCostUpdateModel).where(PriceCostUpdateModel.type.in_(types))
+        archive_mode = str(archive or "active").strip().lower()
+        if archive_mode not in {"active", "archived", "all"}:
+            raise HTTPException(status_code=400, detail="Filtro de archivo invalido")
+        if announcement_pending:
+            stmt = stmt.where(
+                PriceCostUpdateModel.announcement_archived_at.is_(None),
+                PriceCostUpdateModel.estado != "Cancelado",
+            )
+        elif archive_mode == "active":
+            stmt = stmt.where(PriceCostUpdateModel.archived_at.is_(None))
+        elif archive_mode == "archived":
+            stmt = stmt.where(PriceCostUpdateModel.archived_at.is_not(None))
         if estado:
             stmt = stmt.where(PriceCostUpdateModel.estado == estado)
         if q:

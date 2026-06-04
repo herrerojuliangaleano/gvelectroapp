@@ -52,6 +52,7 @@ import type {
   PayrollBulkUploadResponse,
   PayrollReceipt,
   PayrollReceiptListResponse,
+  PriceAnnouncementBatch,
   PriceCostProductLookup,
   PriceAnnouncementImagesPayload,
   PriceAnnouncementImagesResponse,
@@ -679,7 +680,7 @@ export async function cancelSalesWebRequest(id: string | number, cancelReason: s
 export async function deleteSalesWebRequest(id: string | number): Promise<{ ok: boolean; deleted: boolean; numero_solicitud: string }> { return request(`/api/sales-web/requests/${encodeURIComponent(String(id))}`, { method: 'DELETE' }); }
 
 
-export async function fetchPriceCostUpdates(params: { type?: PriceCostUpdateType | ''; estado?: string; q?: string; limit?: number } = {}): Promise<PriceCostUpdate[]> {
+export async function fetchPriceCostUpdates(params: { type?: PriceCostUpdateType | ''; estado?: string; q?: string; archive?: 'active' | 'archived' | 'all'; announcement_pending?: boolean; limit?: number } = {}): Promise<PriceCostUpdate[]> {
   return request(`/api/price-cost-updates${buildQs(params)}`);
 }
 export async function lookupPriceCostProduct(sku: string, type: PriceCostUpdateType): Promise<PriceCostProductLookup> {
@@ -706,6 +707,12 @@ export async function fetchPriceCostUpdateHistory(id: string | number): Promise<
 }
 export async function generatePriceAnnouncementImages(payload: PriceAnnouncementImagesPayload): Promise<PriceAnnouncementImagesResponse> {
   return request('/api/price-cost-updates/announcements/images', { method: 'POST', body: JSON.stringify(payload) });
+}
+export async function fetchPriceAnnouncementBatches(limit = 30): Promise<PriceAnnouncementBatch[]> {
+  return request(`/api/price-cost-updates/announcements/batches${buildQs({ limit })}`);
+}
+export async function regeneratePriceAnnouncementBatchImages(batchId: number): Promise<PriceAnnouncementImagesResponse> {
+  return request(`/api/price-cost-updates/announcements/batches/${encodeURIComponent(String(batchId))}/images`, { method: 'POST' });
 }
 
 

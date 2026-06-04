@@ -13,7 +13,13 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { fetchPriceCostUpdates, generatePriceAnnouncementImages, getCurrentUserFromStorage } from '../api/client';
+import {
+  fetchPriceAnnouncementBatches,
+  fetchPriceCostUpdates,
+  generatePriceAnnouncementImages,
+  getCurrentUserFromStorage,
+  regeneratePriceAnnouncementBatchImages,
+} from '../api/client';
 import {
   ErpBadge,
   ErpButton,
@@ -27,7 +33,7 @@ import {
   ErpSelect,
 } from '../components/ProUI';
 import { canUsePriceAnnouncements } from '../priceAnnouncementsAccess';
-import type { PriceAnnouncementImage, PriceAnnouncementImagesResponse, PriceCostUpdate } from '../types';
+import type { PriceAnnouncementBatch, PriceAnnouncementImage, PriceAnnouncementImagesResponse, PriceCostUpdate } from '../types';
 
 interface BrandGroup {
   brand: string;
@@ -76,10 +82,23 @@ function stateTone(item: PriceCostUpdate): 'success' | 'warning' | 'info' {
   return 'info';
 }
 
+function isNewEntry(item: PriceCostUpdate) {
+  return Boolean(item.is_new_entry || item.auto_created && !item.valor_anterior);
+}
+
+function uploadSummary(item: PriceCostUpdate) {
+  const webChecks = item.checks.filter((check) => check.key.startsWith('web_'));
+  const puma = item.checks.find((check) => check.key === 'puma');
+  const webDone = webChecks.length > 0 && webChecks.every((check) => check.checked);
+  const pumaDone = Boolean(puma?.checked);
+  return `${webDone ? 'Web OK' : 'Web pendiente'} · ${pumaDone ? 'Puma OK' : 'Puma pendiente'}`;
+}
+
 export function PriceAnnouncementsPage() {
   const user = getCurrentUserFromStorage();
   const canUse = canUsePriceAnnouncements(user);
   const [items, setItems] = useState<PriceCostUpdate[]>([]);
+  const [batches, setBatches] = useState<PriceAnnouncementBatch[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [q, setQ] = useState('');
   const [brand, setBrand] = useState('');
@@ -87,6 +106,7 @@ export function PriceAnnouncementsPage() {
   const [logoBrand, setLogoBrand] = useState('gv_electro');
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [regeneratingBatchId, setRegeneratingBatchId] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [result, setResult] = useState<PriceAnnouncementImagesResponse | null>(null);
   const [shareHint, setShareHint] = useState('');
@@ -96,7 +116,7 @@ export function PriceAnnouncementsPage() {
     setLoading(true);
     setError('');
     try {
-      const rows = await fetchPriceCostUpdates({ type: 'price', limit: 500 });
+      const rows = await fetchPriceCostUpdates({ type: 'price', announcement_pending: true, limit: 500 });
       setItems(rows.filter((item) => item.estado !== 'Cancelado'));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudieron cargar los cambios de precio.');
@@ -106,7 +126,15 @@ export function PriceAnnouncementsPage() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  async function loadBatches() {
+    try {
+      setBatches(await fetchPriceAnnouncementBatches(20));
+    } catch {
+      setBatches([]);
+    }
+  }
+
+  useEffect(() => { load(); loadBatches(); }, []);
 
   const brands = useMemo(() => {
     const map = new Map<string, number>();
@@ -203,16 +231,33 @@ export function PriceAnnouncementsPage() {
     setError('');
     setResult(null);
     try {
+      const ids = Array.from(selectedIds);
       const response = await generatePriceAnnouncementImages({
-        update_ids: Array.from(selectedIds),
+        update_ids: ids,
         logo_brand: logoBrand,
         title: 'Cambios de precios',
       });
       setResult(response);
+      setItems((prev) => prev.filter((item) => !ids.includes(item.id)));
+      setSelectedIds(new Set());
+      await loadBatches();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo generar la imagen.');
     } finally {
       setGenerating(false);
+    }
+  }
+
+  async function regenerateBatch(batch: PriceAnnouncementBatch) {
+    setRegeneratingBatchId(batch.id);
+    setError('');
+    try {
+      const response = await regeneratePriceAnnouncementBatchImages(batch.id);
+      setResult(response);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo regenerar la tanda.');
+    } finally {
+      setRegeneratingBatchId(null);
     }
   }
 
@@ -276,7 +321,7 @@ export function PriceAnnouncementsPage() {
         description="Placas comerciales con precios nuevos agrupados por marca."
         actions={(
           <>
-            <ErpButton variant="secondary" onClick={load} disabled={loading} leftIcon={<RefreshCw size={16} />} className="w-full justify-center sm:w-auto">
+            <ErpButton variant="secondary" onClick={() => { load(); loadBatches(); }} disabled={loading} leftIcon={<RefreshCw size={16} />} className="w-full justify-center sm:w-auto">
               Refrescar
             </ErpButton>
             <ErpButton variant="primary" onClick={generate} loading={generating} disabled={!selectedIds.size} leftIcon={<Wand2 size={16} />} className="w-full justify-center sm:w-auto">
@@ -463,6 +508,10 @@ export function PriceAnnouncementsPage() {
                                 <ErpBadge tone={stateTone(item)} withDot={false}>{item.estado}</ErpBadge>
                               </span>
                               <span className="mt-1 block text-[13px] font-semibold leading-snug text-[color:var(--text)]">{item.producto}</span>
+                              <span className="mt-2 flex flex-wrap gap-1.5">
+                                {isNewEntry(item) && <ErpBadge tone="info" withDot={false}>Nuevo ingreso</ErpBadge>}
+                                <ErpBadge tone="neutral" withDot={false}>{uploadSummary(item)}</ErpBadge>
+                              </span>
                               <span className="mt-3 grid grid-cols-2 gap-2">
                                 <span className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] px-3 py-2">
                                   <span className="block text-[10px] font-black uppercase tracking-wide text-[color:var(--text-3)]">Precio nuevo</span>
@@ -510,6 +559,10 @@ export function PriceAnnouncementsPage() {
                               </td>
                               <td>
                                 <div className="max-w-[360px] text-[13px] font-semibold leading-tight text-[color:var(--text)]">{item.producto}</div>
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {isNewEntry(item) && <ErpBadge tone="info" withDot={false}>Nuevo ingreso</ErpBadge>}
+                                  <span className="text-[11px] text-[color:var(--text-3)]">{uploadSummary(item)}</span>
+                                </div>
                               </td>
                               <td className="is-numeric">
                                 <span className="font-black text-[color:var(--text)]">{item.valor_nuevo}</span>
@@ -582,6 +635,46 @@ export function PriceAnnouncementsPage() {
               })}
             </div>
           )}
+
+          <div className="mt-5 rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-black text-[color:var(--text)]">Archivo de tandas</div>
+                <div className="text-xs text-[color:var(--text-3)]">Regenera placas ya anunciadas sin volver a seleccionar productos.</div>
+              </div>
+              <ErpButton variant="ghost" size="sm" onClick={loadBatches} leftIcon={<RefreshCw size={14} />}>
+                Actualizar
+              </ErpButton>
+            </div>
+            <div className="mt-3 space-y-2">
+              {batches.map((batch) => (
+                <article key={batch.id} className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface)] p-3">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="text-sm font-black text-[color:var(--text)]">{batch.product_count} productos · {batch.image_count} imagenes</div>
+                      <div className="mt-1 text-xs text-[color:var(--text-2)]">{batch.brand_names.join(', ') || 'Sin marcas'}</div>
+                      <div className="mt-1 text-[11px] text-[color:var(--text-3)]">Vigencia: {batch.vigencia || formatDate(batch.generated_at)}</div>
+                    </div>
+                    <ErpButton
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => regenerateBatch(batch)}
+                      loading={regeneratingBatchId === batch.id}
+                      leftIcon={<ImageDown size={14} />}
+                      className="justify-center"
+                    >
+                      Regenerar
+                    </ErpButton>
+                  </div>
+                </article>
+              ))}
+              {batches.length === 0 && (
+                <div className="rounded-xl border border-dashed border-[color:var(--border)] p-4 text-center text-xs text-[color:var(--text-3)]">
+                  Todavia no hay tandas archivadas.
+                </div>
+              )}
+            </div>
+          </div>
         </ErpCard>
       </section>
 

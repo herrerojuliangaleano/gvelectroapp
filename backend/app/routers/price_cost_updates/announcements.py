@@ -40,8 +40,21 @@ from sqlalchemy import select
 
 from ...brand_assets import brand_logo_path
 from ...config import get_settings
-from ...price_cost_rules import require_price_announcement_permission
-from . import CurrentUser, PriceCostUpdateModel, db_session, require_current_user
+from ...price_cost_rules import require_price_announcement_permission, require_price_announcement_view_permission
+from . import (
+    CurrentUser,
+    LOCK,
+    PriceAnnouncementBatchItemModel,
+    PriceAnnouncementBatchModel,
+    PriceCostUpdateModel,
+    _current_user_id,
+    _dt,
+    _user_public,
+    db_session,
+    record_history,
+    require_current_user,
+    utc_now_dt,
+)
 
 router = APIRouter(prefix="/api/price-cost-updates", tags=["price-cost-updates"])
 
@@ -106,11 +119,25 @@ class AnnouncementImageOut(BaseModel):
 
 
 class AnnouncementImagesOut(BaseModel):
+    batch_id: int | None = None
     message: str
     generated_at: str
     brand_names: list[str]
     product_count: int
     images: list[AnnouncementImageOut]
+
+
+class AnnouncementBatchOut(BaseModel):
+    id: int
+    message: str
+    generated_at: str
+    generated_by: str | None = None
+    generated_by_name: str | None = None
+    brand_names: list[str]
+    product_count: int
+    image_count: int
+    logo_brand: str
+    vigencia: str
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -213,6 +240,118 @@ def _hero_title_html(has_new_entries: bool) -> str:
     if has_new_entries:
         return 'Nuevos <span class="accent-new">ingresos</span> y <span class="accent-price">precios</span>'
     return 'Nuevos <span class="accent-price">precios</span>'
+
+
+def _row_dict_from_update(row: PriceCostUpdateModel) -> dict[str, Any]:
+    valor_ant: Decimal | None = row.valor_anterior  # type: ignore[assignment]
+    valor_new: Decimal = row.valor_nuevo  # type: ignore[assignment]
+    rec = {
+        "id": int(row.id),
+        "marca": str(row.marca or "Sin marca").strip() or "Sin marca",
+        "sku": str(row.sku or ""),
+        "producto": str(row.producto or ""),
+        "valor_anterior_dec": valor_ant,
+        "valor_nuevo_dec": valor_new,
+        "valor_anterior_text": _money_display(valor_ant),
+        "valor_nuevo_text": _money_display(valor_new),
+        "auto_created": bool(row.auto_created),
+    }
+    rec["change"] = _classify(rec)
+    rec["is_new_entry"] = _is_new_entry(rec)
+    return rec
+
+
+def _row_dict_from_batch_item(item: PriceAnnouncementBatchItemModel) -> dict[str, Any]:
+    valor_ant: Decimal | None = item.valor_anterior  # type: ignore[assignment]
+    valor_new: Decimal = item.valor_nuevo  # type: ignore[assignment]
+    rec = {
+        "id": int(item.update_id or 0),
+        "marca": str(item.marca or "Sin marca").strip() or "Sin marca",
+        "sku": str(item.sku or ""),
+        "producto": str(item.producto or ""),
+        "valor_anterior_dec": valor_ant,
+        "valor_nuevo_dec": valor_new,
+        "valor_anterior_text": _money_display(valor_ant),
+        "valor_nuevo_text": _money_display(valor_new),
+        "auto_created": bool(item.auto_created),
+        "change": str(item.change_kind or "NUEVO"),
+    }
+    rec["is_new_entry"] = _is_new_entry(rec)
+    return rec
+
+
+def _sort_announcement_rows(rows: list[dict[str, Any]]) -> None:
+    rows.sort(
+        key=lambda item: (
+            0 if item["is_new_entry"] else 1,
+            item["marca"].lower(),
+            item["producto"].lower(),
+            item["sku"].lower(),
+        )
+    )
+
+
+def _render_announcement_rows(
+    *,
+    rows: list[dict[str, Any]],
+    logo_brand: str,
+    vigencia_text: str,
+) -> tuple[list[list[dict[str, Any]]], list[bytes]]:
+    logo_path = brand_logo_path(logo_brand)
+    logo_uri = logo_path.as_uri() if logo_path else ""
+    pages = _paginate(rows)
+    html_pages = [
+        _build_html(
+            page_entries=entries,
+            vigencia=vigencia_text,
+            total_productos=len(rows),
+            logo_uri=logo_uri,
+        )
+        for entries in pages
+    ]
+    return pages, _render_pages_to_png(html_pages)
+
+
+def _batch_out(session, batch: PriceAnnouncementBatchModel) -> AnnouncementBatchOut:
+    generated_by, generated_by_name = _user_public(session, batch.generated_by_user_id)
+    return AnnouncementBatchOut(
+        id=int(batch.id),
+        message=str(batch.message or ""),
+        generated_at=_dt(batch.generated_at),
+        generated_by=generated_by,
+        generated_by_name=generated_by_name,
+        brand_names=list(batch.brand_names or []),
+        product_count=int(batch.product_count or 0),
+        image_count=int(batch.image_count or 0),
+        logo_brand=str(batch.logo_brand or "gv_electro"),
+        vigencia=str(batch.vigencia or ""),
+    )
+
+
+def _images_out_from_pngs(
+    *,
+    pages: list[list[dict[str, Any]]],
+    png_bytes_list: list[bytes],
+    stamp: str,
+) -> list[AnnouncementImageOut]:
+    total = len(pages)
+    images: list[AnnouncementImageOut] = []
+    for index, (entries, png) in enumerate(zip(pages, png_bytes_list), start=1):
+        page_brands = list(dict.fromkeys(str(entry.get("marca") or "") for entry in entries if entry.get("kind") == "row"))
+        prefix = "nuevos-ingresos-precios" if _page_has_new_entries(entries) else "nuevos-precios"
+        filename = f"{prefix}-{stamp}-{index:02d}-{_safe_filename('-'.join(page_brands[:2]))}.png"
+        data_url = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+        images.append(
+            AnnouncementImageOut(
+                filename=filename,
+                data_url=data_url,
+                brand_names=page_brands,
+                product_count=sum(1 for entry in entries if entry.get("kind") == "row"),
+                page=index,
+                total_pages=total,
+            )
+        )
+    return images
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -707,32 +846,8 @@ def generate_announcement_images(
     if len(rows_db) != len(ids):
         raise HTTPException(status_code=400, detail="Algunas actualizaciones no existen, no son de precio o estan canceladas.")
 
-    rows: list[dict[str, Any]] = []
-    for row in rows_db:
-        valor_ant: Decimal | None = row.valor_anterior  # type: ignore[assignment]
-        valor_new: Decimal = row.valor_nuevo  # type: ignore[assignment]
-        rec = {
-            "id": int(row.id),
-            "marca": str(row.marca or "Sin marca").strip() or "Sin marca",
-            "sku": str(row.sku or ""),
-            "producto": str(row.producto or ""),
-            "valor_anterior_dec": valor_ant,
-            "valor_nuevo_dec": valor_new,
-            "valor_anterior_text": _money_display(valor_ant),
-            "valor_nuevo_text": _money_display(valor_new),
-            "auto_created": bool(row.auto_created),
-        }
-        rec["change"] = _classify(rec)
-        rec["is_new_entry"] = _is_new_entry(rec)
-        rows.append(rec)
-    rows.sort(
-        key=lambda item: (
-            0 if item["is_new_entry"] else 1,
-            item["marca"].lower(),
-            item["producto"].lower(),
-            item["sku"].lower(),
-        )
-    )
+    rows = [_row_dict_from_update(row) for row in rows_db]
+    _sort_announcement_rows(rows)
 
     brands = list(dict.fromkeys(row["marca"] for row in rows))
 
@@ -773,28 +888,127 @@ def generate_announcement_images(
     # Render todas las páginas en una sola sesión de Chromium
     png_bytes_list = _render_pages_to_png(html_pages)
 
-    stamp = now.strftime("%Y%m%d-%H%M")
-    images: list[AnnouncementImageOut] = []
-    for index, (entries, png) in enumerate(zip(pages, png_bytes_list), start=1):
-        page_brands = list(dict.fromkeys(str(entry.get("marca") or "") for entry in entries if entry.get("kind") == "row"))
-        prefix = "nuevos-ingresos-precios" if _page_has_new_entries(entries) else "nuevos-precios"
-        filename = f"{prefix}-{stamp}-{index:02d}-{_safe_filename('-'.join(page_brands[:2]))}.png"
-        data_url = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
-        images.append(
-            AnnouncementImageOut(
-                filename=filename,
-                data_url=data_url,
-                brand_names=page_brands,
-                product_count=sum(1 for entry in entries if entry.get("kind") == "row"),
-                page=index,
-                total_pages=total,
-            )
+    batch_id: int | None = None
+    now_db = utc_now_dt()
+    with LOCK, db_session() as session:
+        batch = PriceAnnouncementBatchModel(
+            title=payload.title or message_title,
+            message=message,
+            logo_brand=payload.logo_brand,
+            vigencia=vigencia_text,
+            brand_names=brands,
+            product_count=len(rows),
+            image_count=total,
+            generated_by_user_id=_current_user_id(session, user),
+            generated_at=now_db,
         )
+        session.add(batch)
+        session.flush()
+        batch_id = int(batch.id)
+
+        db_rows_by_id = {
+            int(row.id): row
+            for row in session.scalars(select(PriceCostUpdateModel).where(PriceCostUpdateModel.id.in_(ids))).all()
+        }
+        actor_user_id = _current_user_id(session, user)
+        for sort_order, rec in enumerate(rows, start=1):
+            update_id = int(rec["id"])
+            session.add(
+                PriceAnnouncementBatchItemModel(
+                    batch_id=batch_id,
+                    update_id=update_id if update_id else None,
+                    sort_order=sort_order,
+                    type="price",
+                    producto=str(rec.get("producto") or ""),
+                    sku=str(rec.get("sku") or ""),
+                    marca=str(rec.get("marca") or "Sin marca"),
+                    valor_anterior=rec.get("valor_anterior_dec"),
+                    valor_nuevo=rec.get("valor_nuevo_dec"),
+                    change_kind=str(rec.get("change") or "NUEVO"),
+                    auto_created=bool(rec.get("auto_created")),
+                )
+            )
+            db_row = db_rows_by_id.get(update_id)
+            if db_row and not db_row.announcement_archived_at:
+                db_row.announcement_archived_at = now_db
+                db_row.announcement_archived_by_user_id = actor_user_id
+                db_row.updated_at = now_db
+                record_history(
+                    session,
+                    update_id,
+                    user,
+                    "anuncio_archivado",
+                    {"batch_id": batch_id, "reason": "announcement_generated"},
+                )
+        session.commit()
+
+    stamp = now.strftime("%Y%m%d-%H%M")
+    images = _images_out_from_pngs(pages=pages, png_bytes_list=png_bytes_list, stamp=stamp)
 
     return AnnouncementImagesOut(
+        batch_id=batch_id,
         message=message,
         generated_at=generated_at,
         brand_names=brands,
+        product_count=len(rows),
+        images=images,
+    )
+
+
+@router.get("/announcements/batches", response_model=list[AnnouncementBatchOut])
+def list_announcement_batches(
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    limit: int = 30,
+):
+    require_price_announcement_view_permission(user)
+    limit = max(1, min(int(limit or 30), 100))
+    with db_session() as session:
+        batches = session.scalars(
+            select(PriceAnnouncementBatchModel)
+            .order_by(PriceAnnouncementBatchModel.generated_at.desc(), PriceAnnouncementBatchModel.id.desc())
+            .limit(limit)
+        ).all()
+        return [_batch_out(session, batch) for batch in batches]
+
+
+@router.post("/announcements/batches/{batch_id}/images", response_model=AnnouncementImagesOut)
+def regenerate_announcement_batch_images(
+    batch_id: int,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+):
+    require_price_announcement_permission(user)
+    with db_session() as session:
+        batch = session.get(PriceAnnouncementBatchModel, batch_id)
+        if not batch:
+            raise HTTPException(status_code=404, detail="Lote de anuncios no encontrado")
+        items = session.scalars(
+            select(PriceAnnouncementBatchItemModel)
+            .where(PriceAnnouncementBatchItemModel.batch_id == batch_id)
+            .order_by(PriceAnnouncementBatchItemModel.sort_order.asc(), PriceAnnouncementBatchItemModel.id.asc())
+        ).all()
+        if not items:
+            raise HTTPException(status_code=400, detail="El lote no tiene productos para regenerar")
+        rows = [_row_dict_from_batch_item(item) for item in items]
+        brand_names = list(batch.brand_names or list(dict.fromkeys(row["marca"] for row in rows)))
+        message = str(batch.message or "")
+        vigencia_text = str(batch.vigencia or _format_vigencia(""))
+        logo_brand = str(batch.logo_brand or "gv_electro")
+
+    pages, png_bytes_list = _render_announcement_rows(
+        rows=rows,
+        logo_brand=logo_brand,
+        vigencia_text=vigencia_text,
+    )
+    now = datetime.now(AR_TZ)
+    generated_at = now.strftime("%d/%m/%Y %H:%M")
+    stamp = now.strftime("%Y%m%d-%H%M")
+    images = _images_out_from_pngs(pages=pages, png_bytes_list=png_bytes_list, stamp=stamp)
+
+    return AnnouncementImagesOut(
+        batch_id=batch_id,
+        message=message,
+        generated_at=generated_at,
+        brand_names=brand_names,
         product_count=len(rows),
         images=images,
     )

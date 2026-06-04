@@ -318,6 +318,11 @@ checklist y estado.
 - Marcar checks por destino segun permiso: web, Puma o Planilla Madre.
 - Cancelar.
 - Ver historial.
+- Ver bandeja activa, archivo o todo el historial operativo.
+- Archivar automaticamente actualizaciones completadas/canceladas para que no
+  sigan ocupando la bandeja diaria.
+- Identificar productos nuevos como `Nuevo ingreso` y confirmar si se subieron
+  a web/Puma mediante los mismos checks.
 - Recibir notificaciones agrupadas por marca, por ejemplo
   `Cambios de precios en Samsung`, para evitar avisos individuales por SKU.
 
@@ -357,6 +362,11 @@ u otros canales, usando solo el precio nuevo.
   el titulo `Nuevos ingresos y precios`.
 - El footer de cada placa repite la vigencia, sin mostrar quien genero la
   imagen.
+- Al generar una tanda, los productos seleccionados salen de pendientes de
+  anuncio y quedan archivados en un lote regenerable. No se guarda el PNG,
+  sino la informacion necesaria para volver a generarlo.
+- El archivo de tandas permite regenerar las imagenes sin volver a seleccionar
+  los productos.
 - Descargar cada imagen.
 - Compartir cada imagen con mensaje automatico:
   `Cambios de precios {fecha y hora} en {marcas}.`

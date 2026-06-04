@@ -16,6 +16,8 @@ from ...auth import require_current_user
 from ...db import db_session
 from ...models.auth import User
 from ...models.system import (
+    PriceAnnouncementBatch as PriceAnnouncementBatchModel,
+    PriceAnnouncementBatchItem as PriceAnnouncementBatchItemModel,
     PriceCostUpdate as PriceCostUpdateModel,
     PriceCostUpdateCheck as PriceCostUpdateCheckModel,
     PriceCostUpdateHistory as PriceCostUpdateHistoryModel,
@@ -161,6 +163,41 @@ def apply_status(session, update: PriceCostUpdateModel) -> str:
     return estado
 
 
+def is_new_entry_update(row: PriceCostUpdateModel) -> bool:
+    old_dec = money_decimal_or_none(row.valor_anterior)
+    return old_dec is None or old_dec == 0
+
+
+def sync_operational_archive(
+    session,
+    update: PriceCostUpdateModel,
+    user: CurrentUser,
+    *,
+    reason: str = "checks_completed",
+) -> None:
+    now = utc_now_dt()
+    current_reason = str(update.archive_reason or "")
+    if str(update.estado or "") in {"Completado", "Cancelado"}:
+        if not update.archived_at:
+            update.archived_at = now
+            update.archived_by_user_id = _current_user_id(session, user)
+            update.archive_reason = reason if update.estado == "Completado" else "cancelled"
+            record_history(
+                session,
+                int(update.id),
+                user,
+                "archivado",
+                {"reason": update.archive_reason, "estado": str(update.estado or "")},
+            )
+        return
+
+    if update.archived_at and current_reason == "checks_completed":
+        update.archived_at = None
+        update.archived_by_user_id = None
+        update.archive_reason = None
+        record_history(session, int(update.id), user, "desarchivado", {"reason": "check_reopened"})
+
+
 def _money_out(value: Any) -> str:
     dec = money_decimal_or_none(value)
     return sheet_money(dec) if dec is not None else ""
@@ -177,6 +214,8 @@ def row_to_update(session, row: PriceCostUpdateModel, *, user: CurrentUser | Non
         diff_text = sheet_money(new_dec - old_dec)
     created_by, created_by_name = _user_public(session, row.created_by_user_id, fallback_system=bool(row.auto_created))
     cancelled_by, _cancelled_by_name = _user_public(session, row.cancelled_by_user_id)
+    archived_by, archived_by_name = _user_public(session, row.archived_by_user_id)
+    announcement_archived_by, announcement_archived_by_name = _user_public(session, row.announcement_archived_by_user_id)
     return {
         "id": int(row.id),
         "type": str(row.type),
@@ -195,12 +234,20 @@ def row_to_update(session, row: PriceCostUpdateModel, *, user: CurrentUser | Non
         "cancelled_at": _dt(row.cancelled_at) if row.cancelled_at else None,
         "cancelled_by": cancelled_by,
         "cancel_reason": row.cancel_reason,
+        "archived_at": _dt(row.archived_at) if row.archived_at else None,
+        "archived_by": archived_by,
+        "archived_by_name": archived_by_name,
+        "archive_reason": row.archive_reason,
+        "announcement_archived_at": _dt(row.announcement_archived_at) if row.announcement_archived_at else None,
+        "announcement_archived_by": announcement_archived_by,
+        "announcement_archived_by_name": announcement_archived_by_name,
         "checks": checks,
         "checked_count": checked_count,
         "total_checks": total_checks,
         "progress_percent": int(round((checked_count / total_checks) * 100)) if total_checks else 0,
         "source": str(row.source or ""),
         "auto_created": bool(row.auto_created),
+        "is_new_entry": is_new_entry_update(row),
     }
 
 
@@ -377,12 +424,20 @@ class PriceCostUpdateOut(BaseModel):
     cancelled_at: str | None = None
     cancelled_by: str | None = None
     cancel_reason: str | None = None
+    archived_at: str | None = None
+    archived_by: str | None = None
+    archived_by_name: str | None = None
+    archive_reason: str | None = None
+    announcement_archived_at: str | None = None
+    announcement_archived_by: str | None = None
+    announcement_archived_by_name: str | None = None
     checks: list[PriceCostUpdateCheck]
     checked_count: int
     total_checks: int
     progress_percent: int
     source: str = ""
     auto_created: bool = False
+    is_new_entry: bool = False
 
 
 class PriceCostUpdateCreate(BaseModel):

@@ -40,6 +40,7 @@ from . import (
     require_type_permission,
     row_to_update,
     sheet_money,
+    sync_operational_archive,
     utc_now_dt,
     visible_types,
 )
@@ -118,6 +119,7 @@ def set_check(update_id: int, data: CheckPayload, user: Annotated[CurrentUser, D
             check.checked_by_user_id = None
             check.checked_at = None
         estado = apply_status(session, row)
+        sync_operational_archive(session, row, user)
         record_history(session, update_id, user, "check_marcado" if data.checked else "check_desmarcado", {"check_key": data.check_key, "estado": estado})
         session.flush()
         result = PriceCostUpdateOut(**row_to_update(session, row, user=user))
@@ -138,6 +140,7 @@ def cancel_update(update_id: int, data: CancelPayload, user: Annotated[CurrentUs
         row.cancel_reason = data.cancel_reason or ""
         row.updated_at = now
         record_history(session, update_id, user, "cancelado", {"cancel_reason": data.cancel_reason or ""})
+        sync_operational_archive(session, row, user, reason="cancelled")
         session.flush()
         result = PriceCostUpdateOut(**row_to_update(session, row, user=user))
         session.commit()
