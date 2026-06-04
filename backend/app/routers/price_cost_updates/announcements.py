@@ -64,6 +64,7 @@ AR_TZ = ZoneInfo("America/Argentina/Buenos_Aires")
 IMAGE_W = 1080
 IMAGE_H = 1800
 MAX_PRODUCTS_PER_PAGE = 18
+ANNOUNCEMENT_PRICE_DISPLAY_OFFSET = Decimal("10")
 HERO_H = 220
 FOOTER_H = 56
 BODY_PADDING_TOP = 28
@@ -145,11 +146,11 @@ class AnnouncementBatchOut(BaseModel):
 # ──────────────────────────────────────────────────────────────────────────
 
 def _money_display(value: Any) -> str:
-    """Formatea '$ 1.250.000' (locale AR, sin centavos si .00)."""
+    """Formatea el precio comercial de placa, restando $10 al valor real."""
     if value is None or value == "":
         return ""
     try:
-        d = Decimal(str(value))
+        d = Decimal(str(value)) - ANNOUNCEMENT_PRICE_DISPLAY_OFFSET
     except Exception:
         return str(value)
     if d == d.to_integral_value():
@@ -226,6 +227,19 @@ def _page_has_new_entries(entries: list[dict[str, Any]]) -> bool:
     return any(entry.get("kind") == "row" and _is_new_entry(entry) for entry in entries)
 
 
+def _page_entry_mix(entries: list[dict[str, Any]]) -> tuple[int, int]:
+    new_count = 0
+    price_count = 0
+    for entry in entries:
+        if entry.get("kind") != "row":
+            continue
+        if _is_new_entry(entry):
+            new_count += 1
+        else:
+            price_count += 1
+    return new_count, price_count
+
+
 def _page_brand_counts(entries: list[dict[str, Any]]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for entry in entries:
@@ -236,9 +250,21 @@ def _page_brand_counts(entries: list[dict[str, Any]]) -> dict[str, int]:
     return counts
 
 
-def _hero_title_html(has_new_entries: bool) -> str:
-    if has_new_entries:
-        return 'Nuevos <span class="accent-new">ingresos</span> y <span class="accent-price">precios</span>'
+def _title_text_for_counts(new_count: int, price_count: int) -> str:
+    if new_count and price_count:
+        return "Nuevos precios e ingresos"
+    if new_count:
+        return "Nuevo ingreso" if new_count == 1 else "Nuevos ingresos"
+    return "Nuevos precios"
+
+
+def _hero_title_html(new_count: int, price_count: int) -> str:
+    if new_count and price_count:
+        return 'Nuevos <span class="accent-price">precios</span> e <span class="accent-new">ingresos</span>'
+    if new_count:
+        prefix = "Nuevo" if new_count == 1 else "Nuevos"
+        word = "ingreso" if new_count == 1 else "ingresos"
+        return f'{prefix} <span class="accent-new">{word}</span>'
     return 'Nuevos <span class="accent-price">precios</span>'
 
 
@@ -338,7 +364,13 @@ def _images_out_from_pngs(
     images: list[AnnouncementImageOut] = []
     for index, (entries, png) in enumerate(zip(pages, png_bytes_list), start=1):
         page_brands = list(dict.fromkeys(str(entry.get("marca") or "") for entry in entries if entry.get("kind") == "row"))
-        prefix = "nuevos-ingresos-precios" if _page_has_new_entries(entries) else "nuevos-precios"
+        new_count, price_count = _page_entry_mix(entries)
+        if new_count and price_count:
+            prefix = "nuevos-precios-ingresos"
+        elif new_count:
+            prefix = "nuevos-ingresos"
+        else:
+            prefix = "nuevos-precios"
         filename = f"{prefix}-{stamp}-{index:02d}-{_safe_filename('-'.join(page_brands[:2]))}.png"
         data_url = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
         images.append(
@@ -674,7 +706,8 @@ def _build_html(
         hero_logo = '<div class="logo-fallback">GV</div>'
 
     brand_count_page = _page_brand_counts(page_entries)
-    hero_title = _hero_title_html(_page_has_new_entries(page_entries))
+    new_count, price_count = _page_entry_mix(page_entries)
+    hero_title = _hero_title_html(new_count, price_count)
     body_html: list[str] = []
     brand_block_open = False
     for entry in page_entries:
@@ -865,7 +898,7 @@ def generate_announcement_images(
     if bajas_total:    msg_parts.append(f"{bajas_total} baja{'s' if bajas_total != 1 else ''}")
     if nuevos_total:   msg_parts.append(f"{nuevos_total} nuevo{'s' if nuevos_total != 1 else ''}")
     detail = ", ".join(msg_parts) if msg_parts else "sin cambios"
-    message_title = "Nuevos ingresos y precios" if nuevos_total else "Nuevos precios"
+    message_title = _title_text_for_counts(nuevos_total, aumentos_total + bajas_total)
     message = f"{message_title} {generated_at} - {detail}."
 
     # Logo

@@ -363,7 +363,10 @@ u otros canales, usando solo el precio nuevo.
 - Si una imagen se llena, el backend divide automaticamente la tanda en
   varias imagenes para que ninguna placa quede cortada.
 - Los ingresos nuevos se ordenan arriba; la placa que contiene ingresos usa
-  el titulo `Nuevos ingresos y precios`.
+  `Nuevos precios e ingresos` si mezcla cambios e ingresos, `Nuevos precios`
+  si solo hay cambios y `Nuevo ingreso`/`Nuevos ingresos` si solo hay altas.
+- En las placas comerciales se muestran precios con $10 menos que el valor real
+  del sistema, tanto en el precio anterior tachado como en el precio nuevo.
 - El footer de cada placa repite la vigencia, sin mostrar quien genero la
   imagen.
 - Al generar una tanda, los productos seleccionados salen de pendientes de
