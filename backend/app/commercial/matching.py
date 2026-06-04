@@ -22,6 +22,7 @@ import unicodedata
 from typing import Iterable
 
 from ..models.products import Product
+from ..product_catalog import has_outlet_marker, sku_key
 
 
 def normalize_descripcion(value: object) -> str:
@@ -41,6 +42,23 @@ def normalize_descripcion(value: object) -> str:
     text = re.sub(r"\(\s*([Oo0])\s*\)", r"(O)", text)
     text = re.sub(r"\s+", " ", text)
     return text
+
+
+def _product_condition(product: Product) -> str:
+    cond = str(getattr(product, "condicion_producto", "") or "").strip().upper()
+    if cond in {"PRIMERA", "OUTLET"}:
+        return cond
+    return "OUTLET" if has_outlet_marker(getattr(product, "sku", ""), getattr(product, "descripcion", "")) else "PRIMERA"
+
+
+def _incoming_condition(sku_normalized: str | None, descripcion: str | None) -> str:
+    return "OUTLET" if has_outlet_marker(sku_normalized or "", descripcion or "") else "PRIMERA"
+
+
+def _sku_base_key(value: object) -> str:
+    """SKU comparable sin marcador outlet explicito."""
+    key = sku_key(value)
+    return re.sub(r"\((?:O|0)\)", "", key)
 
 
 def build_product_indexes(
@@ -63,6 +81,7 @@ def build_product_indexes(
         }
     """
     by_sku: dict[str, Product] = {}
+    by_sku_condition: dict[tuple[str, str], Product] = {}
     by_desc: dict[str, Product] = {}
     by_id: dict[int, Product] = {}
     for p in products:
@@ -70,6 +89,9 @@ def build_product_indexes(
         sku_key_value = str(p.sku_normalized or "").strip()
         if sku_key_value:
             by_sku[sku_key_value] = p
+            sku_base = _sku_base_key(sku_key_value)
+            if sku_base:
+                by_sku_condition[(sku_base, _product_condition(p))] = p
         desc_key_value = normalize_descripcion(p.descripcion)
         if desc_key_value:
             by_desc[desc_key_value] = p
@@ -89,6 +111,7 @@ def build_product_indexes(
 
     return {
         "by_sku": by_sku,
+        "by_sku_condition": by_sku_condition,
         "by_desc": by_desc,
         "by_alias_sku": by_alias_sku,
         "by_alias_desc": by_alias_desc,
@@ -119,18 +142,28 @@ def resolve_product(
             match = indexes.get("by_desc", {}).get(norm)
             if match is not None:
                 return match
-    # 2. SKU normalizado
-    if sku_normalized:
-        match = indexes.get("by_sku", {}).get(sku_normalized)
-        if match is not None:
-            return match
-    # 3-4. Aliases manuales (cargados en indexes['by_alias_desc'] y ['by_alias_sku'])
+    # 2. Alias manual por descripcion.
     if descripcion:
         norm = normalize_descripcion(descripcion)
         if norm:
             match = indexes.get("by_alias_desc", {}).get(norm)
             if match is not None:
                 return match
+    # 3. SKU base + condicion detectada. Esto evita mezclar primera/outlet
+    # cuando el GFK limpia el modelo pero mantiene "(O)" en la descripcion.
+    incoming_condition = _incoming_condition(sku_normalized, descripcion)
+    if sku_normalized:
+        sku_base = _sku_base_key(sku_normalized)
+        if sku_base:
+            match = indexes.get("by_sku_condition", {}).get((sku_base, incoming_condition))
+            if match is not None:
+                return match
+    # 4. SKU normalizado exacto, solo si no contradice la condicion detectada.
+    if sku_normalized:
+        match = indexes.get("by_sku", {}).get(sku_normalized)
+        if match is not None and _product_condition(match) == incoming_condition:
+            return match
+    # 5. Alias manual por SKU.
     if sku_normalized:
         match = indexes.get("by_alias_sku", {}).get(sku_normalized)
         if match is not None:

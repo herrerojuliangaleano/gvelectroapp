@@ -229,27 +229,23 @@ Helpers existentes a reusar: `sku_key()`, `normalize_text()`,
   funciona. La condición (OUTLET/PRIMERA) se determina por
   `products.condicion_producto`, no por el SKU del Sheet de Stock.
 
-### 4.3 Libro Mensual de Ventas
+### 4.3 Reportes GFK generados
 
-- **Ubicación**: el script `gg.py` ya tiene la lógica para encontrarlo. La
-  reusamos:
+- **Ubicación**: el PSI lee los reportes GFK ya generados por `gg.py`:
   ```text
-  Drive/{año}/{MM-NombreMes}/Ventas Vs. Costos…
+  Drive/{año}/GFK/{MM}/N-Electro GV-ABC - GFK del DD#MM al DD#MM
   ```
-- **`YEAR_FOLDER_ID`** está hardcodeado en `gg.py:50` como
-  `"1FU6G8gqqI73DjsrpbseG-0sbzX7_a2YK"`. Se mueve a
-  `operational_config.commercial.year_folder_id` para no hardcodear.
-- **Hojas a leer**:
-  - `Ventas GV Total` → sucursal CASEROS
-  - `Ventas ABC Canning` → sucursal CANNING
-  - `Ventas ABC-Norte` → sucursal NORTE
-  - `Ventas ABC-Sur` → sucursal SUR
-- **Header** (sinónimos como `gg.py`):
-  `fecha | tipo de venta | marca | tipo | descripcion | sku | cantidad`.
+- **Configuración**: usa `operational_config.commercial.year_folder_id` para
+  ubicar la carpeta anual y buscar los GFK que cubren el rango pedido.
+- **Columnas leídas**:
+  `Fecha de venta | N°/Nombre de la sucursal | Descripcion del item |
+  Marca del item | Modelo del item | Cantidad vendida`.
 - **Filtros que aplica el PSI al leer**:
   - Fecha entre `periodo_inicio` y `periodo_fin`.
-  - SKU normalizado matchea con catálogo `products` (si no, sigue: producto
-    no catalogado, sección 7.4).
+  - Cada fila se resuelve contra `products` antes de acumular cantidades.
+  - El match usa descripción, SKU base y condición detectada. Esto es crítico:
+    no se debe agregar por SKU antes del matching porque primera y outlet pueden
+    compartir el mismo modelo limpio en el GFK.
 
 ### 4.4 Ajustes en Postgres (`sales_psi_adjustments`)
 
@@ -319,11 +315,24 @@ def psi_report(filtros) -> PSIReport:
     # 2. Stock (Drive, cache TTL 15 min)
     stock = cache_or_load_stock()  # dict {sku_normalized: int}
 
-    # 3. Ventas crudas del libro mensual del rango (Drive, cache TTL 15 min)
-    ventas_raw = cache_or_load_ventas(filtros.periodo_inicio, filtros.periodo_fin)
-    # Estructura: dict {sku_normalized: {fecha: cantidad, sucursal: ...}}
-    # Agregado: dict {sku_normalized: total_cantidad_en_rango}
-    ventas_agg = aggregate_by_sku(ventas_raw)
+    # 3. Ventas crudas desde los GFK que cubren el rango (Drive, cache TTL 15 min)
+    ventas_raw = cache_or_load_gfk_rows(filtros.periodo_inicio, filtros.periodo_fin)
+    # Importante: no agregar por SKU todavía. Primero se resuelve cada fila
+    # contra catálogo usando descripción + SKU base + condición detectada.
+    ventas_por_producto = defaultdict(int)
+    no_catalogados = {}
+    for venta in ventas_raw:
+        producto = resolve_product(
+            sku_normalized=venta.sku_norm,
+            descripcion=venta.descripcion,
+            indexes=indexes,
+        )
+        if producto:
+            ventas_por_producto[producto.id] += venta.cantidad
+        else:
+            key = (venta.sku_norm, normalize_descripcion(venta.descripcion))
+            bucket = no_catalogados.setdefault(key, NoCatalogadoAccumulator(venta))
+            bucket.cantidad_total += venta.cantidad
 
     # 4. Ajustes pendientes (NO los applied — esos ya están en ventas_raw)
     ajustes_pending = session.query(SalesPsiAdjustment).filter(
@@ -345,7 +354,7 @@ def psi_report(filtros) -> PSIReport:
     productos_no_catalogados = []
     for p in catalogo:
         stock_actual = stock.get(p.sku_normalized, 0)
-        sell_out_base = ventas_agg.get(p.sku_normalized, 0)
+        sell_out_base = ventas_por_producto.get(p.id, 0)
         ajuste_delta = ajustes_delta_por_sku.get(p.id, 0)
         sell_out_final = sell_out_base + ajuste_delta
 
@@ -365,16 +374,8 @@ def psi_report(filtros) -> PSIReport:
                 historial_ajustes=historial_por_producto.get(p.id, []),
             ))
 
-    # 7. Detectar SKUs en ventas que NO están en catálogo
-    skus_en_ventas = set(ventas_agg.keys())
-    skus_del_catalogo = {p.sku_normalized for p in catalogo}
-    for sku_huerfano in (skus_en_ventas - skus_del_catalogo):
-        productos_no_catalogados.append(NoCatalogadoRow(
-            sku_raw=ventas_raw[sku_huerfano].first_seen_sku,
-            descripcion_raw=ventas_raw[sku_huerfano].first_seen_descripcion,
-            cantidad_total=ventas_agg[sku_huerfano],
-            sucursales=ventas_raw[sku_huerfano].sucursales,
-        ))
+    # 7. Detectar filas del GFK que NO matchean catálogo
+    productos_no_catalogados = build_no_catalogados(no_catalogados)
 
     # 8. Ordenar y totalizar
     rows.sort(key=lambda r: (r.marca, r.tipo, r.descripcion))
@@ -1061,11 +1062,12 @@ Después del fix, generar GFK del rango y verificar:
 - El precio se resuelve correctamente desde la planilla PVP.
 - La columna Condición distingue OUTLET de PRIMERA.
 
-### 13.4 No bloquea el PSI
+### 13.4 Relación con el PSI
 
-El PSI lee del libro mensual (no del output GFK) y resuelve marca/tipo/
-condición desde el catálogo Postgres, donde la detección outlet ya está bien
-hecha por `has_outlet_marker`. Por eso el bug del GFK es independiente.
+El PSI lee reportes GFK ya generados. Para no repetir el bug de primera/outlet,
+el PSI no acumula por SKU antes del matching: resuelve cada fila contra el
+catálogo Postgres usando descripción, SKU base y condición detectada, y recién
+después suma por `product_id`.
 
 ---
 

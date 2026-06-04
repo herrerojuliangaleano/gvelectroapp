@@ -18,6 +18,7 @@ from typing import Annotated, Any, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, distinct, func, select
+from sqlalchemy.exc import SQLAlchemyError
 
 from ...auth import require_permission
 from ...commercial.gfk_reader import (
@@ -254,8 +255,7 @@ def psi_report(
 
         # 4. Ventas (desde GFK output, no del libro mensual)
         gfk_data = load_gfk_sales_for_range(pi, pf, force_refresh=force_refresh)
-        ventas_agg: dict[str, int] = gfk_data["agg_by_sku"]
-        by_sku_meta: dict[str, dict[str, Any]] = gfk_data["by_sku_meta"]
+        gfk_rows: list[dict[str, Any]] = gfk_data["rows"]
         gfk_files_used: list[dict[str, Any]] = gfk_data["files_used"]
         no_gfk_available: bool = gfk_data["no_gfk_available"]
         ventas_fetched_at = datetime.utcnow().isoformat() + "Z"
@@ -307,8 +307,11 @@ def psi_report(
     # Mantener todos los objetos en la sesión actual para evitar DetachedInstanceError.
     full_catalog = list(catalogo) + [p for p in full_catalog if p not in catalogo]
     # Cargar aliases manuales para el matcher
-    with db_session() as session_aliases:
-        aliases_list = session_aliases.scalars(select(PSIProductAlias)).all()
+    try:
+        with db_session() as session_aliases:
+            aliases_list = session_aliases.scalars(select(PSIProductAlias)).all()
+    except SQLAlchemyError:
+        aliases_list = []
     indexes = build_product_indexes(full_catalog, aliases=aliases_list)
 
     # Acumulador: product_id → datos agregados
@@ -337,20 +340,33 @@ def psi_report(
         entry = _ensure_entry(product)
         entry["stock_base"] += int(qty)
 
-    # 7b. Sell out: matcheamos cada SKU del GFK contra catálogo
-    skus_gfk_no_catalogados: set[str] = set()
-    for sku_norm, qty in ventas_agg.items():
-        meta = by_sku_meta.get(sku_norm, {})
+    # 7b. Sell out: matcheamos cada fila del GFK antes de acumular por producto
+    gfk_no_catalogados: dict[tuple[str, str], dict[str, Any]] = {}
+    for sale in gfk_rows:
+        sku_norm = str(sale.get("sku_norm") or "")
+        qty = int(sale.get("cantidad") or 0)
+        if not sku_norm or qty == 0:
+            continue
+        desc_raw = str(sale.get("descripcion") or "")
         product = resolve_product(
             sku_normalized=sku_norm,
-            descripcion=meta.get("first_descripcion"),
+            descripcion=desc_raw,
             indexes=indexes,
         )
         if product is None:
-            skus_gfk_no_catalogados.add(sku_norm)
+            key = (sku_norm, normalize_descripcion(desc_raw))
+            bucket = gfk_no_catalogados.setdefault(key, {
+                "sku_raw": str(sale.get("sku_raw") or ""),
+                "descripcion_raw": desc_raw,
+                "cantidad_total": 0,
+                "sucursales": set(),
+            })
+            bucket["cantidad_total"] += qty
+            if sale.get("sucursal_text"):
+                bucket["sucursales"].add(str(sale.get("sucursal_text") or ""))
             continue
         entry = _ensure_entry(product)
-        entry["sell_out_base"] += int(qty)
+        entry["sell_out_base"] += qty
 
     # 7c. Garantizar entradas para productos del filtro aunque no tengan stock ni ventas
     # (necesario para mode='advanced' y para mostrar productos con solo ajustes pending)
@@ -415,15 +431,12 @@ def psi_report(
 
     # 8. Bandeja "no catalogados" — SKUs del GFK que no matchearon ni por SKU ni por descripción
     no_catalogados: list[PSINoCatalogadoRow] = []
-    for sku_huerfano in sorted(skus_gfk_no_catalogados):
-        if not sku_huerfano:
-            continue
-        meta = by_sku_meta.get(sku_huerfano, {})
+    for (_sku_norm, _desc_norm), meta in sorted(gfk_no_catalogados.items(), key=lambda item: (item[0][0], item[0][1])):
         no_catalogados.append(PSINoCatalogadoRow(
-            sku_raw=str(meta.get("first_sku_raw") or ""),
-            descripcion_raw=str(meta.get("first_descripcion") or ""),
-            cantidad_total=int(ventas_agg.get(sku_huerfano, 0)),
-            sucursales=list(meta.get("sucursales", []) or []),
+            sku_raw=str(meta.get("sku_raw") or ""),
+            descripcion_raw=str(meta.get("descripcion_raw") or ""),
+            cantidad_total=int(meta.get("cantidad_total") or 0),
+            sucursales=sorted(list(meta.get("sucursales", set()) or [])),
         ))
 
     # 9. Ordenar y devolver
