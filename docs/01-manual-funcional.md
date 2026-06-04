@@ -292,6 +292,10 @@ Cuando la sincronizacion detecta cambios reales de PVP o costo, puede crear
 tareas en el modulo de Precios y Costos para que el equipo complete el
 checklist operativo.
 
+Los productos nuevos tambien crean tareas automaticamente cuando traen PVP y/o
+costo en la planilla. Si un producto nuevo entra sin PVP, queda en el catalogo
+pero no aparece en anuncios de precios hasta completar ese valor y resincronizar.
+
 ### Permisos relevantes
 
 `products.view`, `products.sync`, `products.manage`,

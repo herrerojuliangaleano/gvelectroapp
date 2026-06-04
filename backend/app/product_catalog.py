@@ -528,7 +528,25 @@ def sync_products_from_sheet(actor: Any) -> dict[str, Any]:
                         updated_at=now,
                     )
                     session.add(product)
+                    session.flush()
                     created += 1
+
+                    if pvp_dec is not None:
+                        price_changes_detected += 1
+                        created_update = _try_create_price_cost_update(session, "price", sku, descripcion, marca, None, pvp_dec, int(product.id), int(log.id), now)
+                        if created_update:
+                            price_cost_updates_created += 1
+                            created_price_updates.append(created_update)
+                        else:
+                            price_cost_updates_skipped += 1
+                    if costo_dec is not None:
+                        cost_changes_detected += 1
+                        created_update = _try_create_price_cost_update(session, "cost", sku, descripcion, marca, None, costo_dec, int(product.id), int(log.id), now)
+                        if created_update:
+                            price_cost_updates_created += 1
+                            created_cost_updates.append(created_update)
+                        else:
+                            price_cost_updates_skipped += 1
             status_value = "success" if not errors else "partial"
         except Exception as exc:
             status_value = "failed"
