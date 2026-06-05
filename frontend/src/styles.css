@@ -47,6 +47,19 @@
   --danger-soft: rgba(239, 68, 68, 0.18);
   --danger-soft-text: #FECACA;
 
+  /* ── Charts (Sales BI dashboard rediseñado) ───────────────────────────
+     Paleta en OKLCH para gradientes con interpolación perceptual.
+     Los SVG de Recharts aceptan oklch() directamente vía var(). */
+  --chart-blue:     oklch(0.62 0.19 255);   /* serie principal / vendedor A */
+  --chart-violet:   oklch(0.66 0.22 305);   /* vendedor B / acentos */
+  --chart-teal:     oklch(0.72 0.13 180);   /* transferencias / serie aux */
+  --chart-amber:    oklch(0.78 0.16 70);    /* tarjeta */
+  --chart-positive: oklch(0.74 0.18 155);   /* delta + / ganador */
+  --chart-negative: oklch(0.66 0.22 25);    /* delta - */
+  --chart-ghost:    oklch(0.55 0.02 260 / 0.45); /* línea período anterior */
+  --chart-grid:     rgba(148, 163, 184, 0.10);
+  --chart-tooltip-bg: #0F172A;
+
   --info: #38BDF8;
   --info-soft: rgba(56, 189, 248, 0.18);
   --info-soft-text: #BAE6FD;

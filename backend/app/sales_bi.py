@@ -241,70 +241,163 @@ def _field_for_subheader(normed_header: list[str], column: int, normed_subheader
     return _ALIAS_TO_FIELD.get(normed_subheader) or payment_field
 
 
-_GRAN_ELECTRO = frozenset([
-    "AIRE ACONDICIONADO", "ANAFE", "COCINA", "EXHIBIDORA", "FREEZER",
-    "HELADERA", "HORNO", "LAVARROPAS", "LAVASECARROPAS", "LAVAVAJILLAS",
-    "SECARROPAS", "TERMOTANQUE", "TORRE DE LAVADO", "TV",
-])
-_MEDIO_ELECTRO = frozenset([
-    "ASPIRADORA", "CALEFON", "CALOVENTOR", "CAMPANA", "CERVECERA",
-    "CONVECTOR", "MICROONDAS", "MINICOMPONENTE", "MONITOR", "PANEL",
-    "PARLANTE", "PURIFICADOR", "VENTILADOR",
-])
-_PEQUENO_ELECTRO = frozenset([
-    "ARROCERA", "BATIDORA", "CAFETERA", "CHOPPER", "ESPUMADOR", "EXPRIMIDOR",
-    "EXTRACTOR", "FREIDORA", "JARRA", "LICUADORA", "LIMPIADOR ZAP", "MIXER",
-    "MOLINO", "MOLINILLO", "MULTIOLLA", "MULTIPROCESADORA", "PAVA", "PICADORA",
-    "PLANCHA", "PROCESADORA", "QUITAPELUSAS", "SANDWICHERA", "SOPERA",
-    "TOSTADORA", "VAPORIZADOR", "YOGURTERA",
-])
-
-_LINEA_BLANCA = frozenset([
+# ── Taxonomía de categorías (5 buckets) ────────────────────────────────────
+# Reemplaza el esquema viejo de 3 niveles (Gran / Medio / Pequeño electro)
+# por las 5 líneas comerciales reales que usa el negocio. Tipos no listados
+# caen en "OTROS" (en vez de PEQUEÑO ELECTRO por descarte).
+#
+# Si agregás un tipo nuevo:
+#   1. Sumarlo al frozenset correspondiente.
+#   2. Si la planilla puede traer descripciones libres (no solo el tipo
+#      canónico), agregar también el keyword en `_CATEGORIA_KEYWORDS`
+#      para el fallback de texto suelto.
+_CAT_LINEA_BLANCA = frozenset([
     "FREEZER", "HELADERA", "LAVARROPAS", "LAVASECARROPAS", "LAVAVAJILLAS",
     "SECARROPAS", "TORRE DE LAVADO",
 ])
-_LINEA_COCINA = frozenset(["ANAFE", "CAMPANA", "COCINA", "HORNO", "MICROONDAS"])
-_LINEA_CLIMA = frozenset([
+_CAT_COCINA = frozenset([
+    "ANAFE", "CAMPANA", "COCINA", "HORNO", "MICROONDAS",
+])
+_CAT_CLIMATIZACION = frozenset([
     "AIRE ACONDICIONADO", "CALEFON", "CALOVENTOR", "CONVECTOR", "PANEL",
     "PURIFICADOR", "TERMOTANQUE", "VENTILADOR",
 ])
-_LINEA_TV_AUDIO = frozenset(["MINICOMPONENTE", "MONITOR", "PARLANTE", "TV"])
-_LINEA_PEQUENOS = _PEQUENO_ELECTRO | frozenset(["ASPIRADORA", "CERVECERA"])
+_CAT_TV_AUDIO = frozenset([
+    "MINICOMPONENTE", "MONITOR", "PARLANTE", "TV",
+])
+_CAT_PEQUENOS = frozenset([
+    "ARROCERA", "ASPIRADORA", "BATIDORA", "CAFETERA", "CERVECERA",
+    "CHOPPER", "ESPUMADOR", "EXPRIMIDOR", "EXTRACTOR", "FREIDORA",
+    "JARRA", "LICUADORA", "LIMPIADOR ZAP", "MIXER", "MOLINO", "MOLINILLO",
+    "MULTIOLLA", "MULTIPROCESADORA", "PAVA", "PICADORA", "PLANCHA",
+    "PROCESADORA", "QUITAPELUSAS", "SANDWICHERA", "SOPERA", "TOSTADORA",
+    "VAPORIZADOR", "YOGURTERA",
+])
+
+# Etiquetas finales que se guardan en `sales_records.categoria` y que el
+# frontend usa para mostrar/filtrar. Mantener constantes y en MAYÚSCULAS.
+CATEGORIA_LINEA_BLANCA = "LINEA BLANCA"
+CATEGORIA_COCINA = "COCINA"
+CATEGORIA_CLIMATIZACION = "CLIMATIZACION"
+CATEGORIA_TV_AUDIO = "TV / AUDIO"
+CATEGORIA_PEQUENOS = "PEQUENOS"
+CATEGORIA_OTROS = "OTROS"
+
+# Fallback por substring para descripciones libres (cuando la planilla no
+# trae el tipo canónico exacto). El orden importa: el primero que matchee
+# gana, así que las palabras más específicas van primero.
+_CATEGORIA_KEYWORDS: tuple[tuple[str, str], ...] = (
+    ("AIRE ACONDICIONADO", CATEGORIA_CLIMATIZACION),
+    ("HELADERA", CATEGORIA_LINEA_BLANCA),
+    ("LAVARROPAS", CATEGORIA_LINEA_BLANCA),
+    ("LAVASECARROPAS", CATEGORIA_LINEA_BLANCA),
+    ("LAVAVAJILLAS", CATEGORIA_LINEA_BLANCA),
+    ("SECARROPAS", CATEGORIA_LINEA_BLANCA),
+    ("FREEZER", CATEGORIA_LINEA_BLANCA),
+    ("MICROONDAS", CATEGORIA_COCINA),
+    ("COCINA", CATEGORIA_COCINA),
+    ("HORNO", CATEGORIA_COCINA),
+    ("ANAFE", CATEGORIA_COCINA),
+    ("CAMPANA", CATEGORIA_COCINA),
+    ("TERMOTANQUE", CATEGORIA_CLIMATIZACION),
+    ("CALEFON", CATEGORIA_CLIMATIZACION),
+    ("VENTILADOR", CATEGORIA_CLIMATIZACION),
+    ("CALOVENTOR", CATEGORIA_CLIMATIZACION),
+    ("CONVECTOR", CATEGORIA_CLIMATIZACION),
+    ("PURIFICADOR", CATEGORIA_CLIMATIZACION),
+    ("MONITOR", CATEGORIA_TV_AUDIO),
+    ("PARLANTE", CATEGORIA_TV_AUDIO),
+    ("MINICOMPONENTE", CATEGORIA_TV_AUDIO),
+    (" TV ", CATEGORIA_TV_AUDIO),  # con espacios para evitar match contra "TVS" en producto
+)
 
 
 def _classify(tipo: str) -> tuple[str, str]:
+    """Clasifica un tipo de producto en una de las 5 categorías comerciales.
+
+    Returns:
+        (categoria, linea) — por contrato histórico devolvemos un tuple.
+        Hoy ambos campos contienen el mismo valor (la categoría de 5 buckets).
+        El campo `linea` queda como alias por compatibilidad con código viejo
+        que lo lee aparte. Podría dropear en un futuro refactor.
+    """
     t = _norm(tipo)
-    if t in _GRAN_ELECTRO:
-        categoria = "GRAN ELECTRO"
-    elif t in _MEDIO_ELECTRO:
-        categoria = "MEDIO ELECTRO"
-    elif t in _PEQUENO_ELECTRO:
-        categoria = "PEQUEÑO ELECTRO"
+    if t in _CAT_LINEA_BLANCA:
+        categoria = CATEGORIA_LINEA_BLANCA
+    elif t in _CAT_COCINA:
+        categoria = CATEGORIA_COCINA
+    elif t in _CAT_CLIMATIZACION:
+        categoria = CATEGORIA_CLIMATIZACION
+    elif t in _CAT_TV_AUDIO:
+        categoria = CATEGORIA_TV_AUDIO
+    elif t in _CAT_PEQUENOS:
+        categoria = CATEGORIA_PEQUENOS
+    elif not t:
+        categoria = ""
     else:
-        # keyword fallback for free-text tipos
-        if any(kw in t for kw in ("HELADERA", "LAVARROPAS", "FREEZER", "AIRE ACONDICIONADO", "TV", "COCINA", "HORNO")):
-            categoria = "GRAN ELECTRO"
-        elif any(kw in t for kw in ("MICROONDAS", "ASPIRADORA", "CONVECTOR", "PARLANTE", "MONITOR")):
-            categoria = "MEDIO ELECTRO"
-        elif t:
-            categoria = "PEQUEÑO ELECTRO"
-        else:
-            categoria = ""
+        # Fallback: descripción libre. Buscar keywords (con padding para
+        # que " TV " no matchee dentro de "TVS" u otros nombres comerciales).
+        padded = f" {t} "
+        categoria = CATEGORIA_OTROS
+        for kw, target in _CATEGORIA_KEYWORDS:
+            if kw.startswith(" "):
+                if kw in padded:
+                    categoria = target
+                    break
+            elif kw in t:
+                categoria = target
+                break
 
-    if t in _LINEA_BLANCA:
-        linea = "LÍNEA BLANCA"
-    elif t in _LINEA_COCINA:
-        linea = "COCINA"
-    elif t in _LINEA_CLIMA:
-        linea = "CLIMATIZACIÓN"
-    elif t in _LINEA_TV_AUDIO:
-        linea = "TV / AUDIO"
-    elif t in _LINEA_PEQUENOS:
-        linea = "PEQUEÑOS ELECTROS"
-    else:
-        linea = "PEQUEÑOS ELECTROS" if categoria == "PEQUEÑO ELECTRO" else ""
+    # `linea` queda igual a `categoria` por compatibilidad — antes diferían
+    # (categoria=GRAN/MEDIO/PEQUEÑO, linea=LINEA BLANCA/COCINA/...) pero
+    # ahora la 5-bucket es la única taxonomía y la duplicamos para no
+    # romper código que lee `record.linea`.
+    return categoria, categoria
 
-    return categoria, linea
+
+# ── Set público para validación y migraciones ──────────────────────────────
+CATEGORIAS_VALIDAS: frozenset[str] = frozenset([
+    CATEGORIA_LINEA_BLANCA,
+    CATEGORIA_COCINA,
+    CATEGORIA_CLIMATIZACION,
+    CATEGORIA_TV_AUDIO,
+    CATEGORIA_PEQUENOS,
+    CATEGORIA_OTROS,
+])
+
+
+def reclassify_existing_records(*, dry_run: bool = False) -> dict[str, int]:
+    """Re-clasifica `sales_records.categoria` y `.linea` aplicando la
+    taxonomía actual sobre el `tipo_producto` ya almacenado.
+
+    Pensada para correr una sola vez después de cambiar la taxonomía,
+    sin tener que pedirle al usuario que re-importe planillas.
+
+    Args:
+        dry_run: si True solo cuenta cuántos cambiarían sin tocar la DB.
+
+    Returns:
+        {categoria_nueva: cantidad_de_records} + claves "updated" y "scanned".
+    """
+    from .models.sales_bi import SalesRecord  # local: evita ciclo con el __init__
+
+    counts: dict[str, int] = {"scanned": 0, "updated": 0}
+    with db_session() as session:
+        for record in session.scalars(select(SalesRecord)).all():
+            counts["scanned"] += 1
+            new_cat, new_linea = _classify(str(record.tipo_producto or ""))
+            current_cat = str(record.categoria or "")
+            current_linea = str(record.linea or "")
+            if current_cat == new_cat and current_linea == new_linea:
+                continue
+            counts["updated"] += 1
+            counts[new_cat] = counts.get(new_cat, 0) + 1
+            if not dry_run:
+                record.categoria = new_cat
+                record.linea = new_linea
+        if not dry_run:
+            session.commit()
+    return counts
 
 
 def _detect_condicion(sku: str, producto: str) -> str:

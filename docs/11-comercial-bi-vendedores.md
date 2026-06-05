@@ -31,6 +31,52 @@ hoja:
 El matching usa la logica comun de `backend/app/commercial/matching.py`, pero
 los aliases son exclusivos del modulo Sales BI.
 
+### Taxonomia de categorias (5 buckets)
+
+Cada linea de venta queda etiquetada con una `categoria` segun el `tipo` del
+producto. Antes existian dos esquemas paralelos (Gran/Medio/Pequeno electro y
+una serie de "lineas comerciales") - en 2026 unificamos a un solo esquema de
+**5 categorias + OTROS** que es el que el negocio usa de verdad:
+
+| Categoria       | Tipos que la conforman                                            |
+|-----------------|-------------------------------------------------------------------|
+| `LINEA BLANCA`  | HELADERA, FREEZER, LAVARROPAS, LAVASECARROPAS, SECARROPAS, LAVAVAJILLAS, TORRE DE LAVADO |
+| `COCINA`        | COCINA, ANAFE, HORNO, CAMPANA, MICROONDAS                         |
+| `CLIMATIZACION` | AIRE ACONDICIONADO, VENTILADOR, CALOVENTOR, CONVECTOR, PANEL, CALEFON, TERMOTANQUE, PURIFICADOR |
+| `TV / AUDIO`    | TV, MONITOR, PARLANTE, MINICOMPONENTE                             |
+| `PEQUENOS`      | ARROCERA, ASPIRADORA, BATIDORA, CAFETERA, CERVECERA, CHOPPER, ESPUMADOR, EXPRIMIDOR, EXTRACTOR, FREIDORA, JARRA, LICUADORA, LIMPIADOR ZAP, MIXER, MOLINO, MOLINILLO, MULTIOLLA, MULTIPROCESADORA, PAVA, PICADORA, PLANCHA, PROCESADORA, QUITAPELUSAS, SANDWICHERA, SOPERA, TOSTADORA, VAPORIZADOR, YOGURTERA |
+| `OTROS`         | Cualquier tipo no listado arriba                                  |
+
+Reglas:
+- Match exacto contra el frozenset correspondiente sobre el tipo normalizado
+  (uppercase, sin acentos, ver `_norm()` en `backend/app/sales_bi.py`).
+- Si no hay match exacto, fallback por substring sobre el tipo (ej.
+  `HELADERA NO FROST` -> `LINEA BLANCA` via keyword `HELADERA`). El keyword
+  ` TV ` esta padded para evitar matches falsos contra cadenas como `TVS`.
+- Si nada matchea -> `OTROS` (NO se asume "pequeno electro por descarte"
+  como hacia el codigo viejo).
+
+Para agregar un tipo nuevo:
+1. Sumarlo al frozenset `_CAT_*` correspondiente en `sales_bi.py`.
+2. Si la planilla puede traer descripciones libres no canonicas, agregar el
+   keyword en `_CATEGORIA_KEYWORDS` para el fallback.
+
+Tras cambiar la taxonomia, re-clasificar registros ya guardados en lugar de
+pedir re-importacion completa:
+
+```bash
+docker exec electrogv-backend python -c \
+  "from app.sales_bi import reclassify_existing_records; print(reclassify_existing_records())"
+```
+
+`reclassify_existing_records(dry_run=True)` muestra el impacto sin tocar la
+DB. Sin `dry_run` aplica el UPDATE en la tabla `sales_records` (campos
+`categoria` y `linea`, ambos quedan con el mismo valor).
+
+Nota: el campo `linea` quedo como alias del `categoria` por compatibilidad
+con codigo viejo que lo leia aparte. Hoy ambos contienen el mismo valor de
+la nueva taxonomia - se podria dropear `linea` en un refactor futuro.
+
 ### Regla contable por remito
 
 Para evitar diferencias por la forma en que se cargan las planillas, el
