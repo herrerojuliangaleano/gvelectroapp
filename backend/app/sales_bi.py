@@ -700,27 +700,47 @@ _STOP_KEYWORDS = frozenset([
     "ADMINISTRACION", "ADMINISTRACIÓN",
 ])
 
+# Primeras palabras que indican una sección de cierre. Permite cazar
+# "TOTAL GV", "SUBTOTAL DEL MES", "RETIRO A CARGO DE:", "DEVOLUCIONES" etc.
+# Estos textos suelen aparecer en filas footer que reaprovechan las columnas
+# REMITO/VENDEDOR/SKU/PRODUCTO para mostrar resúmenes — y antes los leíamos
+# como si fueran ventas.
+_STOP_PREFIXES = frozenset([
+    "TOTAL", "TOTALES", "SUBTOTAL", "SUBTOTALES",
+    "RETIRO", "RETIROS", "DEVOLUCION", "DEVOLUCIONES",
+])
+
+
+def _is_stop_marker(text: Any) -> bool:
+    """¿Esta celda parece un marcador de fin de tabla (label de resumen)?"""
+    n = _norm(text)
+    if not n:
+        return False
+    if n in _STOP_KEYWORDS:
+        return True
+    # Primera palabra normalizada (ej. "TOTAL GV" → "TOTAL").
+    return n.split(" ", 1)[0] in _STOP_PREFIXES
+
 
 def _is_stop_row(row: list, remito_col: int | None) -> bool:
     """Detecta filas de cierre/resumen que marcan el final de la tabla de ventas.
 
     Reglas:
-      1. Si la celda REMITO tiene un keyword de stop (ej. "TOTAL" como label
-         en lugar de número de remito) → parar. Es el caso clásico de una
-         fila de totales debajo de la tabla.
+      1. Si la celda REMITO tiene un marcador de cierre (TOTAL, RETIRO, ...)
+         → parar. Caso clásico de fila de totales debajo de la tabla.
       2. Si REMITO tiene un valor con dígitos (ej. "76", "3546", "RET-2026-1")
          es una fila de DATOS legítima — no parar aunque otra columna haga
-         match con un keyword. Esto evita falsos positivos como un vendedor
-         llamado "Administracion" o un producto con la palabra "TOTAL" en
-         la descripción.
+         match con un keyword. Evita falsos positivos como un vendedor
+         llamado "Administracion" o un producto cuya descripción mencione
+         "TOTAL".
       3. Si REMITO está vacío o sin dígitos, miramos el resto de las celdas
-         como fallback (fila de resumen tipo "Administracion: $1.770.000"
-         que aparece debajo de la tabla con REMITO en blanco).
+         como fallback (fila de resumen tipo "Administracion: $1.770.000",
+         "TOTAL GV | SUCURSAL + ON LINE", "Retiro a cargo de:" etc.).
     """
     if remito_col is not None and remito_col < len(row):
         val = row[remito_col]
         n = _norm(val) if val is not None else ""
-        if n in _STOP_KEYWORDS:
+        if _is_stop_marker(val):
             return True
         # Hay número de remito real → es una fila de datos, no de cierre.
         if n and re.search(r"\d", n):
@@ -728,7 +748,7 @@ def _is_stop_row(row: list, remito_col: int | None) -> bool:
     # Fallback: REMITO vacío/sin dígitos. Mirar todas las celdas por si la
     # fila es un resumen suelto (ej. label en una columna que no es REMITO).
     for cell in row:
-        if _norm(cell) in _STOP_KEYWORDS:
+        if _is_stop_marker(cell):
             return True
     return False
 
@@ -756,6 +776,7 @@ def _parse_data_rows(
 
         remito = str(get("remito", "")).strip()
         producto = str(get("producto", "")).strip()
+        sku = str(get("sku", "")).strip()
 
         # Need at least a remito or a producto to consider this a data row
         if not remito and not producto:
@@ -763,6 +784,15 @@ def _parse_data_rows(
 
         if _is_stop_row(row, remito_col):
             break
+
+        # Una venta legítima necesita al menos un identificador de producto
+        # (SKU o descripción). Si una fila trae REMITO + VENDEDOR pero los
+        # dos identificadores de producto están vacíos, es casi seguro una
+        # fila de footer/resumen de otra tabla que la planilla pega abajo
+        # de las ventas reales (ej. "Retiros del día", "Ale Paulo: total"
+        # con la columna REMITO reusada para enumerar). La saltamos.
+        if not producto and not sku:
+            continue
 
         # Skip rows where remito is a dash/empty and producto is purely numeric
         # (these are usually totals rows like "927500")
@@ -773,7 +803,6 @@ def _parse_data_rows(
         vendedor = str(get("vendedor", "")).strip()
         marca = str(get("marca", "")).strip()
         tipo_produto = str(get("tipo", "")).strip()
-        sku = str(get("sku", "")).strip()
 
         raw_cond = str(get("condicion", "")).strip()
         condicion = _detect_condicion(sku, producto)
@@ -782,6 +811,15 @@ def _parse_data_rows(
 
         cantidad = max(1, int(_parse_num(get("cantidad", 1)) or 1))
         pvp = _parse_num(get("pvp", 0))
+        # En planillas ONLINE la columna VALOR/MONTO es el TOTAL de la línea
+        # (precio unitario × cantidad), no el precio unitario. Si cantidad > 1
+        # y la dejamos como está, el cálculo posterior `pvp × cantidad` infla
+        # el total. Lo normalizamos a precio unitario para que el resto del
+        # pipeline (que asume "pvp = precio unitario") dé números correctos.
+        # Ejemplo real: HY11INV cantidad=2 valor=1.900.000 → pvp_unit=950.000,
+        # total=950.000×2=1.900.000 (en vez de 1.900.000×2=3.800.000).
+        if is_online and cantidad > 1 and pvp > 0:
+            pvp = pvp / cantidad
         costo = _parse_num(get("costo", 0))
         monto_ingresado = _parse_num(get("monto_ingresado", 0))
         efectivo = _parse_num(get("efectivo", 0))

@@ -25,23 +25,50 @@ from ..models.products import Product
 from ..product_catalog import has_outlet_marker, sku_key
 
 
+# Zero-width chars: invisibles pero rompen la igualdad de strings.
+# Aparecen pegando desde web/Excel/Google Sheets.
+_ZERO_WIDTH = "​‌‍⁠﻿"
+
+# Comillas tipográficas (curly) → comilla recta ASCII
+_FANCY_SINGLE_QUOTES = "‘’ʼ`´"  # ‘ ’ ʼ ` ´
+_FANCY_DOUBLE_QUOTES = "“”″‶"        # “ ” ″ ‶
+
+
 def normalize_descripcion(value: object) -> str:
-    """Normaliza una descripción para comparación.
+    """Normaliza una descripción para comparación contra el catálogo.
+
+    Pensada para ser tolerante a las diferencias chiquitas que aparecen entre
+    lo cargado a mano en una planilla y lo guardado en el catálogo:
+    espacios extras, espacios duros (NBSP / narrow-NBSP), zero-width chars,
+    comillas tipográficas vs rectas, primas vs comillas, acentos,
+    mayúsculas/minúsculas, paréntesis con espacios alrededor del (O).
 
     Preserva la marca de outlet (`(O)`/OUTLET) porque distingue producto.
     """
     if value is None:
         return ""
     text = str(value)
-    # NFKD + sin combining
+    # 1. Borrar zero-width invisibles (ZWSP, ZWNJ, ZWJ, WJ, BOM).
+    text = re.sub(f"[{_ZERO_WIDTH}]", "", text)
+    # 2. Comillas/primas fancy → ASCII. Hacer esto ANTES de NFKD porque
+    #    NFKD descompone `″` (U+2033 double prime) en `′′` (dos U+2032),
+    #    y nos quedaríamos con `''` en lugar de `"`.
+    text = re.sub(f"[{_FANCY_SINGLE_QUOTES}]", "'", text)
+    text = re.sub(f"[{_FANCY_DOUBLE_QUOTES}]", '"', text)
+    # 3. NFKD descompone caracteres compatibles. Convierte NBSP / NNBSP en
+    #    espacios normales y separa los acentos en combining marks.
     text = unicodedata.normalize("NFKD", text)
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
-    # Uppercase
+    # 3b. Después de NFKD pueden quedar primes individuales (U+2032 ′)
+    #     que sobrevivieron a la descomposición de quotes dobles.
+    text = text.replace("′", "'")
+    # 4. Uppercase + trim.
     text = text.upper().strip()
-    # Colapsar espacios y normalizar paréntesis "( O )" → "(O)"
+    # 5. Marca outlet "( O )" / "(o)" / "(0)" → "(O)".
     text = re.sub(r"\(\s*([Oo0])\s*\)", r"(O)", text)
+    # 6. Colapsar runs de whitespace (todo \s Unicode) → un solo espacio.
     text = re.sub(r"\s+", " ", text)
-    return text
+    return text.strip()
 
 
 def _product_condition(product: Product) -> str:
