@@ -176,6 +176,7 @@ _COLUMN_ALIASES: dict[str, list[str]] = {
     "cantidad": ["CANTIDAD", "CANT", "QTY", "CTD"],
     "pvp": ["PVP", "PRECIO", "PRECIO VENTA", "P VENTA", "PRECIO UNITARIO", "P UNITARIO", "IMPORTE", "VALOR", "MONTO"],
     "costo": ["COSTO", "COSTO VIGENTE", "COSTO VIG", "P COSTO"],
+    "monto_ingresado": ["MONTO INGRESADO", "MONTO ING.", "MONTO ING", "INGRESADO", "PAGO INGRESADO"],
     "efectivo": ["EFECTIVO", "EFECT", "EFECT.", "EFT"],
     "transferencia": ["TRANSFERENCIA", "TRANSFER", "TRANSFER.", "TRANSF", "TRANSF.", "TRF"],
     "tarjeta": ["TARJETA", "TAR", "TAR.", "TC", "CREDITO", "DEBITO", "POSNET", "POS"],
@@ -193,6 +194,52 @@ for _f, _al in _COLUMN_ALIASES.items():
             _ALIAS_TO_FIELD[_k] = _f
 
 # ── classifiers ───────────────────────────────────────────────────────────────
+
+_PAYMENT_SUBHEADER_ALIASES: dict[str, str] = {
+    "EFECTIVO": "efectivo",
+    "EFECT": "efectivo",
+    "EFECT.": "efectivo",
+    "EFEC": "efectivo",
+    "EFEC.": "efectivo",
+    "EFT": "efectivo",
+    "TRANSFERENCIA": "transferencia",
+    "TRANSFER": "transferencia",
+    "TRANSFER.": "transferencia",
+    "TRANSF": "transferencia",
+    "TRANSF.": "transferencia",
+    "TRAN": "transferencia",
+    "TRF": "transferencia",
+    "TARJETA": "tarjeta",
+    "TAR": "tarjeta",
+    "TC": "tarjeta",
+    "POSNET": "tarjeta",
+    "POS": "tarjeta",
+    "USD": "usd",
+    "DOLARES": "usd",
+    "U$S": "usd",
+}
+_PAYMENT_SUBHEADER_TO_FIELD = {_norm(k): v for k, v in _PAYMENT_SUBHEADER_ALIASES.items()}
+
+
+def _parent_header_for_column(normed_header: list[str], column: int) -> str:
+    for idx in range(min(column, len(normed_header) - 1), -1, -1):
+        if normed_header[idx]:
+            return normed_header[idx]
+    return ""
+
+
+def _is_sena_parent(parent: str) -> bool:
+    compact = parent.replace(" ", "")
+    return compact in {"SENA", "SENIA", "SEA"} or parent.startswith("SEN")
+
+
+def _field_for_subheader(normed_header: list[str], column: int, normed_subheader: str) -> str | None:
+    parent = _parent_header_for_column(normed_header, column)
+    payment_field = _PAYMENT_SUBHEADER_TO_FIELD.get(normed_subheader)
+    if payment_field and _is_sena_parent(parent):
+        return f"sena_{payment_field}"
+    return _ALIAS_TO_FIELD.get(normed_subheader) or payment_field
+
 
 _GRAN_ELECTRO = frozenset([
     "AIRE ACONDICIONADO", "ANAFE", "COCINA", "EXHIBIDORA", "FREEZER",
@@ -631,7 +678,7 @@ def _find_header_row(rows: list[list]) -> tuple[int, dict[str, int]] | None:
             sub_normed = [_norm(c) for c in rows[i + offset]]
             added = False
             for j, n in enumerate(sub_normed):
-                field = _ALIAS_TO_FIELD.get(n)
+                field = _field_for_subheader(normed, j, n)
                 if field and field not in col_map:
                     col_map[field] = j
                     added = True
@@ -719,21 +766,26 @@ def _parse_data_rows(
         cantidad = max(1, int(_parse_num(get("cantidad", 1)) or 1))
         pvp = _parse_num(get("pvp", 0))
         costo = _parse_num(get("costo", 0))
+        monto_ingresado = _parse_num(get("monto_ingresado", 0))
         efectivo = _parse_num(get("efectivo", 0))
         transferencia = _parse_num(get("transferencia", 0))
         tarjeta = _parse_num(get("tarjeta", 0))
         usd = _parse_num(get("usd", 0))
         cuenta_corriente = _parse_num(get("cuenta_corriente", 0))
         otros = _parse_num(get("otros", 0))
+        efectivo += _parse_num(get("sena_efectivo", 0))
+        transferencia += _parse_num(get("sena_transferencia", 0))
+        tarjeta += _parse_num(get("sena_tarjeta", 0))
+        usd += _parse_num(get("sena_usd", 0))
 
         if is_online:
-            total_cobrado = _parse_num(get("total", 0)) or pvp
-            transferencia = total_cobrado
+            # Venta online ingresa como transferencia. Si el monto ingresado es
+            # menor al total del remito, el saldo queda como seña pendiente.
+            total_cobrado = monto_ingresado
+            transferencia = monto_ingresado
             efectivo = tarjeta = usd = cuenta_corriente = otros = 0.0
         else:
             total_cobrado = efectivo + transferencia + tarjeta + usd + cuenta_corriente + otros
-            if total_cobrado == 0:
-                total_cobrado = _parse_num(get("total", 0)) or pvp
 
         diferencia = total_cobrado - costo * cantidad if costo else 0.0
         margen = (diferencia / total_cobrado * 100) if total_cobrado else 0.0
@@ -781,12 +833,25 @@ def _raw_cobrado(rec: dict) -> float:
     return sum(rec.get(f, 0.0) for f in _PAYMENT_FIELDS)
 
 
+def _recompute_financials(rec: dict) -> None:
+    pvp_total = rec["pvp"] * rec["cantidad"]
+    total_cobrado = float(rec.get("total_cobrado") or 0.0)
+    rec["saldo"] = round(max(0.0, pvp_total - total_cobrado), 2)
+    if rec.get("costo"):
+        diferencia = total_cobrado - rec["costo"] * rec["cantidad"]
+        rec["diferencia"] = round(diferencia, 2)
+        rec["margen_porcentaje"] = round((diferencia / total_cobrado * 100) if total_cobrado else 0.0, 2)
+    else:
+        rec["diferencia"] = 0.0
+        rec["margen_porcentaje"] = 0.0
+
+
 def _distribute_remito_payments(records: list[dict]) -> list[dict]:
     """
-    When the same remito appears on multiple rows (one customer, multiple products),
-    the seller typically enters the payment amount only on one row.
-    This redistributes the actual payment (sum of payment-method fields, not the
-    pvp-fallback total_cobrado) proportionally by PVP across all lines in the group.
+    The remito is the accounting key for an imported sale.
+    When it appears on multiple rows, sellers often write the payment only once.
+    This compares the sum of payment-method fields against the sum of products
+    for the remito and redistributes the real collected amount proportionally.
     """
     from collections import defaultdict
 
@@ -800,7 +865,6 @@ def _distribute_remito_payments(records: list[dict]) -> list[dict]:
         if len(indices) < 2:
             continue
         group_recs = [records[i] for i in indices]
-        # Use the sum of actual payment fields (not total_cobrado which has pvp fallback)
         actual_cobrado = sum(_raw_cobrado(r) for r in group_recs)
         total_pvp = sum(r["pvp"] * r["cantidad"] for r in group_recs)
         if actual_cobrado == 0 or total_pvp == 0:
@@ -815,10 +879,8 @@ def _distribute_remito_payments(records: list[dict]) -> list[dict]:
             remaining = round(remaining - share, 2)
         records[indices[-1]]["total_cobrado"] = remaining
 
-    # Compute saldo per record: max(0, pvp - total_cobrado)
     for rec in records:
-        pvp_total = rec["pvp"] * rec["cantidad"]
-        rec["saldo"] = round(max(0.0, pvp_total - rec["total_cobrado"]), 2)
+        _recompute_financials(rec)
 
     return records
 
@@ -894,12 +956,7 @@ def _parse_sheet(name: str, rows: list[list], sucursal_override: str = "") -> di
 
     records, _ = _parse_data_rows(rows, header_idx, sub_header_rows, col_map, is_online, saldos_col)
 
-    if not is_online:
-        records = _distribute_remito_payments(records)
-    else:
-        for rec in records:
-            pvp_total = rec["pvp"] * rec["cantidad"]
-            rec["saldo"] = round(max(0.0, pvp_total - rec["total_cobrado"]), 2)
+    records = _distribute_remito_payments(records)
 
     # Enrich with product catalog data (marca, tipo, costo, categoria, linea)
     try:

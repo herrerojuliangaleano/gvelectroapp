@@ -267,6 +267,9 @@ analitica con registros, saldos, costos y margenes.
   categorias y top productos.
 - Exportar informe de vendedores a PDF y Excel.
 - Vincular productos sin catalogo mediante aliases propios de Sales BI.
+- Importar ventas agrupando por remito: el sistema suma productos, suma medios
+  de pago, reparte cobros cargados en una sola fila y calcula saldos/senas.
+- Interpretar `MONTO INGRESADO` de ventas online como transferencia real.
 
 ### Informe de vendedores
 

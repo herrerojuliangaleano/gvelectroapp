@@ -31,6 +31,25 @@ hoja:
 El matching usa la logica comun de `backend/app/commercial/matching.py`, pero
 los aliases son exclusivos del modulo Sales BI.
 
+### Regla contable por remito
+
+Para evitar diferencias por la forma en que se cargan las planillas, el
+importador toma el `remito` como clave operativa de una venta:
+
+- Suma el valor de todos los productos del mismo remito.
+- Suma todos los medios de pago cargados en las filas de ese remito.
+- Si el pago aparece solo en una fila y los productos en varias, reparte el
+  cobro proporcionalmente entre las lineas del remito.
+- Calcula `saldo` como valor de productos menos cobro real.
+
+En ventas online, la columna `MONTO INGRESADO` se interpreta como transferencia.
+Si el monto ingresado es menor que la suma de productos del remito, el sistema
+lo deja como sena/saldo pendiente. No se asume que una venta esta cobrada al
+100% si no hay medio de pago cargado.
+
+En planillas locales, las columnas bajo el grupo `SENA` se suman como cobro
+parcial del remito, junto con los medios de pago principales.
+
 ## Productos sin vincular
 
 La pantalla de vendedores incluye una bandeja de productos sin vincular. Desde
