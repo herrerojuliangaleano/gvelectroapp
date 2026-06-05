@@ -702,14 +702,31 @@ _STOP_KEYWORDS = frozenset([
 
 
 def _is_stop_row(row: list, remito_col: int | None) -> bool:
-    # If remito column is defined and has a non-numeric text value, stop
+    """Detecta filas de cierre/resumen que marcan el final de la tabla de ventas.
+
+    Reglas:
+      1. Si la celda REMITO tiene un keyword de stop (ej. "TOTAL" como label
+         en lugar de número de remito) → parar. Es el caso clásico de una
+         fila de totales debajo de la tabla.
+      2. Si REMITO tiene un valor con dígitos (ej. "76", "3546", "RET-2026-1")
+         es una fila de DATOS legítima — no parar aunque otra columna haga
+         match con un keyword. Esto evita falsos positivos como un vendedor
+         llamado "Administracion" o un producto con la palabra "TOTAL" en
+         la descripción.
+      3. Si REMITO está vacío o sin dígitos, miramos el resto de las celdas
+         como fallback (fila de resumen tipo "Administracion: $1.770.000"
+         que aparece debajo de la tabla con REMITO en blanco).
+    """
     if remito_col is not None and remito_col < len(row):
         val = row[remito_col]
-        if val is not None and str(val).strip():
-            n = _norm(val)
-            if n in _STOP_KEYWORDS:
-                return True
-    # Also stop on any cell that matches stop keywords
+        n = _norm(val) if val is not None else ""
+        if n in _STOP_KEYWORDS:
+            return True
+        # Hay número de remito real → es una fila de datos, no de cierre.
+        if n and re.search(r"\d", n):
+            return False
+    # Fallback: REMITO vacío/sin dígitos. Mirar todas las celdas por si la
+    # fila es un resumen suelto (ej. label en una columna que no es REMITO).
     for cell in row:
         if _norm(cell) in _STOP_KEYWORDS:
             return True
