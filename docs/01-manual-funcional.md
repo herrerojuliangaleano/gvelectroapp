@@ -259,11 +259,40 @@ analitica con registros, saldos, costos y margenes.
 - Consultar registros.
 - Consultar saldos.
 - Ver estadisticas.
+- Ver informe de vendedores en `/ventas-bi/vendedores`.
+- Filtrar por rango de fechas o presets comerciales.
+- Comparar vendedores entre si dentro del mismo periodo.
+- Comparar un periodo contra otro periodo.
+- Ver metricas y graficos: evolucion diaria, ranking, medios de pago, marcas,
+  categorias y top productos.
+- Exportar informe de vendedores a PDF y Excel.
+- Vincular productos sin catalogo mediante aliases propios de Sales BI.
+
+### Informe de vendedores
+
+Ruta: `/ventas-bi/vendedores`
+
+El informe permite analizar ventas importadas desde planillas por vendedor. La
+identidad inicial del vendedor sale del texto de la planilla y se normaliza
+para agrupar variantes simples.
+
+Incluye:
+
+- KPIs de vendido, cobrado, saldo, unidades, tickets y ticket promedio.
+- Margen y diferencia solo para usuarios con permisos de margen/costos.
+- Graficos responsive para desktop y celular.
+- Comparacion contra un periodo anterior elegido por el gerente.
+- Bandeja de productos sin vincular contra el catalogo.
+
+Cuando un producto queda sin vincular, el gerente puede asociarlo a un producto
+del catalogo. Esa asociacion se guarda como alias de Sales BI y luego se puede
+rematchear la importacion afectada.
 
 ### Permisos relevantes
 
 `sales_bi.view`, `sales_bi.import`, `sales_bi.void`,
-`sales_bi.view_costs`, `sales_bi.view_margin`.
+`sales_bi.aliases.manage`, `sales_bi.export`, `sales_bi.view_costs`,
+`sales_bi.view_margin`.
 
 ## Catalogo de productos
 

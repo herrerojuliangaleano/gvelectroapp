@@ -13,6 +13,10 @@ import type {
   SalesBIRecord,
   SalesBIBalance,
   SalesBIStats,
+  SalesBISellersReport,
+  SalesBISellersCompare,
+  SalesBIUnmatchedProduct,
+  SalesBIProductAlias,
   BackupInfo,
   BranchInfo,
   BudgetCreatePayload,
@@ -869,6 +873,79 @@ export async function fetchSalesBIBalances(params: {
 
 export async function fetchSalesBIStats(): Promise<SalesBIStats> {
   return request('/api/sales-bi/stats');
+}
+
+export async function fetchSalesBIUnmatchedProducts(params: {
+  fecha_desde?: string;
+  fecha_hasta?: string;
+  sucursal?: string;
+  tipo?: string;
+  q?: string;
+  limit?: number;
+} = {}): Promise<{ items: SalesBIUnmatchedProduct[] }> {
+  return request(`/api/sales-bi/unmatched-products${buildQs(params)}`);
+}
+
+export async function createSalesBIProductAlias(payload: { product_id: number; alias_sku?: string; alias_desc?: string }): Promise<SalesBIProductAlias> {
+  return request('/api/sales-bi/product-aliases', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function deleteSalesBIProductAlias(id: number): Promise<{ ok: boolean; id: number }> {
+  return request(`/api/sales-bi/product-aliases/${encodeURIComponent(String(id))}`, { method: 'DELETE' });
+}
+
+export async function rematchSalesBIImport(id: number): Promise<{ ok: boolean; import_id: number; matched: number; matched_by_alias: number; unmatched: number }> {
+  return request(`/api/sales-bi/imports/${encodeURIComponent(String(id))}/rematch-products`, { method: 'POST' });
+}
+
+export async function fetchSalesBISellersReport(params: {
+  fecha_desde?: string;
+  fecha_hasta?: string;
+  sucursal?: string;
+  tipo?: string;
+  vendedores?: string;
+} = {}): Promise<SalesBISellersReport> {
+  return request(`/api/sales-bi/sellers/report${buildQs(params)}`);
+}
+
+export async function fetchSalesBISellersCompare(params: {
+  base_desde: string;
+  base_hasta: string;
+  compare_desde: string;
+  compare_hasta: string;
+  sucursal?: string;
+  tipo?: string;
+  vendedores?: string;
+}): Promise<SalesBISellersCompare> {
+  return request(`/api/sales-bi/sellers/compare${buildQs(params)}`);
+}
+
+export async function exportSalesBISellersPdf(payload: {
+  fecha_desde?: string;
+  fecha_hasta?: string;
+  sucursal?: string;
+  tipo?: string;
+  vendedores?: string[];
+  compare_desde?: string;
+  compare_hasta?: string;
+  logo?: string;
+  titulo?: string;
+}): Promise<Blob> {
+  return requestBlob('/api/sales-bi/sellers/export-pdf', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function exportSalesBISellersXlsx(payload: {
+  fecha_desde?: string;
+  fecha_hasta?: string;
+  sucursal?: string;
+  tipo?: string;
+  vendedores?: string[];
+  compare_desde?: string;
+  compare_hasta?: string;
+  logo?: string;
+  titulo?: string;
+}): Promise<Blob> {
+  return requestBlob('/api/sales-bi/sellers/export-xlsx', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 

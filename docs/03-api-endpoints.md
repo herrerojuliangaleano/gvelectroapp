@@ -155,6 +155,14 @@ Bearer token salvo endpoints publicos como `/api/health` y login.
 | GET | `/api/sales-bi/records` | Consulta registros. |
 | GET | `/api/sales-bi/balances` | Consulta saldos. |
 | GET | `/api/sales-bi/stats` | Estadisticas. |
+| GET | `/api/sales-bi/unmatched-products` | Lista productos de ventas importadas sin vincular al catalogo. |
+| POST | `/api/sales-bi/product-aliases` | Crea alias de producto propio de Sales BI. |
+| DELETE | `/api/sales-bi/product-aliases/{alias_id}` | Elimina alias de producto de Sales BI. |
+| POST | `/api/sales-bi/imports/{import_id}/rematch-products` | Recalcula matching de productos para una importacion. |
+| GET | `/api/sales-bi/sellers/report` | Informe de vendedores con metricas y graficos. |
+| GET | `/api/sales-bi/sellers/compare` | Comparacion periodo vs periodo y vendedor vs vendedor. |
+| POST | `/api/sales-bi/sellers/export-pdf` | Exporta informe de vendedores a PDF. |
+| POST | `/api/sales-bi/sellers/export-xlsx` | Exporta informe de vendedores a Excel. |
 
 ## Productos
 

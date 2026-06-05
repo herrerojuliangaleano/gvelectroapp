@@ -3,22 +3,29 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from ..auth import require_current_user
 from ..sales_bi import (
     analyze_sheets,
+    compare_sellers_report,
+    create_product_alias,
     delete_temp_file,
+    delete_product_alias,
     find_branch,
+    build_sellers_report,
     get_active_import,
     get_import_detail,
     get_stats,
     list_balances,
     list_imports,
     list_records,
+    list_unmatched_products,
     load_temp_file,
     read_excel,
     read_google_sheet,
+    rematch_import_products,
     save_import,
     save_temp_file,
     void_import,
@@ -41,6 +48,9 @@ class SheetPreview(BaseModel):
     tipo: str
     cotizacion_dolar: float | None = None
     total_records: int
+    matched_products: int = 0
+    matched_by_alias: int = 0
+    unmatched_products: int = 0
     total_pvp: float
     total_efectivo: float
     total_transferencia: float
@@ -81,6 +91,24 @@ class VoidRequest(BaseModel):
     reason: str = ""
 
 
+class ProductAliasRequest(BaseModel):
+    product_id: int
+    alias_sku: str = ""
+    alias_desc: str = ""
+
+
+class SellersExportRequest(BaseModel):
+    fecha_desde: str | None = None
+    fecha_hasta: str | None = None
+    sucursal: str | None = None
+    tipo: str | None = None
+    vendedores: list[str] | None = None
+    compare_desde: str | None = None
+    compare_hasta: str | None = None
+    logo: str = "GV"
+    titulo: str = "Informe de vendedores"
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -108,6 +136,9 @@ def _build_preview(sheet: dict, include_records: int = 10) -> SheetPreview:
         tipo=sheet["tipo"],
         cotizacion_dolar=sheet.get("cotizacion_dolar"),
         total_records=sheet["total_records"],
+        matched_products=sheet.get("matched_products", 0),
+        matched_by_alias=sheet.get("matched_by_alias", 0),
+        unmatched_products=sheet.get("unmatched_products", 0),
         total_pvp=sheet["total_pvp"],
         total_efectivo=sheet["total_efectivo"],
         total_transferencia=sheet["total_transferencia"],
@@ -340,6 +371,180 @@ def get_balances(
     _require(user, "sales_bi.view")
     items, total = list_balances(import_id, fecha_desde, fecha_hasta, sucursal, limit, offset)
     return {"items": items, "total": total}
+
+
+@router.get("/unmatched-products")
+def get_unmatched_products(
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    fecha_desde: str | None = Query(default=None),
+    fecha_hasta: str | None = Query(default=None),
+    sucursal: str | None = Query(default=None),
+    tipo: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    limit: int = Query(default=100, le=500),
+):
+    _require(user, "sales_bi.view")
+    return {
+        "items": list_unmatched_products(fecha_desde, fecha_hasta, sucursal, tipo, q, limit)
+    }
+
+
+@router.post("/product-aliases")
+def create_sales_bi_product_alias(
+    body: ProductAliasRequest,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+):
+    _require(user, "sales_bi.aliases.manage")
+    try:
+        return create_product_alias(body.product_id, body.alias_sku, body.alias_desc, user.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.delete("/product-aliases/{alias_id}")
+def delete_sales_bi_product_alias(
+    alias_id: int,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+):
+    _require(user, "sales_bi.aliases.manage")
+    ok = delete_product_alias(alias_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Alias no encontrado.")
+    return {"ok": True, "id": alias_id}
+
+
+@router.post("/imports/{import_id}/rematch-products")
+def rematch_sales_bi_import(
+    import_id: int,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+):
+    _require(user, "sales_bi.import")
+    result = rematch_import_products(import_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("message") or "Importacion no encontrada.")
+    return result
+
+
+@router.get("/sellers/report")
+def get_sellers_report(
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    fecha_desde: str | None = Query(default=None),
+    fecha_hasta: str | None = Query(default=None),
+    sucursal: str | None = Query(default=None),
+    tipo: str | None = Query(default=None),
+    vendedores: str | None = Query(default=None),
+):
+    _require(user, "sales_bi.view")
+    return build_sellers_report(
+        fecha_desde,
+        fecha_hasta,
+        sucursal,
+        tipo,
+        vendedores,
+        include_costs=user.has("sales_bi.view_costs"),
+        include_margin=user.has("sales_bi.view_margin"),
+    )
+
+
+@router.get("/sellers/compare")
+def get_sellers_compare(
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    base_desde: str = Query(...),
+    base_hasta: str = Query(...),
+    compare_desde: str = Query(...),
+    compare_hasta: str = Query(...),
+    sucursal: str | None = Query(default=None),
+    tipo: str | None = Query(default=None),
+    vendedores: str | None = Query(default=None),
+):
+    _require(user, "sales_bi.view")
+    return compare_sellers_report(
+        base_desde,
+        base_hasta,
+        compare_desde,
+        compare_hasta,
+        sucursal,
+        tipo,
+        vendedores,
+        include_costs=user.has("sales_bi.view_costs"),
+        include_margin=user.has("sales_bi.view_margin"),
+    )
+
+
+@router.post("/sellers/export-pdf")
+def export_sellers_pdf(
+    body: SellersExportRequest,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+):
+    _require(user, "sales_bi.export")
+    from ..commercial.sales_bi_renderer import render_sellers_pdf
+
+    report = build_sellers_report(
+        body.fecha_desde,
+        body.fecha_hasta,
+        body.sucursal,
+        body.tipo,
+        body.vendedores,
+        include_costs=user.has("sales_bi.view_costs"),
+        include_margin=user.has("sales_bi.view_margin"),
+    )
+    compare = None
+    if body.compare_desde and body.compare_hasta and body.fecha_desde and body.fecha_hasta:
+        compare = compare_sellers_report(
+            body.fecha_desde,
+            body.fecha_hasta,
+            body.compare_desde,
+            body.compare_hasta,
+            body.sucursal,
+            body.tipo,
+            body.vendedores,
+            include_costs=user.has("sales_bi.view_costs"),
+            include_margin=user.has("sales_bi.view_margin"),
+        )
+    pdf = render_sellers_pdf(report, compare=compare, logo=body.logo, title=body.titulo)
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="informe-vendedores.pdf"'},
+    )
+
+
+@router.post("/sellers/export-xlsx")
+def export_sellers_xlsx(
+    body: SellersExportRequest,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+):
+    _require(user, "sales_bi.export")
+    from ..commercial.sales_bi_renderer import render_sellers_xlsx
+
+    report = build_sellers_report(
+        body.fecha_desde,
+        body.fecha_hasta,
+        body.sucursal,
+        body.tipo,
+        body.vendedores,
+        include_costs=user.has("sales_bi.view_costs"),
+        include_margin=user.has("sales_bi.view_margin"),
+    )
+    compare = None
+    if body.compare_desde and body.compare_hasta and body.fecha_desde and body.fecha_hasta:
+        compare = compare_sellers_report(
+            body.fecha_desde,
+            body.fecha_hasta,
+            body.compare_desde,
+            body.compare_hasta,
+            body.sucursal,
+            body.tipo,
+            body.vendedores,
+            include_costs=user.has("sales_bi.view_costs"),
+            include_margin=user.has("sales_bi.view_margin"),
+        )
+    xlsx = render_sellers_xlsx(report, compare=compare, logo=body.logo, title=body.titulo)
+    return Response(
+        content=xlsx,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="informe-vendedores.xlsx"'},
+    )
 
 
 @router.get("/stats")

@@ -80,7 +80,7 @@ function SheetCard({
           )}
 
           {sheet.ok && sheet.total_records > 0 && (
-            <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+            <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3 lg:grid-cols-6">
               <div className="rounded-lg bg-white/5 p-2 text-center">
                 <div className="text-xs text-white/50">Líneas</div>
                 <div className="font-bold text-white">{sheet.total_records}</div>
@@ -96,6 +96,14 @@ function SheetCard({
               <div className="rounded-lg bg-white/5 p-2 text-center">
                 <div className="text-xs text-white/50">Transferencia</div>
                 <div className="font-bold text-white">{fmt(sheet.total_transferencia)}</div>
+              </div>
+              <div className="rounded-lg bg-emerald-500/10 p-2 text-center">
+                <div className="text-xs text-emerald-200/70">Vinculados</div>
+                <div className="font-bold text-emerald-300">{sheet.matched_products + sheet.matched_by_alias}</div>
+              </div>
+              <div className="rounded-lg bg-amber-500/10 p-2 text-center">
+                <div className="text-xs text-amber-200/70">Sin vincular</div>
+                <div className="font-bold text-amber-300">{sheet.unmatched_products}</div>
               </div>
             </div>
           )}

@@ -55,6 +55,7 @@ import { WarrantyRemitoTrackingPage } from './pages/WarrantyRemitoTrackingPage';
 import { SalesBIImportPage } from './pages/SalesBIImportPage';
 import { SalesBIHistoryPage } from './pages/SalesBIHistoryPage';
 import { SalesBIDetailPage } from './pages/SalesBIDetailPage';
+import { SalesBISellersPage } from './pages/SalesBISellersPage';
 import { canUsePriceAnnouncements } from './priceAnnouncementsAccess';
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -174,6 +175,7 @@ export default function App() {
       <Route path="/solicitudes-venta-web/:id" element={<ProtectedLayout permission="sales_web.view"><SalesWebDetailPage /></ProtectedLayout>} />
       <Route path="/ventas-bi" element={<ProtectedLayout permission="sales_bi.view"><SalesBIHistoryPage /></ProtectedLayout>} />
       <Route path="/ventas-bi/historial" element={<ProtectedLayout permission="sales_bi.view"><SalesBIHistoryPage /></ProtectedLayout>} />
+      <Route path="/ventas-bi/vendedores" element={<ProtectedLayout permission="sales_bi.view"><SalesBISellersPage /></ProtectedLayout>} />
       <Route path="/ventas-bi/importar" element={<ProtectedLayout permission="sales_bi.import"><SalesBIImportPage /></ProtectedLayout>} />
       <Route path="/ventas-bi/importaciones/:importId" element={<ProtectedLayout permission="sales_bi.view"><SalesBIDetailPage /></ProtectedLayout>} />
       <Route path="/notificaciones" element={<ProtectedLayout permission="notifications.view"><NotificationsPage /></ProtectedLayout>} />

@@ -27,6 +27,7 @@ const SEGMENT_LABELS: Record<string, string> = {
   'ventas-bi': 'Inteligencia comercial',
   historial: 'Historial',
   importar: 'Importar planilla',
+  vendedores: 'Vendedores',
   importaciones: 'Importación',
   comercial: 'Comercial',
   'anuncios-precios': 'Anuncios de precios',

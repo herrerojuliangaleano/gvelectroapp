@@ -1,5 +1,5 @@
 import {
-  Activity, Archive, BarChart2, Bell, Building2, Calculator, Camera, ChevronDown, ChevronRight, CircleDollarSign, ClipboardList, Cloud, FileSpreadsheet, FileText, Globe2, History, Home, IdCard, Info, KeyRound, LayoutDashboard, LogOut, MapPin, Megaphone, Menu, MoreHorizontal, PackageCheck, Settings, ShieldCheck, SlidersHorizontal, TrendingUp, Truck, User, UserCog, Wrench, X,
+  Activity, Archive, BarChart2, Bell, Building2, Calculator, Camera, ChevronDown, ChevronRight, CircleDollarSign, ClipboardList, Cloud, FileSpreadsheet, FileText, Globe2, History, Home, IdCard, Info, KeyRound, LayoutDashboard, LogOut, MapPin, Megaphone, Menu, MoreHorizontal, PackageCheck, Settings, ShieldCheck, SlidersHorizontal, TrendingUp, Truck, User, UserCog, Users, Wrench, X,
 } from 'lucide-react';
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -170,6 +170,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         { to: '/comercial/psi', icon: <TrendingUp size={16} />, label: 'PSI · Planificación', permission: 'psi.view' },
         { to: '/comercial/anuncios-precios', icon: <Megaphone size={16} />, label: 'Anuncios de precios', visible: canUsePriceAnnouncements(user) },
         { to: '/ventas-bi', icon: <BarChart2 size={16} />, label: 'Inteligencia comercial', children: [
+          { to: '/ventas-bi/vendedores', icon: <Users size={14} />, label: 'Vendedores', permission: 'sales_bi.view' },
           { to: '/ventas-bi/historial', icon: <History size={14} />, label: 'Historial', permission: 'sales_bi.view' },
           { to: '/ventas-bi/importar', icon: <FileSpreadsheet size={14} />, label: 'Importar planilla', permission: 'sales_bi.import' },
         ] },

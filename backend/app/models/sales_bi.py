@@ -78,8 +78,20 @@ class SalesRecord(Base):
 
     remito: Mapped[str] = mapped_column(Text, default="", nullable=False)
     vendedor: Mapped[str] = mapped_column(Text, default="", nullable=False, index=True)
+    vendedor_normalized: Mapped[str] = mapped_column(Text, default="", nullable=False, index=True)
+    seller_user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     producto: Mapped[str] = mapped_column(Text, default="", nullable=False)
     sku: Mapped[str] = mapped_column(Text, default="", nullable=False, index=True)
+    sku_normalized: Mapped[str] = mapped_column(Text, default="", nullable=False, index=True)
+    product_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    product_alias_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("sales_bi_product_aliases.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    product_match_status: Mapped[str] = mapped_column(Text, default="unmatched", nullable=False, index=True)
     marca: Mapped[str] = mapped_column(Text, default="", nullable=False)
     tipo_producto: Mapped[str] = mapped_column(Text, default="", nullable=False)
     condicion: Mapped[str] = mapped_column(Text, default="", nullable=False)
@@ -101,6 +113,23 @@ class SalesRecord(Base):
     saldo: Mapped[Numeric] = mapped_column(Numeric(14, 2), default=0, nullable=False)
 
     import_: Mapped["SalesImport"] = relationship(back_populates="records")
+
+
+class SalesBIProductAlias(Base):
+    __tablename__ = "sales_bi_product_aliases"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    alias_sku_norm: Mapped[Optional[str]] = mapped_column(Text, nullable=True, index=True)
+    alias_desc_norm: Mapped[Optional[str]] = mapped_column(Text, nullable=True, index=True)
+    alias_sku_raw: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    alias_desc_raw: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    created_by_user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 
 class SalesBalance(Base):

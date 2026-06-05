@@ -4,22 +4,25 @@ import io
 import re
 import unicodedata
 import uuid
+from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import openpyxl
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
+from .commercial.matching import build_product_indexes, normalize_descripcion, resolve_product
 from .db import db_session
 from .google_sheets import sheets_service
 from .models.auth import User
 from .models.org import Branch
 from .models.products import Product
-from .models.sales_bi import SalesBalance, SalesImport, SalesRecord
+from .models.sales_bi import SalesBalance, SalesBIProductAlias, SalesImport, SalesRecord
 from .operational_config import extract_spreadsheet_id
+from .product_catalog import sku_key
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -264,10 +267,85 @@ def _detect_condicion(sku: str, producto: str) -> str:
 
 
 def _normalize_sku(sku: str) -> str:
-    """Normalize SKU for catalog lookup: uppercase, strip spaces/dots/dashes."""
-    s = unicodedata.normalize("NFKD", str(sku))
-    s = "".join(c for c in s if not unicodedata.combining(c))
-    return re.sub(r"[\s.\-/]", "", s).upper()
+    """Normalize SKU with the same key used by the product catalog."""
+    return sku_key(sku)
+
+
+def _normalize_seller(value: Any) -> str:
+    return _norm(value) or "SIN VENDEDOR"
+
+
+def _load_product_match_context(session: Session) -> tuple[dict[str, dict], dict[str, SalesBIProductAlias], dict[str, SalesBIProductAlias]]:
+    products = session.scalars(select(Product).where(Product.is_active.is_(True))).all()
+    aliases = session.scalars(select(SalesBIProductAlias)).all()
+    indexes = build_product_indexes(products, aliases=aliases)
+    aliases_by_sku = {str(a.alias_sku_norm or "").strip(): a for a in aliases if str(a.alias_sku_norm or "").strip()}
+    aliases_by_desc = {str(a.alias_desc_norm or "").strip(): a for a in aliases if str(a.alias_desc_norm or "").strip()}
+    return indexes, aliases_by_sku, aliases_by_desc
+
+
+def _resolve_record_match(
+    rec: dict,
+    indexes: dict[str, dict],
+    aliases_by_sku: dict[str, SalesBIProductAlias],
+    aliases_by_desc: dict[str, SalesBIProductAlias],
+) -> tuple[Product | None, str, str, int | None]:
+    raw_sku = str(rec.get("sku") or "").strip()
+    raw_desc = str(rec.get("producto") or "").strip()
+    sku_norm = _normalize_sku(raw_sku)
+    desc_norm = normalize_descripcion(raw_desc)
+    product = resolve_product(sku_normalized=sku_norm, descripcion=raw_desc, indexes=indexes)
+    if product is None:
+        return None, sku_norm, "unmatched", None
+
+    alias_id: int | None = None
+    status = "matched"
+    exact_desc = indexes.get("by_desc", {}).get(desc_norm) if desc_norm else None
+    if exact_desc is None and desc_norm:
+        alias = aliases_by_desc.get(desc_norm)
+        if alias is not None and int(alias.product_id) == int(product.id):
+            alias_id = int(alias.id)
+            status = "matched_by_alias"
+
+    if alias_id is None and sku_norm:
+        exact_sku = indexes.get("by_sku", {}).get(sku_norm)
+        if exact_sku is None:
+            alias = aliases_by_sku.get(sku_norm)
+            if alias is not None and int(alias.product_id) == int(product.id):
+                alias_id = int(alias.id)
+                status = "matched_by_alias"
+
+    return product, sku_norm, status, alias_id
+
+
+def _apply_product_match_to_record(
+    rec: dict,
+    product: Product | None,
+    sku_norm: str,
+    status: str,
+    alias_id: int | None,
+) -> dict:
+    rec["sku_normalized"] = sku_norm
+    rec["product_id"] = int(product.id) if product is not None else None
+    rec["product_match_status"] = status
+    rec["product_alias_id"] = alias_id
+
+    if product is not None:
+        if not rec.get("marca") and product.marca:
+            rec["marca"] = product.marca
+        if not rec.get("tipo_producto") and product.tipo:
+            rec["tipo_producto"] = product.tipo
+        if not rec.get("costo") and product.costo_vigente:
+            rec["costo"] = float(product.costo_vigente)
+
+    rec["categoria"], rec["linea"] = _classify(rec.get("tipo_producto", ""))
+    costo = rec.get("costo", 0.0)
+    total_cobrado = rec.get("total_cobrado", 0.0)
+    cantidad = rec.get("cantidad", 1)
+    if costo:
+        rec["diferencia"] = total_cobrado - costo * cantidad
+        rec["margen_porcentaje"] = round(rec["diferencia"] / total_cobrado * 100, 2) if total_cobrado else 0.0
+    return rec
 
 
 def enrich_from_catalog(records: list[dict]) -> list[dict]:
@@ -277,57 +355,12 @@ def enrich_from_catalog(records: list[dict]) -> list[dict]:
     recomputes categoria, linea, diferencia, margen_porcentaje.
     Does NOT overwrite existing non-zero values — same policy as the AppScript.
     """
-    # Collect unique normalized SKUs
-    sku_map: dict[str, str] = {}  # normalized -> original field value
-    for rec in records:
-        raw = rec.get("sku", "").strip()
-        if raw:
-            sku_map[_normalize_sku(raw)] = raw
-
-    if not sku_map:
-        return records
-
     with db_session() as session:
-        rows = session.scalars(
-            select(Product).where(
-                Product.sku_normalized.in_(list(sku_map.keys())),
-                Product.is_active.is_(True),
-            )
-        ).all()
+        indexes, aliases_by_sku, aliases_by_desc = _load_product_match_context(session)
 
-    catalog: dict[str, Product] = {str(row.sku_normalized): row for row in rows}
-
-    for rec in records:
-        raw_sku = rec.get("sku", "").strip()
-        if not raw_sku:
-            continue
-        norm = _normalize_sku(raw_sku)
-        prod = catalog.get(norm)
-        if not prod:
-            continue
-
-        # Fill marca if missing
-        if not rec.get("marca") and prod.marca:
-            rec["marca"] = prod.marca
-
-        # Fill tipo_producto if missing
-        if not rec.get("tipo_producto") and prod.tipo:
-            rec["tipo_producto"] = prod.tipo
-
-        # Fill costo if missing or zero
-        if not rec.get("costo") and prod.costo_vigente:
-            rec["costo"] = float(prod.costo_vigente)
-
-        # Always recompute categoria/linea from the (now enriched) tipo
-        rec["categoria"], rec["linea"] = _classify(rec.get("tipo_producto", ""))
-
-        # Recompute diferencia and margen with updated costo
-        costo = rec.get("costo", 0.0)
-        total_cobrado = rec.get("total_cobrado", 0.0)
-        cantidad = rec.get("cantidad", 1)
-        if costo:
-            rec["diferencia"] = total_cobrado - costo * cantidad
-            rec["margen_porcentaje"] = round(rec["diferencia"] / total_cobrado * 100, 2) if total_cobrado else 0.0
+        for rec in records:
+            product, sku_norm, status, alias_id = _resolve_record_match(rec, indexes, aliases_by_sku, aliases_by_desc)
+            _apply_product_match_to_record(rec, product, sku_norm, status, alias_id)
 
     return records
 
@@ -710,8 +743,13 @@ def _parse_data_rows(
         records.append({
             "remito": remito,
             "vendedor": vendedor,
+            "vendedor_normalized": _normalize_seller(vendedor),
             "producto": producto,
             "sku": sku,
+            "sku_normalized": _normalize_sku(sku),
+            "product_id": None,
+            "product_alias_id": None,
+            "product_match_status": "unmatched",
             "marca": marca,
             "tipo_producto": tipo_produto,
             "condicion": condicion,
@@ -892,6 +930,9 @@ def _parse_sheet(name: str, rows: list[list], sucursal_override: str = "") -> di
 def _sheet_totals(records: list[dict]) -> dict:
     return {
         "total_records": len(records),
+        "matched_products": sum(1 for r in records if r.get("product_match_status") == "matched"),
+        "matched_by_alias": sum(1 for r in records if r.get("product_match_status") == "matched_by_alias"),
+        "unmatched_products": sum(1 for r in records if r.get("product_match_status") == "unmatched"),
         "total_pvp": sum(r["pvp"] * r["cantidad"] for r in records),
         "total_costo": sum(r["costo"] * r["cantidad"] for r in records),
         "total_efectivo": sum(r["efectivo"] for r in records),
@@ -992,8 +1033,14 @@ def _record_to_dict(record: SalesRecord, imp: SalesImport | None = None) -> dict
         "nro_linea": int(record.nro_linea or 0),
         "remito": str(record.remito or ""),
         "vendedor": str(record.vendedor or ""),
+        "vendedor_normalized": str(record.vendedor_normalized or ""),
+        "seller_user_id": int(record.seller_user_id) if record.seller_user_id else None,
         "producto": str(record.producto or ""),
         "sku": str(record.sku or ""),
+        "sku_normalized": str(record.sku_normalized or ""),
+        "product_id": int(record.product_id) if record.product_id else None,
+        "product_alias_id": int(record.product_alias_id) if record.product_alias_id else None,
+        "product_match_status": str(record.product_match_status or "unmatched"),
         "marca": str(record.marca or ""),
         "tipo_producto": str(record.tipo_producto or ""),
         "condicion": str(record.condicion or ""),
@@ -1156,8 +1203,14 @@ def save_import(
                     nro_linea=i,
                     remito=str(rec.get("remito") or ""),
                     vendedor=str(rec.get("vendedor") or ""),
+                    vendedor_normalized=str(rec.get("vendedor_normalized") or _normalize_seller(rec.get("vendedor"))),
+                    seller_user_id=None,
                     producto=str(rec.get("producto") or ""),
                     sku=str(rec.get("sku") or ""),
+                    sku_normalized=str(rec.get("sku_normalized") or _normalize_sku(rec.get("sku", ""))),
+                    product_id=rec.get("product_id"),
+                    product_alias_id=rec.get("product_alias_id"),
+                    product_match_status=str(rec.get("product_match_status") or "unmatched"),
                     marca=str(rec.get("marca") or ""),
                     tipo_producto=str(rec.get("tipo_producto") or ""),
                     condicion=str(rec.get("condicion") or ""),
@@ -1358,6 +1411,461 @@ def list_balances(
             .offset(offset)
         ).all()
         return [_balance_to_dict(balance, imp) for balance, imp in rows], total
+
+
+def _product_snapshot(product: Product | None) -> dict[str, Any] | None:
+    if product is None:
+        return None
+    return {
+        "id": int(product.id),
+        "sku": str(product.sku or ""),
+        "descripcion": str(product.descripcion or ""),
+        "marca": str(product.marca or ""),
+        "tipo": str(product.tipo or ""),
+    }
+
+
+def _alias_to_dict(alias: SalesBIProductAlias, product: Product | None = None) -> dict[str, Any]:
+    return {
+        "id": int(alias.id),
+        "product_id": int(alias.product_id),
+        "alias_sku_norm": str(alias.alias_sku_norm or ""),
+        "alias_desc_norm": str(alias.alias_desc_norm or ""),
+        "alias_sku_raw": str(alias.alias_sku_raw or ""),
+        "alias_desc_raw": str(alias.alias_desc_raw or ""),
+        "created_at": _fmt_dt(alias.created_at),
+        "product": _product_snapshot(product),
+    }
+
+
+def create_product_alias(product_id: int, alias_sku: str, alias_desc: str, username: str) -> dict:
+    sku_raw = str(alias_sku or "").strip()
+    desc_raw = str(alias_desc or "").strip()
+    sku_norm = _normalize_sku(sku_raw) if sku_raw else ""
+    desc_norm = normalize_descripcion(desc_raw) if desc_raw else ""
+    if not sku_norm and not desc_norm:
+        raise ValueError("Debe enviar un SKU o una descripcion para vincular.")
+
+    with db_session() as session:
+        product = session.get(Product, int(product_id))
+        if not product or not product.is_active:
+            raise ValueError("Producto de catalogo inexistente o inactivo.")
+
+        duplicate_filters = []
+        if sku_norm:
+            duplicate_filters.append(SalesBIProductAlias.alias_sku_norm == sku_norm)
+        if desc_norm:
+            duplicate_filters.append(SalesBIProductAlias.alias_desc_norm == desc_norm)
+        existing = session.scalar(select(SalesBIProductAlias).where(or_(*duplicate_filters)).limit(1))
+        if existing:
+            if int(existing.product_id) != int(product_id):
+                raise ValueError("Ese alias ya esta vinculado a otro producto.")
+            return _alias_to_dict(existing, product)
+
+        alias = SalesBIProductAlias(
+            product_id=int(product_id),
+            alias_sku_norm=sku_norm or None,
+            alias_desc_norm=desc_norm or None,
+            alias_sku_raw=sku_raw,
+            alias_desc_raw=desc_raw,
+            created_by_user_id=_user_id_from_username(session, username),
+            created_at=utc_now_dt(),
+        )
+        session.add(alias)
+        session.flush()
+        out = _alias_to_dict(alias, product)
+        session.commit()
+        return out
+
+
+def delete_product_alias(alias_id: int) -> bool:
+    with db_session() as session:
+        alias = session.get(SalesBIProductAlias, int(alias_id))
+        if not alias:
+            return False
+        session.delete(alias)
+        session.commit()
+        return True
+
+
+def list_unmatched_products(
+    fecha_desde: str | None = None,
+    fecha_hasta: str | None = None,
+    sucursal: str | None = None,
+    tipo: str | None = None,
+    q: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    filters: list[Any] = [SalesImport.status == "activo"]
+    if fecha_desde:
+        value = _parse_date_value(fecha_desde)
+        if value:
+            filters.append(SalesImport.fecha >= value)
+    if fecha_hasta:
+        value = _parse_date_value(fecha_hasta)
+        if value:
+            filters.append(SalesImport.fecha <= value)
+    if sucursal:
+        filters.append(SalesImport.sucursal == sucursal)
+    if tipo:
+        filters.append(SalesImport.tipo == tipo)
+    if q:
+        text = f"%{q}%"
+        filters.append(or_(SalesRecord.sku.ilike(text), SalesRecord.producto.ilike(text), SalesRecord.marca.ilike(text)))
+
+    unmatched_filter = or_(
+        SalesRecord.product_match_status == "unmatched",
+        and_(SalesRecord.product_id.is_(None), SalesRecord.product_match_status.is_(None)),
+    )
+
+    with db_session() as session:
+        rows = session.execute(
+            select(SalesRecord, SalesImport)
+            .join(SalesImport, SalesImport.id == SalesRecord.import_id)
+            .where(*filters, unmatched_filter)
+            .order_by(SalesImport.fecha.desc(), SalesRecord.id.desc())
+            .limit(max(1, min(limit * 10, 2000)))
+        ).all()
+
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for record, imp in rows:
+        sku_norm = str(record.sku_normalized or _normalize_sku(record.sku))
+        desc_norm = normalize_descripcion(record.producto)
+        key = (sku_norm, desc_norm)
+        bucket = grouped.setdefault(key, {
+            "sku": str(record.sku or ""),
+            "sku_normalized": sku_norm,
+            "producto": str(record.producto or ""),
+            "descripcion_normalized": desc_norm,
+            "marca": str(record.marca or ""),
+            "lineas": 0,
+            "unidades": 0,
+            "total_cobrado": 0.0,
+            "import_ids": set(),
+            "sucursales": set(),
+            "first_fecha": _fmt_date(imp.fecha),
+            "last_fecha": _fmt_date(imp.fecha),
+        })
+        bucket["lineas"] += 1
+        bucket["unidades"] += int(record.cantidad or 0)
+        bucket["total_cobrado"] += _num(record.total_cobrado)
+        bucket["import_ids"].add(int(record.import_id))
+        bucket["sucursales"].add(str(imp.sucursal or ""))
+        fecha_text = _fmt_date(imp.fecha)
+        bucket["first_fecha"] = min(bucket["first_fecha"], fecha_text)
+        bucket["last_fecha"] = max(bucket["last_fecha"], fecha_text)
+
+    out = []
+    for item in grouped.values():
+        item["import_ids"] = sorted(item["import_ids"])
+        item["sucursales"] = sorted(s for s in item["sucursales"] if s)
+        out.append(item)
+    out.sort(key=lambda r: (float(r["total_cobrado"]), int(r["unidades"])), reverse=True)
+    return out[:limit]
+
+
+def rematch_import_products(import_id: int) -> dict:
+    with db_session() as session:
+        imp = session.scalar(
+            select(SalesImport)
+            .options(selectinload(SalesImport.records))
+            .where(SalesImport.id == int(import_id))
+        )
+        if not imp:
+            return {"ok": False, "message": "Importacion no encontrada.", "import_id": import_id}
+        indexes, aliases_by_sku, aliases_by_desc = _load_product_match_context(session)
+        counts = {"matched": 0, "matched_by_alias": 0, "unmatched": 0}
+        for record in imp.records:
+            rec = _record_to_dict(record)
+            product, sku_norm, status, alias_id = _resolve_record_match(rec, indexes, aliases_by_sku, aliases_by_desc)
+            rec = _apply_product_match_to_record(rec, product, sku_norm, status, alias_id)
+            record.sku_normalized = str(rec.get("sku_normalized") or "")
+            record.product_id = rec.get("product_id")
+            record.product_alias_id = rec.get("product_alias_id")
+            record.product_match_status = str(rec.get("product_match_status") or "unmatched")
+            record.vendedor_normalized = str(record.vendedor_normalized or _normalize_seller(record.vendedor))
+            record.marca = str(rec.get("marca") or "")
+            record.tipo_producto = str(rec.get("tipo_producto") or "")
+            record.categoria = str(rec.get("categoria") or "")
+            record.linea = str(rec.get("linea") or "")
+            record.costo = _decimal(rec.get("costo"))
+            record.diferencia = _decimal(rec.get("diferencia"))
+            record.margen_porcentaje = _decimal(rec.get("margen_porcentaje"))
+            counts[record.product_match_status] = counts.get(record.product_match_status, 0) + 1
+        session.commit()
+        return {"ok": True, "import_id": int(import_id), **counts}
+
+
+def _parse_vendor_filter(vendedores: list[str] | str | None) -> set[str]:
+    if not vendedores:
+        return set()
+    if isinstance(vendedores, str):
+        raw = [part for part in vendedores.split(",")]
+    else:
+        raw = vendedores
+    return {_normalize_seller(v) for v in raw if str(v or "").strip()}
+
+
+def _sales_rows_for_report(
+    fecha_desde: str | None,
+    fecha_hasta: str | None,
+    sucursal: str | None = None,
+    tipo: str | None = None,
+    vendedores: list[str] | str | None = None,
+) -> list[tuple[SalesRecord, SalesImport]]:
+    fd = _parse_date_value(fecha_desde) if fecha_desde else None
+    fh = _parse_date_value(fecha_hasta) if fecha_hasta else None
+    if fd is None or fh is None:
+        today = date.today()
+        fh = fh or today
+        fd = fd or (fh - timedelta(days=29))
+    if fh < fd:
+        fd, fh = fh, fd
+
+    filters: list[Any] = [SalesImport.status == "activo", SalesImport.fecha >= fd, SalesImport.fecha <= fh]
+    if sucursal:
+        filters.append(SalesImport.sucursal == sucursal)
+    if tipo:
+        filters.append(SalesImport.tipo == tipo)
+
+    vendor_filter = _parse_vendor_filter(vendedores)
+    with db_session() as session:
+        rows = session.execute(
+            select(SalesRecord, SalesImport)
+            .join(SalesImport, SalesImport.id == SalesRecord.import_id)
+            .where(*filters)
+            .order_by(SalesImport.fecha.asc(), SalesRecord.id.asc())
+        ).all()
+
+    if vendor_filter:
+        rows = [
+            (record, imp)
+            for record, imp in rows
+            if (str(record.vendedor_normalized or "") or _normalize_seller(record.vendedor)) in vendor_filter
+        ]
+    return rows
+
+
+def _metric_bucket() -> dict[str, Any]:
+    return {
+        "total_vendido": 0.0,
+        "total_cobrado": 0.0,
+        "saldo": 0.0,
+        "unidades": 0,
+        "lineas": 0,
+        "diferencia": 0.0,
+        "_tickets": set(),
+    }
+
+
+def _add_metric(bucket: dict[str, Any], record: SalesRecord) -> None:
+    cantidad = int(record.cantidad or 0)
+    total_vendido = _num(record.pvp) * cantidad
+    bucket["total_vendido"] += total_vendido
+    bucket["total_cobrado"] += _num(record.total_cobrado)
+    bucket["saldo"] += _num(record.saldo)
+    bucket["unidades"] += cantidad
+    bucket["lineas"] += 1
+    bucket["diferencia"] += _num(record.diferencia)
+    ticket_key = str(record.remito or "").strip() or f"linea-{record.id}"
+    bucket["_tickets"].add(ticket_key)
+
+
+def _finalize_metric(bucket: dict[str, Any], *, include_margin: bool, total_reference: float | None = None) -> dict[str, Any]:
+    tickets = len(bucket.get("_tickets") or set())
+    total_cobrado = float(bucket.get("total_cobrado") or 0.0)
+    diferencia = float(bucket.get("diferencia") or 0.0)
+    out = {
+        "total_vendido": round(float(bucket.get("total_vendido") or 0.0), 2),
+        "total_cobrado": round(total_cobrado, 2),
+        "saldo": round(float(bucket.get("saldo") or 0.0), 2),
+        "unidades": int(bucket.get("unidades") or 0),
+        "lineas": int(bucket.get("lineas") or 0),
+        "tickets": tickets,
+        "ticket_promedio": round(total_cobrado / tickets, 2) if tickets else 0.0,
+        "participacion_pct": round(total_cobrado / total_reference * 100, 2) if total_reference else 0.0,
+    }
+    if include_margin:
+        out["diferencia"] = round(diferencia, 2)
+        out["margen_porcentaje"] = round(diferencia / total_cobrado * 100, 2) if total_cobrado else 0.0
+    return out
+
+
+def _delta_metric(base: dict[str, Any], compare: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key in ("total_vendido", "total_cobrado", "saldo", "unidades", "tickets", "ticket_promedio", "diferencia", "margen_porcentaje"):
+        if key not in base and key not in compare:
+            continue
+        a = float(base.get(key) or 0)
+        b = float(compare.get(key) or 0)
+        delta = a - b
+        out[key] = {
+            "actual": a,
+            "comparado": b,
+            "delta": round(delta, 2),
+            "delta_pct": round(delta / b * 100, 2) if b else None,
+        }
+    return out
+
+
+def build_sellers_report(
+    fecha_desde: str | None = None,
+    fecha_hasta: str | None = None,
+    sucursal: str | None = None,
+    tipo: str | None = None,
+    vendedores: list[str] | str | None = None,
+    *,
+    include_costs: bool = False,
+    include_margin: bool = False,
+) -> dict[str, Any]:
+    rows = _sales_rows_for_report(fecha_desde, fecha_hasta, sucursal, tipo, vendedores)
+    fd = _parse_date_value(fecha_desde) if fecha_desde else None
+    fh = _parse_date_value(fecha_hasta) if fecha_hasta else None
+    if fd is None or fh is None:
+        today = date.today()
+        fh = fh or today
+        fd = fd or (fh - timedelta(days=29))
+    if fh < fd:
+        fd, fh = fh, fd
+
+    overall = _metric_bucket()
+    sellers: dict[str, dict[str, Any]] = {}
+    daily: dict[str, dict[str, Any]] = {}
+    payments = {key: 0.0 for key in ("efectivo", "transferencia", "tarjeta", "usd", "cuenta_corriente", "otros")}
+    categories: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    brands: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    products: dict[tuple[str, str], dict[str, Any]] = {}
+    unmatched_count = 0
+
+    for record, imp in rows:
+        seller_key = str(record.vendedor_normalized or "") or _normalize_seller(record.vendedor)
+        seller_label = str(record.vendedor or "").strip() or "Sin vendedor"
+        if seller_key not in sellers:
+            sellers[seller_key] = {"vendedor": seller_label, "vendedor_normalized": seller_key, **_metric_bucket()}
+        _add_metric(sellers[seller_key], record)
+        _add_metric(overall, record)
+
+        day_key = _fmt_date(imp.fecha)
+        if day_key not in daily:
+            daily[day_key] = {"fecha": day_key, **_metric_bucket()}
+        _add_metric(daily[day_key], record)
+
+        for field in payments:
+            payments[field] += _num(getattr(record, field))
+
+        category_key = str(record.categoria or "Sin categoria")
+        brand_key = str(record.marca or "Sin marca")
+        _add_metric(categories[category_key], record)
+        _add_metric(brands[brand_key], record)
+
+        product_key = (str(record.sku or ""), str(record.producto or ""))
+        if product_key not in products:
+            products[product_key] = {
+                "sku": product_key[0],
+                "producto": product_key[1],
+                "marca": str(record.marca or ""),
+                **_metric_bucket(),
+            }
+        _add_metric(products[product_key], record)
+
+        if str(record.product_match_status or "unmatched") == "unmatched":
+            unmatched_count += 1
+
+    totals = _finalize_metric(overall, include_margin=include_margin)
+    total_reference = float(totals["total_cobrado"] or 0)
+
+    seller_items = []
+    for item in sellers.values():
+        metric = _finalize_metric(item, include_margin=include_margin, total_reference=total_reference)
+        seller_items.append({
+            "vendedor": item["vendedor"],
+            "vendedor_normalized": item["vendedor_normalized"],
+            **metric,
+        })
+    seller_items.sort(key=lambda r: (float(r["total_cobrado"]), int(r["unidades"])), reverse=True)
+
+    daily_series = [
+        {"fecha": key, **_finalize_metric(value, include_margin=include_margin)}
+        for key, value in sorted(daily.items())
+    ]
+
+    def ranked_mix(source: dict[str, dict[str, Any]], limit: int = 12) -> list[dict[str, Any]]:
+        out = [{"name": k, **_finalize_metric(v, include_margin=include_margin, total_reference=total_reference)} for k, v in source.items()]
+        out.sort(key=lambda r: float(r["total_cobrado"]), reverse=True)
+        return out[:limit]
+
+    top_products = [
+        {
+            "sku": value["sku"],
+            "producto": value["producto"],
+            "marca": value["marca"],
+            **_finalize_metric(value, include_margin=include_margin, total_reference=total_reference),
+        }
+        for value in products.values()
+    ]
+    top_products.sort(key=lambda r: float(r["total_cobrado"]), reverse=True)
+
+    detail = [_record_to_dict(record, imp) for record, imp in rows]
+    if not include_costs:
+        for rec in detail:
+            rec.pop("costo", None)
+            rec.pop("diferencia", None)
+    if not include_margin:
+        for rec in detail:
+            rec.pop("margen_porcentaje", None)
+
+    return {
+        "filters": {
+            "fecha_desde": fd.isoformat(),
+            "fecha_hasta": fh.isoformat(),
+            "sucursal": sucursal or "",
+            "tipo": tipo or "",
+            "vendedores": sorted(_parse_vendor_filter(vendedores)),
+        },
+        "totals": totals,
+        "sellers": seller_items,
+        "daily_series": daily_series,
+        "payment_mix": [{"name": k, "value": round(v, 2)} for k, v in payments.items() if v],
+        "category_mix": ranked_mix(categories),
+        "brand_mix": ranked_mix(brands),
+        "top_products": top_products[:20],
+        "unmatched_count": unmatched_count,
+        "detail": detail,
+    }
+
+
+def compare_sellers_report(
+    base_desde: str,
+    base_hasta: str,
+    compare_desde: str,
+    compare_hasta: str,
+    sucursal: str | None = None,
+    tipo: str | None = None,
+    vendedores: list[str] | str | None = None,
+    *,
+    include_costs: bool = False,
+    include_margin: bool = False,
+) -> dict[str, Any]:
+    base = build_sellers_report(base_desde, base_hasta, sucursal, tipo, vendedores, include_costs=include_costs, include_margin=include_margin)
+    compare = build_sellers_report(compare_desde, compare_hasta, sucursal, tipo, vendedores, include_costs=include_costs, include_margin=include_margin)
+    base_by_seller = {s["vendedor_normalized"]: s for s in base["sellers"]}
+    compare_by_seller = {s["vendedor_normalized"]: s for s in compare["sellers"]}
+    sellers = []
+    for key in sorted(set(base_by_seller) | set(compare_by_seller)):
+        b = base_by_seller.get(key, {"vendedor": key, "vendedor_normalized": key})
+        c = compare_by_seller.get(key, {"vendedor": b.get("vendedor", key), "vendedor_normalized": key})
+        sellers.append({
+            "vendedor": b.get("vendedor") or c.get("vendedor") or key,
+            "vendedor_normalized": key,
+            "delta": _delta_metric(b, c),
+        })
+    sellers.sort(key=lambda r: float(r["delta"].get("total_cobrado", {}).get("actual") or 0), reverse=True)
+    return {
+        "base": {k: v for k, v in base.items() if k != "detail"},
+        "compare": {k: v for k, v in compare.items() if k != "detail"},
+        "delta": _delta_metric(base["totals"], compare["totals"]),
+        "sellers": sellers,
+    }
 
 
 def get_stats() -> dict:

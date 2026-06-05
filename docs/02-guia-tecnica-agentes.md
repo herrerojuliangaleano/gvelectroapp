@@ -184,6 +184,7 @@ sucursal, gestor y posventa. Revisar antes de cambiar rutas de garantias.
 | `/budgets/new` | Presupuestos |
 | `/venta/*` | Ventas web |
 | `/ventas-bi/*` | Sales BI |
+| `/ventas-bi/vendedores` | Métricas e informes de vendedores |
 | `/productos` | Catalogo |
 | `/precios-costos` | Precios y costos |
 | `/recibos` | Recibos |

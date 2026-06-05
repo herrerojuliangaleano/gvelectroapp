@@ -428,8 +428,14 @@ export interface SalesBIRecord {
   nro_linea: number;
   remito: string;
   vendedor: string;
+  vendedor_normalized?: string;
+  seller_user_id?: number | null;
   producto: string;
   sku: string;
+  sku_normalized?: string;
+  product_id?: number | null;
+  product_alias_id?: number | null;
+  product_match_status?: 'matched' | 'matched_by_alias' | 'unmatched' | string;
   marca: string;
   tipo_producto: string;
   condicion: string;
@@ -510,6 +516,9 @@ export interface SalesBISheetPreview {
   tipo: string;
   cotizacion_dolar: number | null;
   total_records: number;
+  matched_products: number;
+  matched_by_alias: number;
+  unmatched_products: number;
   total_pvp: number;
   total_efectivo: number;
   total_transferencia: number;
@@ -538,6 +547,101 @@ export interface SalesBIStats {
   total_records: number;
   total_pvp: number;
   last_import: { fecha: string; sucursal: string; created_at: string } | null;
+}
+
+export interface SalesBIUnmatchedProduct {
+  sku: string;
+  sku_normalized: string;
+  producto: string;
+  descripcion_normalized: string;
+  marca: string;
+  lineas: number;
+  unidades: number;
+  total_cobrado: number;
+  import_ids: number[];
+  sucursales: string[];
+  first_fecha: string;
+  last_fecha: string;
+}
+
+export interface SalesBIProductAlias {
+  id: number;
+  product_id: number;
+  alias_sku_norm: string;
+  alias_desc_norm: string;
+  alias_sku_raw: string;
+  alias_desc_raw: string;
+  created_at: string;
+  product?: ProductInfo | null;
+}
+
+export interface SalesBIMetricSummary {
+  total_vendido: number;
+  total_cobrado: number;
+  saldo: number;
+  unidades: number;
+  lineas: number;
+  tickets: number;
+  ticket_promedio: number;
+  participacion_pct: number;
+  diferencia?: number;
+  margen_porcentaje?: number;
+}
+
+export interface SalesBISellerMetric extends SalesBIMetricSummary {
+  vendedor: string;
+  vendedor_normalized: string;
+}
+
+export interface SalesBIDailyMetric extends SalesBIMetricSummary {
+  fecha: string;
+}
+
+export interface SalesBIMixMetric extends SalesBIMetricSummary {
+  name: string;
+}
+
+export interface SalesBITopProduct extends SalesBIMetricSummary {
+  sku: string;
+  producto: string;
+  marca: string;
+}
+
+export interface SalesBISellersReport {
+  filters: {
+    fecha_desde: string;
+    fecha_hasta: string;
+    sucursal: string;
+    tipo: string;
+    vendedores: string[];
+  };
+  totals: SalesBIMetricSummary;
+  sellers: SalesBISellerMetric[];
+  daily_series: SalesBIDailyMetric[];
+  payment_mix: Array<{ name: string; value: number }>;
+  category_mix: SalesBIMixMetric[];
+  brand_mix: SalesBIMixMetric[];
+  top_products: SalesBITopProduct[];
+  unmatched_count: number;
+  detail?: SalesBIRecord[];
+}
+
+export interface SalesBICompareMetric {
+  actual: number;
+  comparado: number;
+  delta: number;
+  delta_pct: number | null;
+}
+
+export interface SalesBISellersCompare {
+  base: Omit<SalesBISellersReport, 'detail'>;
+  compare: Omit<SalesBISellersReport, 'detail'>;
+  delta: Record<string, SalesBICompareMetric>;
+  sellers: Array<{
+    vendedor: string;
+    vendedor_normalized: string;
+    delta: Record<string, SalesBICompareMetric>;
+  }>;
 }
 
 export interface BudgetCreatedLine {

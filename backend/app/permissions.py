@@ -137,6 +137,8 @@ ALL_PERMISSIONS: dict[str, str] = {
     "sales_bi.view": "Ver inteligencia comercial",
     "sales_bi.import": "Importar planillas de ventas",
     "sales_bi.void": "Anular importaciones de ventas",
+    "sales_bi.aliases.manage": "Gestionar vinculaciones de productos en inteligencia comercial",
+    "sales_bi.export": "Exportar informes de inteligencia comercial",
     "sales_bi.view_costs": "Ver costos en inteligencia comercial",
     "sales_bi.view_margin": "Ver márgenes en inteligencia comercial",
 }
@@ -161,7 +163,7 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
             "price_announcements.view", "price_announcements.generate",
             "tools.view", "jobs.view", "settings.view", "ops_config.view", "ops_config.manage", "companies.view", "companies.manage", "branches.view", "branches.manage",
             "users.view", "users.assign_roles", "employees.view", "employees.manage", "employees.photo.request", "employees.photo.approve", "employees.photo.reject", "payroll_receipts.view_all", "payroll_receipts.upload", "payroll_receipts.bulk_upload", "payroll_receipts.cancel", "payroll_receipts.respond_observation", "roles.view", "audit.view", "backups.view",
-            "sales_bi.view", "sales_bi.import", "sales_bi.void", "sales_bi.view_costs", "sales_bi.view_margin",
+            "sales_bi.view", "sales_bi.import", "sales_bi.void", "sales_bi.aliases.manage", "sales_bi.export", "sales_bi.view_costs", "sales_bi.view_margin",
             "psi.view", "psi.adjust", "psi.export",
         ],
     },
@@ -175,7 +177,7 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
             # Anuncios comerciales de cambios de precio
             "price_updates.view", "price_announcements.view", "price_announcements.generate",
             # BI Comercial existente
-            "sales_bi.view", "sales_bi.import", "sales_bi.view_costs", "sales_bi.view_margin",
+            "sales_bi.view", "sales_bi.import", "sales_bi.aliases.manage", "sales_bi.export", "sales_bi.view_costs", "sales_bi.view_margin",
             # Catálogo (necesita para crear productos no catalogados que aparezcan en PSI)
             "products.view", "products.sync", "products.manage", "products.providers.manage",
             # Herramientas legacy comerciales (Ventas/Costos, GFK, normalizadores)
@@ -200,7 +202,7 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
             "cost_updates.view", "cost_updates.check", "cost_updates.check.puma", "cost_updates.check.master",
             "price_announcements.view", "price_announcements.generate",
             "tools.view", "jobs.view", "settings.view", "ops_config.view", "companies.view", "companies.manage", "branches.view", "branches.manage", "employees.view", "employees.manage", "employees.photo.request", "payroll_receipts.view_all", "payroll_receipts.upload", "payroll_receipts.bulk_upload", "payroll_receipts.cancel", "payroll_receipts.respond_observation", "audit.view",
-            "sales_bi.view", "sales_bi.import", "sales_bi.void", "sales_bi.view_costs", "sales_bi.view_margin",
+            "sales_bi.view", "sales_bi.import", "sales_bi.void", "sales_bi.aliases.manage", "sales_bi.export", "sales_bi.view_costs", "sales_bi.view_margin",
         ],
     },
 
@@ -217,7 +219,7 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
             "cost_updates.view", "cost_updates.check", "cost_updates.check.puma", "cost_updates.check.master",
             "price_announcements.view", "price_announcements.generate",
             "tools.view", "jobs.view", "settings.view", "ops_config.view", "companies.view", "companies.manage", "branches.view", "branches.manage", "employees.view", "employees.manage", "employees.photo.request", "payroll_receipts.view_all", "payroll_receipts.upload", "payroll_receipts.bulk_upload", "payroll_receipts.cancel", "payroll_receipts.respond_observation", "audit.view",
-            "sales_bi.view", "sales_bi.import", "sales_bi.void", "sales_bi.view_costs", "sales_bi.view_margin",
+            "sales_bi.view", "sales_bi.import", "sales_bi.void", "sales_bi.aliases.manage", "sales_bi.export", "sales_bi.view_costs", "sales_bi.view_margin",
         ],
     },
     "VENDEDOR_WEB": {
@@ -344,7 +346,7 @@ PERMISSION_GROUPS: dict[str, list[str]] = {
         "price_announcements.view", "price_announcements.generate",
     ],
     "Inteligencia comercial": [
-        "sales_bi.view", "sales_bi.import", "sales_bi.void", "sales_bi.view_costs", "sales_bi.view_margin",
+        "sales_bi.view", "sales_bi.import", "sales_bi.void", "sales_bi.aliases.manage", "sales_bi.export", "sales_bi.view_costs", "sales_bi.view_margin",
     ],
     "PSI · Planificación de Ventas e Inventario": [
         "psi.view", "psi.adjust", "psi.export",
