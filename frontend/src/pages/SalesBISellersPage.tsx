@@ -678,6 +678,26 @@ function MixBars({ current, previous, limit }: { current: SalesBIMixMetric[]; pr
   );
 }
 
+function SellerBrandBars({ data }: { data: SalesBIMixMetric[] }) {
+  // Una sola serie (sin "anterior"), barras horizontales siempre. Altura
+  // dinámica para que las barras no queden raquíticas: 36px por marca en
+  // mobile / 40px en desktop, más un poco de margen para el eje X.
+  const isDesktop = useIsDesktop();
+  const rowH = isDesktop ? 40 : 36;
+  const height = Math.max(180, data.length * rowH + 40);
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={data} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 0 }} barCategoryGap="14%">
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" horizontal={false} />
+        <XAxis type="number" stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`} />
+        <YAxis dataKey="name" type="category" stroke="var(--text-3)" tick={{ fontSize: 11 }} width={isDesktop ? 110 : 92} interval={0} />
+        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
+        <Bar dataKey="total_cobrado" fill="var(--chart-violet)" radius={[0, 4, 4, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
 function CategoryBars({ data }: { data: SalesBIMixMetric[] }) {
   const isDesktop = useIsDesktop();
   if (!isDesktop) {
@@ -924,15 +944,7 @@ function ProfileTab({
       {/* Marcas + top productos */}
       <div className="grid gap-4 lg:grid-cols-2">
         <ChartCard title="Marcas que más vende" subtitle="su mix de marcas">
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={sellerBrand} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-              <XAxis type="number" stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`} />
-              <YAxis dataKey="name" type="category" stroke="var(--text-3)" tick={{ fontSize: 11 }} width={100} />
-              <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
-              <Bar dataKey="total_cobrado" fill="var(--chart-violet)" radius={[0, 4, 4, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
-            </BarChart>
-          </ResponsiveContainer>
+          <SellerBrandBars data={sellerBrand} />
         </ChartCard>
 
         <ChartCard title="Top productos del vendedor" subtitle="lo que empuja sus números">
