@@ -152,6 +152,10 @@ def _num(value: Any) -> float:
 _DATE_LABELS = frozenset(["DIA", "FECHA", "DATE", "DIA DE VENTA", "FECHA DE VENTA"])
 _RATE_LABELS = frozenset(["TIPO DE CAMBIO", "COTIZACION", "COTIZACION DOLAR", "TC", "T C", "DOLAR"])
 _SKIP_LABELS = frozenset(["$", "USD", "PESOS"])
+_NON_SUCURSAL_LABELS = frozenset([
+    "TOTAL", "TOTALES", "SUBTOTAL", "RESUMEN", "SHARE",
+    "LINEAS", "LINEAS TOTALES", "CANTIDAD", "MONTO",
+])
 
 # Aliases written in the spreadsheets that map to canonical branch names used in the DB
 _SUCURSAL_ALIASES: dict[str, str] = {
@@ -168,7 +172,11 @@ def _is_placeholder_sucursal(value: str, sheet_name: str) -> bool:
     normalized = _norm(value)
     if not normalized:
         return True
-    return normalized == _norm(sheet_name) or normalized in (_SHEET_NAME_LOCAL | _SHEET_NAME_ONLINE)
+    return (
+        normalized == _norm(sheet_name)
+        or normalized in (_SHEET_NAME_LOCAL | _SHEET_NAME_ONLINE)
+        or normalized in _NON_SUCURSAL_LABELS
+    )
 
 
 def _infer_sucursal_from_source_name(source_name: str) -> str:
@@ -646,6 +654,7 @@ def _detect_metadata(rows: list[list]) -> dict:
                             not meta["sucursal"]
                             and nxt_n
                             and nxt_n not in _DATE_LABELS
+                            and nxt_n not in _NON_SUCURSAL_LABELS
                             and not any(lbl in nxt_n for lbl in _RATE_LABELS | _SKIP_LABELS)
                         ):
                             try:

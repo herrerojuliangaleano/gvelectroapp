@@ -227,6 +227,8 @@ Si una hoja `On Line` no trae sucursal propia, hereda la sucursal detectada en
 otra hoja valida del mismo archivo, por ejemplo `Planilla`. Como respaldo, el
 importador puede inferir aliases como `SUR` o `NORTE` desde el nombre del
 archivo.
+Las celdas de resumen como `Totales`, `Total`, `Subtotal`, `Share` o `Monto`
+no se consideran sucursal.
 
 En planillas locales, las columnas bajo el grupo `SENA` se suman como cobro
 parcial del remito, junto con los medios de pago principales.
