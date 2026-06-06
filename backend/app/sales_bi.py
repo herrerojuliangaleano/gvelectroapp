@@ -1949,6 +1949,10 @@ def _metric_bucket() -> dict[str, Any]:
     }
 
 
+def _branch_report_key(imp: SalesImport) -> str:
+    return str(imp.sucursal or imp.branch_id or "Sin sucursal").strip() or "Sin sucursal"
+
+
 def _add_metric(bucket: dict[str, Any], record: SalesRecord) -> None:
     cantidad = int(record.cantidad or 0)
     total_vendido = _num(record.pvp) * cantidad
@@ -2026,6 +2030,9 @@ def build_sellers_report(
 
     overall = _metric_bucket()
     sellers: dict[str, dict[str, Any]] = {}
+    seller_branches: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
+    branch_sellers: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
+    branch_totals: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
     daily: dict[str, dict[str, Any]] = {}
     payments = {key: 0.0 for key in ("efectivo", "transferencia", "tarjeta", "usd", "cuenta_corriente", "otros")}
     categories: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
@@ -2040,6 +2047,10 @@ def build_sellers_report(
             sellers[seller_key] = {"vendedor": seller_label, "vendedor_normalized": seller_key, **_metric_bucket()}
         _add_metric(sellers[seller_key], record)
         _add_metric(overall, record)
+        branch_key = _branch_report_key(imp)
+        _add_metric(seller_branches[seller_key][branch_key], record)
+        _add_metric(branch_sellers[branch_key][seller_key], record)
+        _add_metric(branch_totals[branch_key], record)
 
         day_key = _fmt_date(imp.fecha)
         if day_key not in daily:
@@ -2070,15 +2081,55 @@ def build_sellers_report(
     totals = _finalize_metric(overall, include_margin=include_margin)
     total_reference = float(totals["total_cobrado"] or 0)
 
+    branch_reference_totals = {
+        key: float(_finalize_metric(value, include_margin=False).get("total_cobrado") or 0.0)
+        for key, value in branch_totals.items()
+    }
+    branch_rankings: dict[str, dict[str, int]] = {}
+    for branch_key, branch_seller_map in branch_sellers.items():
+        ranked = sorted(
+            branch_seller_map.items(),
+            key=lambda pair: (float(pair[1].get("total_cobrado") or 0.0), int(pair[1].get("unidades") or 0)),
+            reverse=True,
+        )
+        branch_rankings[branch_key] = {seller_key: idx + 1 for idx, (seller_key, _) in enumerate(ranked)}
+
     seller_items = []
     for item in sellers.values():
+        seller_key = str(item["vendedor_normalized"])
         metric = _finalize_metric(item, include_margin=include_margin, total_reference=total_reference)
+        seller_branch_map = seller_branches.get(seller_key, {})
+        primary_branch_key = ""
+        if seller_branch_map:
+            primary_branch_key = max(
+                seller_branch_map,
+                key=lambda key: (
+                    float(seller_branch_map[key].get("total_cobrado") or 0.0),
+                    int(seller_branch_map[key].get("unidades") or 0),
+                ),
+            )
+        branch_reference = branch_reference_totals.get(primary_branch_key, 0.0)
+        branch_metric = (
+            _finalize_metric(seller_branch_map[primary_branch_key], include_margin=include_margin, total_reference=branch_reference)
+            if primary_branch_key else {}
+        )
         seller_items.append({
             "vendedor": item["vendedor"],
-            "vendedor_normalized": item["vendedor_normalized"],
+            "vendedor_normalized": seller_key,
+            "sucursal": primary_branch_key,
+            "sucursales": sorted(seller_branch_map.keys()),
+            "empresa_total_cobrado": total_reference,
+            "sucursal_total_cobrado": round(branch_reference, 2),
+            "empresa_participacion_pct": metric["participacion_pct"],
+            "sucursal_participacion_pct": float(branch_metric.get("participacion_pct") or 0.0),
+            "rank_sucursal": branch_rankings.get(primary_branch_key, {}).get(seller_key, 0),
+            "sellers_en_sucursal": len(branch_sellers.get(primary_branch_key, {})) if primary_branch_key else 0,
+            "sellers_en_empresa": len(sellers),
             **metric,
         })
     seller_items.sort(key=lambda r: (float(r["total_cobrado"]), int(r["unidades"])), reverse=True)
+    for idx, seller in enumerate(seller_items, start=1):
+        seller["rank_empresa"] = idx
 
     daily_series = [
         {"fecha": key, **_finalize_metric(value, include_margin=include_margin)}

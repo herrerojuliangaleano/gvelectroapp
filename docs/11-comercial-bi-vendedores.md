@@ -271,7 +271,10 @@ KPIs principales:
 - Unidades.
 - Tickets/remitos.
 - Ticket promedio.
-- Participacion sobre total.
+- Participacion por vendedor separada en dos niveles:
+  - `sucursal_participacion_pct`: contra el total de vendedores de su sucursal principal.
+  - `empresa_participacion_pct`: contra el total del reporte/empresa.
+- Ranking por sucursal y ranking por empresa.
 - Margen y diferencia solo si el usuario tiene permisos.
 
 Graficos:

@@ -591,6 +591,16 @@ export interface SalesBIMetricSummary {
 export interface SalesBISellerMetric extends SalesBIMetricSummary {
   vendedor: string;
   vendedor_normalized: string;
+  sucursal?: string;
+  sucursales?: string[];
+  empresa_total_cobrado?: number;
+  sucursal_total_cobrado?: number;
+  empresa_participacion_pct?: number;
+  sucursal_participacion_pct?: number;
+  rank_empresa?: number;
+  rank_sucursal?: number;
+  sellers_en_empresa?: number;
+  sellers_en_sucursal?: number;
 }
 
 export interface SalesBIDailyMetric extends SalesBIMetricSummary {

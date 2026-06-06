@@ -976,10 +976,15 @@ function ProfileTab({
   const totals = report.totals;
   const prevSellerDelta = compare?.sellers?.find((s) => s.vendedor_normalized === sellerId);
 
-  // Ranking del vendedor dentro de su sucursal y empresa.
-  const branchSellers = report.sellers.filter((s) => true); // no tenemos sucursal por vendedor; usamos all
-  const rankCompany = report.sellers.findIndex((s) => s.vendedor_normalized === sellerId) + 1;
-  const rankBranch = rankCompany; // sin breakdown por sucursal por vendedor en el endpoint actual
+  const branchName = seller.sucursal || report.filters.sucursal || seller.sucursales?.[0] || 'la sucursal';
+  const branchCount = seller.sellers_en_sucursal || report.sellers.length;
+  const companyCount = seller.sellers_en_empresa || report.sellers.length;
+  const rankCompany = seller.rank_empresa || report.sellers.findIndex((s) => s.vendedor_normalized === sellerId) + 1;
+  const rankBranch = seller.rank_sucursal || rankCompany;
+  const branchTotalCobrado = seller.sucursal_total_cobrado || totals.total_cobrado;
+  const companyTotalCobrado = seller.empresa_total_cobrado || totals.total_cobrado;
+  const branchParticipation = seller.sucursal_participacion_pct ?? seller.participacion_pct;
+  const companyParticipation = seller.empresa_participacion_pct ?? seller.participacion_pct;
 
   // Daily / mixes derivados proporcionalmente.
   const sellerDaily = useMemo(() => scaleDailyForSeller(report.daily_series, seller, totals.total_cobrado), [report.daily_series, seller, totals.total_cobrado]);
@@ -987,16 +992,16 @@ function ProfileTab({
   const sellerCategory = useMemo(() => scaleMixForSeller(report.category_mix, seller, totals.total_cobrado), [report.category_mix, seller, totals.total_cobrado]);
   const sellerTopProds = useMemo(() => report.top_products.slice(0, 6).map((p) => ({ ...p, total_cobrado: p.total_cobrado * (seller.total_cobrado / Math.max(1, totals.total_cobrado)) })), [report.top_products, seller, totals.total_cobrado]);
 
-  // Daily comparativo: vendedor (escalado) vs promedio sucursal (~ total/cant_sellers) vs promedio empresa
+  // Daily comparativo: vendedor (escalado) vs promedio sucursal / empresa
   const dailyTriple = useMemo(() => {
-    const avgPerSeller = Math.max(1, branchSellers.length);
+    const avgPerBranchSeller = Math.max(1, branchCount);
     return sellerDaily.map((d) => ({
       fecha: d.fecha,
       vendedor: d.total_cobrado,
-      sucursal: (report.daily_series.find((g) => g.fecha === d.fecha)?.total_cobrado ?? 0) / avgPerSeller,
-      empresa: (report.daily_series.find((g) => g.fecha === d.fecha)?.total_cobrado ?? 0) / Math.max(1, report.sellers.length),
+      sucursal: (report.daily_series.find((g) => g.fecha === d.fecha)?.total_cobrado ?? 0) / avgPerBranchSeller,
+      empresa: (report.daily_series.find((g) => g.fecha === d.fecha)?.total_cobrado ?? 0) / Math.max(1, companyCount),
     }));
-  }, [sellerDaily, report.daily_series, branchSellers.length, report.sellers.length]);
+  }, [sellerDaily, report.daily_series, branchCount, companyCount]);
 
   const ticketProm = seller.tickets ? Math.round(seller.total_cobrado / seller.tickets) : 0;
   const prevTickets = prevSellerDelta?.delta?.tickets?.comparado ?? 0;
@@ -1014,13 +1019,13 @@ function ProfileTab({
               <h2 className="text-3xl font-black tracking-tight text-[color:var(--text)]">{seller.vendedor}</h2>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--border)] bg-[color:var(--surface-2)] px-2.5 py-0.5 text-[11px] font-bold text-[color:var(--text-2)]">
-                  {report.filters.sucursal || 'Multi-sucursal'}
+                  {seller.sucursales && seller.sucursales.length > 1 ? `${branchName} +${seller.sucursales.length - 1}` : branchName}
                 </span>
                 <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold text-[color:var(--chart-positive)]" style={{ background: 'color-mix(in oklch, var(--chart-positive) 14%, transparent)' }}>
-                  <Trophy size={11} /> #{rankBranch} de {branchSellers.length}
+                  <Trophy size={11} /> #{rankBranch} de {branchCount}
                 </span>
                 <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--border)] bg-[color:var(--surface-2)] px-2.5 py-0.5 text-[11px] font-bold text-[color:var(--text-2)]">
-                  #{rankCompany} en la empresa
+                  #{rankCompany} de {companyCount} en la empresa
                 </span>
               </div>
             </div>
@@ -1038,23 +1043,23 @@ function ProfileTab({
         <div className="grid gap-5 md:grid-cols-3">
           <ParticipationBar
             label="Participación en su sucursal"
-            value={seller.participacion_pct}
+            value={branchParticipation}
             color="var(--chart-blue)"
-            subtitle={`de ${money(totals.total_cobrado)}`}
+            subtitle={`de ${money(branchTotalCobrado)}`}
           />
           <ParticipationBar
             label="Participación en la empresa"
-            value={seller.participacion_pct}
+            value={companyParticipation}
             color="var(--chart-violet)"
-            subtitle={`de ${money(totals.total_cobrado)}`}
+            subtitle={`de ${money(companyTotalCobrado)}`}
           />
           <div className="space-y-2">
             <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[color:var(--text-3)]">Ranking</div>
             <div className="flex items-baseline gap-3">
               <div className="text-5xl font-black text-[color:var(--chart-positive)]">#{rankBranch}</div>
-              <div className="text-xs leading-tight text-[color:var(--text-3)]">en {report.filters.sucursal || 'la sucursal'}<br />(de {branchSellers.length} vendedores)</div>
+              <div className="text-xs leading-tight text-[color:var(--text-3)]">en {branchName}<br />(de {branchCount} vendedores)</div>
             </div>
-            <div className="text-xs text-[color:var(--text-3)]">Empresa: <span className="font-black text-[color:var(--text)]">#{rankCompany} / {report.sellers.length}</span></div>
+            <div className="text-xs text-[color:var(--text-3)]">Empresa: <span className="font-black text-[color:var(--text)]">#{rankCompany} / {companyCount}</span></div>
           </div>
         </div>
       </div>
@@ -1066,7 +1071,7 @@ function ProfileTab({
         <KpiCard label="Tickets"         accent="amber"    value={seller.tickets}       prev={prevSellerDelta?.delta?.tickets?.comparado}       format={num} />
         <KpiCard label="Ticket promedio" accent="teal"     value={ticketProm}           prev={prevTicketProm}                                    format={money} />
         <KpiCard label="Vendido"         accent="violet"   value={seller.total_vendido} prev={prevSellerDelta?.delta?.total_vendido?.comparado} format={money} />
-        <KpiCard label="Participación"   accent="blue"     value={seller.participacion_pct} format={(n) => `${n.toFixed(1)}%`} />
+        <KpiCard label="Part. sucursal"  accent="blue"     value={branchParticipation} format={(n) => `${n.toFixed(1)}%`} />
       </div>
 
       {/* Evolución triple */}

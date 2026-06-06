@@ -166,18 +166,20 @@ def render_sellers_pdf(report: dict[str, Any], *, compare: dict[str, Any] | None
     ))
 
     sellers = report.get("sellers", [])[:12]
-    rows = [["Vendedor", "Cobrado", "Unid.", "Tickets", "Ticket prom.", "Part."]]
+    rows = [["Vendedor", "Sucursal", "Cobrado", "Unid.", "Tickets", "Ticket prom.", "Part. suc.", "Part. emp."]]
     for s in sellers:
         rows.append([
             s.get("vendedor", ""),
+            s.get("sucursal", ""),
             _money(s.get("total_cobrado")),
             _num(s.get("unidades")),
             _num(s.get("tickets")),
             _money(s.get("ticket_promedio")),
-            f"{float(s.get('participacion_pct') or 0):.1f}%",
+            f"{float(s.get('sucursal_participacion_pct') or s.get('participacion_pct') or 0):.1f}%",
+            f"{float(s.get('empresa_participacion_pct') or s.get('participacion_pct') or 0):.1f}%",
         ])
     story.append(Paragraph("Ranking de vendedores", section))
-    story.append(Table(rows, repeatRows=1, colWidths=[70 * mm, 35 * mm, 24 * mm, 24 * mm, 34 * mm, 24 * mm], style=TableStyle([
+    story.append(Table(rows, repeatRows=1, colWidths=[56 * mm, 28 * mm, 32 * mm, 20 * mm, 20 * mm, 30 * mm, 22 * mm, 22 * mm], style=TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), NAVY),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D8E1F0")),
@@ -251,10 +253,15 @@ def render_sellers_xlsx(report: dict[str, Any], *, compare: dict[str, Any] | Non
 
     ws_sellers = wb.create_sheet("Vendedores")
     _write_rows(ws_sellers, [[
-        "Vendedor", "Cobrado", "Vendido", "Saldo", "Unidades", "Tickets", "Ticket promedio", "Participacion %", "Margen %"
+        "Vendedor", "Sucursal principal", "Cobrado", "Vendido", "Saldo", "Unidades", "Tickets", "Ticket promedio", "Part. sucursal %", "Part. empresa %", "Ranking sucursal", "Ranking empresa", "Margen %"
     ]] + [[
-        s.get("vendedor"), s.get("total_cobrado"), s.get("total_vendido"), s.get("saldo"), s.get("unidades"),
-        s.get("tickets"), s.get("ticket_promedio"), s.get("participacion_pct"), s.get("margen_porcentaje", "")
+        s.get("vendedor"), s.get("sucursal"), s.get("total_cobrado"), s.get("total_vendido"), s.get("saldo"), s.get("unidades"),
+        s.get("tickets"), s.get("ticket_promedio"),
+        s.get("sucursal_participacion_pct", s.get("participacion_pct")),
+        s.get("empresa_participacion_pct", s.get("participacion_pct")),
+        s.get("rank_sucursal", ""),
+        s.get("rank_empresa", ""),
+        s.get("margen_porcentaje", ""),
     ] for s in report.get("sellers", [])])
 
     ws_daily = wb.create_sheet("Evolucion")
