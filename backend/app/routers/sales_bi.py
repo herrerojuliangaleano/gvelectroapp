@@ -425,12 +425,24 @@ def rematch_sales_bi_import(
     return result
 
 
+@router.get("/sellers/options")
+def get_sellers_options(
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+):
+    """Empresas + sucursales disponibles para los filtros del dashboard."""
+    _require(user, "sales_bi.view")
+    from ..sales_bi import get_sellers_filter_options
+    return get_sellers_filter_options()
+
+
 @router.get("/sellers/report")
 def get_sellers_report(
     user: Annotated[CurrentUser, Depends(require_current_user)],
     fecha_desde: str | None = Query(default=None),
     fecha_hasta: str | None = Query(default=None),
     sucursal: str | None = Query(default=None),
+    sucursales: str | None = Query(default=None, description="CSV de sucursales (multi-select)"),
+    empresa: str | None = Query(default=None, description="Slug de la empresa (companies.id)"),
     tipo: str | None = Query(default=None),
     vendedores: str | None = Query(default=None),
 ):
@@ -441,6 +453,8 @@ def get_sellers_report(
         sucursal,
         tipo,
         vendedores,
+        empresa=empresa,
+        sucursales=sucursales,
         include_costs=user.has("sales_bi.view_costs"),
         include_margin=user.has("sales_bi.view_margin"),
     )
@@ -454,6 +468,8 @@ def get_sellers_compare(
     compare_desde: str = Query(...),
     compare_hasta: str = Query(...),
     sucursal: str | None = Query(default=None),
+    sucursales: str | None = Query(default=None, description="CSV de sucursales (multi-select)"),
+    empresa: str | None = Query(default=None, description="Slug de la empresa (companies.id)"),
     tipo: str | None = Query(default=None),
     vendedores: str | None = Query(default=None),
 ):
@@ -466,6 +482,8 @@ def get_sellers_compare(
         sucursal,
         tipo,
         vendedores,
+        empresa=empresa,
+        sucursales=sucursales,
         include_costs=user.has("sales_bi.view_costs"),
         include_margin=user.has("sales_bi.view_margin"),
     )

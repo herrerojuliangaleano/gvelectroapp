@@ -15,6 +15,7 @@ import type {
   SalesBIStats,
   SalesBISellersReport,
   SalesBISellersCompare,
+  SalesBISellersOptions,
   SalesBIUnmatchedProduct,
   SalesBIProductAlias,
   BackupInfo,
@@ -898,10 +899,16 @@ export async function rematchSalesBIImport(id: number): Promise<{ ok: boolean; i
   return request(`/api/sales-bi/imports/${encodeURIComponent(String(id))}/rematch-products`, { method: 'POST' });
 }
 
+export async function fetchSalesBISellersOptions(): Promise<SalesBISellersOptions> {
+  return request('/api/sales-bi/sellers/options');
+}
+
 export async function fetchSalesBISellersReport(params: {
   fecha_desde?: string;
   fecha_hasta?: string;
-  sucursal?: string;
+  sucursal?: string;        // legacy single
+  sucursales?: string;      // NEW — CSV de nombres de sucursal
+  empresa?: string;         // NEW — slug de la empresa
   tipo?: string;
   vendedores?: string;
 } = {}): Promise<SalesBISellersReport> {
@@ -914,6 +921,8 @@ export async function fetchSalesBISellersCompare(params: {
   compare_desde: string;
   compare_hasta: string;
   sucursal?: string;
+  sucursales?: string;      // NEW
+  empresa?: string;         // NEW
   tipo?: string;
   vendedores?: string;
 }): Promise<SalesBISellersCompare> {

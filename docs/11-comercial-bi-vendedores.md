@@ -77,6 +77,100 @@ Nota: el campo `linea` quedo como alias del `categoria` por compatibilidad
 con codigo viejo que lo leia aparte. Hoy ambos contienen el mismo valor de
 la nueva taxonomia - se podria dropear `linea` en un refactor futuro.
 
+### Empresas + sucursales (modelo de datos)
+
+Cada planilla importada vive en `sales_imports` y queda linkeada a un
+`branch_id` (tabla `branches`), que a su vez tiene `company_id` (tabla
+`companies`). Asi:
+
+```
+sales_imports (sucursal: "Caseros", tipo: "local")
+  └─→ branches.id = "caseros"  (type=physical)
+        └─→ companies.id = "electro_gv"
+```
+
+Hoy hay **dos empresas activas**:
+
+| Slug              | Nombre          |
+|-------------------|-----------------|
+| `electro_gv`      | Electro GV      |
+| `electro_abc_srl` | Electro ABC SRL |
+
+Y las sucursales que tienen ventas se reparten asi:
+
+| Sucursal (texto en sheet) | Empresa          | Branch physical | Branch web         |
+|---------------------------|------------------|-----------------|--------------------|
+| `Caseros`                 | electro_gv       | `caseros`       | `caseros_web`      |
+| `Canning`                 | electro_abc_srl  | `canning`       | `canning_web`      |
+| `Lanus`                   | electro_abc_srl  | `sur` *         | `sur_web` *        |
+| `Norcenter`               | electro_abc_srl  | `norte` *       | `norte_web` *      |
+
+> **Mapping codename → display:** las planillas de ABC en Excel traen
+> internamente "Sur" y "Norte" como codenames de Lanús y Norcenter
+> respectivamente. La importacion los preserva (la sucursal del
+> import queda como "Lanus"/"Norcenter" porque es el nombre que el
+> usuario elige en la UI) pero el branch resuelto es `sur` / `norte`
+> con su sufijo `_web` cuando aplica. Esta dualidad se documenta
+> tambien en `_normalize_sucursal()` (sales_bi.py).
+
+Como cada nombre de sucursal es **unico entre empresas** (no hay un
+"Caseros" en ABC), el resolver `_find_branch_in_session()` puede
+mapear sin ambiguedad. Si en el futuro entra una empresa con un
+nombre repetido, habria que extender el matcher para pedir
+empresa+nombre.
+
+### Filtros del dashboard de vendedores
+
+Los endpoints `/api/sales-bi/sellers/report` y
+`/api/sales-bi/sellers/compare` aceptan los siguientes query params:
+
+| Param         | Tipo  | Descripcion                                         |
+|---------------|-------|-----------------------------------------------------|
+| `fecha_desde` | str   | YYYY-MM-DD inicio del rango                         |
+| `fecha_hasta` | str   | YYYY-MM-DD fin del rango (inclusive)                |
+| `empresa`     | str   | Slug de `companies.id`. Vacio = todas.              |
+| `sucursales`  | csv   | Nombres de sucursal separados por coma (multi).     |
+| `sucursal`    | str   | Single legacy (Caseros, Canning, ...). Si vienen    |
+|               |       | `sucursal` y `sucursales`, gana `sucursales`.       |
+| `tipo`        | str   | `local` / `online` / vacio (ambos)                  |
+| `vendedores`  | csv   | `vendedor_normalized` de cada vendedor a incluir    |
+
+Adicional, hay un endpoint `/api/sales-bi/sellers/options` que devuelve:
+
+```json
+{
+  "empresas": [
+    {"id": "electro_gv", "name": "Electro GV"},
+    {"id": "electro_abc_srl", "name": "Electro ABC SRL"}
+  ],
+  "sucursales": [
+    {"name": "Caseros", "empresa_id": "electro_gv",
+     "branch_ids": ["caseros", "caseros_web"]},
+    {"name": "Lanus", "empresa_id": "electro_abc_srl",
+     "branch_ids": ["sur", "sur_web"]},
+    ...
+  ]
+}
+```
+
+El frontend usa esto para poblar los selectores sin hardcodear nada.
+
+### Comparar vs período anterior (toggle)
+
+A partir de junio/2026 el dashboard tiene un **toggle "Comparar contra
+otro período"** que arranca **apagado** por default. Cuando esta
+apagado:
+
+- El frontend NO llama a `/sellers/compare` (ahorra una request).
+- Los KpiCards no muestran chip de delta %.
+- Los charts muestran solo la serie "actual" (sin la linea/barra
+  punteada de "anterior").
+- El tab "Comparar periodos" sigue accesible pero muestra solo la
+  data actual con "anterior" en cero.
+
+Cuando esta encendido, aparecen los dos date pickers de "Comparar
+desde/hasta" y se restaura el comportamiento original.
+
 ### Regla contable por remito
 
 Para evitar diferencias por la forma en que se cargan las planillas, el

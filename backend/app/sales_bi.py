@@ -1811,13 +1811,38 @@ def _parse_vendor_filter(vendedores: list[str] | str | None) -> set[str]:
     return {_normalize_seller(v) for v in raw if str(v or "").strip()}
 
 
+def _parse_csv_list(value: list[str] | str | None) -> list[str]:
+    """Normaliza un parámetro que puede venir como lista o CSV string."""
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [v.strip() for v in value.split(",") if v.strip()]
+    return [str(v).strip() for v in value if str(v or "").strip()]
+
+
 def _sales_rows_for_report(
     fecha_desde: str | None,
     fecha_hasta: str | None,
     sucursal: str | None = None,
     tipo: str | None = None,
     vendedores: list[str] | str | None = None,
+    *,
+    empresa: str | None = None,
+    sucursales: list[str] | str | None = None,
 ) -> list[tuple[SalesRecord, SalesImport]]:
+    """Trae los SalesRecord+SalesImport del rango aplicando filtros.
+
+    Filtros:
+        sucursal: nombre legacy (Caseros, Canning, ...) — single. Backward
+            compat con el endpoint original.
+        sucursales: lista (o CSV) de nombres de sucursal. Si viene junto a
+            `sucursal`, los dos se aplican (ambos como `IN`).
+        empresa: slug de Company (ej. `electro_gv`, `electro_abc_srl`).
+            Filtra los imports que estén linkeados a un branch de esa
+            empresa (`sales_imports.branch_id -> branches.company_id`).
+        tipo: 'local' | 'online'.
+        vendedores: lista o CSV de vendedor_normalized.
+    """
     fd = _parse_date_value(fecha_desde) if fecha_desde else None
     fh = _parse_date_value(fecha_hasta) if fecha_hasta else None
     if fd is None or fh is None:
@@ -1828,10 +1853,27 @@ def _sales_rows_for_report(
         fd, fh = fh, fd
 
     filters: list[Any] = [SalesImport.status == "activo", SalesImport.fecha >= fd, SalesImport.fecha <= fh]
-    if sucursal:
+
+    # Sucursal(es) — soporta el `sucursal=Caseros` legacy y el nuevo
+    # `sucursales=Caseros,Canning`. Si vienen los dos, ambos se aplican.
+    sucursales_list = _parse_csv_list(sucursales)
+    if sucursal and not sucursales_list:
         filters.append(SalesImport.sucursal == sucursal)
+    elif sucursales_list:
+        filters.append(SalesImport.sucursal.in_(sucursales_list))
+
     if tipo:
         filters.append(SalesImport.tipo == tipo)
+
+    # Empresa — slug de la tabla `companies`. Filtra contra los branches
+    # que pertenezcan a esa empresa, vía subquery sobre branch_id.
+    if empresa:
+        from .models.org import Branch  # local import — evita ciclo
+        filters.append(
+            SalesImport.branch_id.in_(
+                select(Branch.id).where(Branch.company_id == empresa)
+            )
+        )
 
     vendor_filter = _parse_vendor_filter(vendedores)
     with db_session() as session:
@@ -1920,10 +1962,15 @@ def build_sellers_report(
     tipo: str | None = None,
     vendedores: list[str] | str | None = None,
     *,
+    empresa: str | None = None,
+    sucursales: list[str] | str | None = None,
     include_costs: bool = False,
     include_margin: bool = False,
 ) -> dict[str, Any]:
-    rows = _sales_rows_for_report(fecha_desde, fecha_hasta, sucursal, tipo, vendedores)
+    rows = _sales_rows_for_report(
+        fecha_desde, fecha_hasta, sucursal, tipo, vendedores,
+        empresa=empresa, sucursales=sucursales,
+    )
     fd = _parse_date_value(fecha_desde) if fecha_desde else None
     fh = _parse_date_value(fecha_hasta) if fecha_hasta else None
     if fd is None or fh is None:
@@ -2048,11 +2095,21 @@ def compare_sellers_report(
     tipo: str | None = None,
     vendedores: list[str] | str | None = None,
     *,
+    empresa: str | None = None,
+    sucursales: list[str] | str | None = None,
     include_costs: bool = False,
     include_margin: bool = False,
 ) -> dict[str, Any]:
-    base = build_sellers_report(base_desde, base_hasta, sucursal, tipo, vendedores, include_costs=include_costs, include_margin=include_margin)
-    compare = build_sellers_report(compare_desde, compare_hasta, sucursal, tipo, vendedores, include_costs=include_costs, include_margin=include_margin)
+    base = build_sellers_report(
+        base_desde, base_hasta, sucursal, tipo, vendedores,
+        empresa=empresa, sucursales=sucursales,
+        include_costs=include_costs, include_margin=include_margin,
+    )
+    compare = build_sellers_report(
+        compare_desde, compare_hasta, sucursal, tipo, vendedores,
+        empresa=empresa, sucursales=sucursales,
+        include_costs=include_costs, include_margin=include_margin,
+    )
     base_by_seller = {s["vendedor_normalized"]: s for s in base["sellers"]}
     compare_by_seller = {s["vendedor_normalized"]: s for s in compare["sellers"]}
     sellers = []
@@ -2071,6 +2128,87 @@ def compare_sellers_report(
         "delta": _delta_metric(base["totals"], compare["totals"]),
         "sellers": sellers,
     }
+
+
+def get_sellers_filter_options() -> dict[str, Any]:
+    """Devuelve empresas + sucursales disponibles para los filtros del dashboard.
+
+    Las sucursales se sirven con el TEXTO que aparece en `sales_imports.sucursal`
+    (legacy: "Caseros", "Canning", "Norcenter", "Lanus") agrupado por empresa
+    a través del branch al que están linkeadas.
+
+    Estructura:
+        {
+          "empresas": [{"id": "electro_gv", "name": "Electro GV"}, ...],
+          "sucursales": [
+              {"name": "Caseros", "empresa_id": "electro_gv",
+               "branch_ids": ["caseros", "caseros_web"]},
+              ...
+          ],
+        }
+
+    Nota operativa: en las planillas ABC, Lanús aparece como "Sur" y
+    Norcenter como "Norte" (codename interno). La importación las
+    mapea al texto user-friendly ("Lanus"/"Norcenter") antes de
+    guardar en `sales_imports.sucursal`, así que el filtro del
+    dashboard ya las muestra con el nombre que la gente usa.
+    """
+    from .models.org import Company, Branch  # local: evita ciclo
+
+    empresas: list[dict[str, str]] = []
+    sucursales_by_name: dict[str, dict[str, Any]] = {}
+
+    with db_session() as session:
+        for company in session.scalars(
+            select(Company).where(Company.is_active.is_(True)).order_by(Company.name)
+        ).all():
+            empresas.append({"id": str(company.id), "name": str(company.name)})
+
+        # Junto branches con los nombres reales que aparecen en sales_imports
+        # (puede que un branch nuevo aún no tenga imports — lo incluimos igual
+        # para que el usuario pueda preseleccionarlo y filtrar sin resultados).
+        used_sucursales: set[tuple[str, str]] = set()  # (sucursal_text, company_id)
+        for row in session.execute(
+            select(SalesImport.sucursal, Branch.company_id)
+            .join(Branch, Branch.id == SalesImport.branch_id, isouter=True)
+            .where(SalesImport.status == "activo")
+            .distinct()
+        ).all():
+            sucursal_text = str(row[0] or "").strip()
+            company_id = str(row[1] or "")
+            if sucursal_text:
+                used_sucursales.add((sucursal_text, company_id))
+
+        # Agrupo por nombre de sucursal: cada uno trae todos los branch_ids
+        # que matchean (física + web cuando existen).
+        for sucursal_text, company_id in used_sucursales:
+            entry = sucursales_by_name.setdefault(
+                sucursal_text,
+                {"name": sucursal_text, "empresa_id": company_id, "branch_ids": []},
+            )
+            entry["empresa_id"] = entry["empresa_id"] or company_id
+
+        for branch in session.scalars(
+            select(Branch).where(Branch.is_active.is_(True))
+        ).all():
+            for entry in sucursales_by_name.values():
+                # Branch matchea si su código empieza con el slug de la sucursal
+                # (`caseros` → "Caseros"; `caseros_web` también).
+                slug = str(branch.id or "")
+                base = slug.replace("_web", "")
+                sucursal_slug = entry["name"].lower().replace(" ", "_")
+                # Caso especial: ABC usa codename "Sur" → branch `sur` (Lanús),
+                # "Norte" → branch `norte` (Norcenter). Lo mapeamos a mano.
+                aliases = {"lanus": ["sur"], "norcenter": ["norte"]}
+                slugs_to_check = [sucursal_slug] + aliases.get(sucursal_slug, [])
+                if base in slugs_to_check:
+                    if slug not in entry["branch_ids"]:
+                        entry["branch_ids"].append(slug)
+                    if not entry["empresa_id"]:
+                        entry["empresa_id"] = str(branch.company_id or "")
+
+    sucursales = sorted(sucursales_by_name.values(), key=lambda r: str(r["name"]).lower())
+    return {"empresas": empresas, "sucursales": sucursales}
 
 
 def get_stats() -> dict:

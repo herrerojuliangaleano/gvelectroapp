@@ -607,6 +607,27 @@ export interface SalesBITopProduct extends SalesBIMetricSummary {
   marca: string;
 }
 
+export interface SalesBIEmpresaOption {
+  id: string;
+  name: string;
+}
+
+export interface SalesBISucursalOption {
+  /** Texto que aparece en `sales_imports.sucursal` (legacy: "Caseros", "Canning"…). */
+  name: string;
+  /** Slug de la empresa a la que pertenece (FK companies.id). */
+  empresa_id: string;
+  /** Branches físicos + web que matchean esta sucursal. Incluye el mapping
+   * codename → display: para ABC, "Lanus" → ["sur", "sur_web"] y
+   * "Norcenter" → ["norte", "norte_web"]. */
+  branch_ids: string[];
+}
+
+export interface SalesBISellersOptions {
+  empresas: SalesBIEmpresaOption[];
+  sucursales: SalesBISucursalOption[];
+}
+
 export interface SalesBISellersReport {
   filters: {
     fecha_desde: string;

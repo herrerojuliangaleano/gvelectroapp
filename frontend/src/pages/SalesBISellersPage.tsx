@@ -28,20 +28,19 @@ import {
 
 import {
   can, createSalesBIProductAlias, exportSalesBISellersPdf, exportSalesBISellersXlsx,
-  fetchSalesBISellersCompare, fetchSalesBISellersReport, fetchSalesBIUnmatchedProducts,
-  rematchSalesBIImport, searchProducts,
+  fetchSalesBISellersCompare, fetchSalesBISellersOptions, fetchSalesBISellersReport,
+  fetchSalesBIUnmatchedProducts, rematchSalesBIImport, searchProducts,
 } from '../api/client';
 import type {
   ProductInfo, SalesBIDailyMetric, SalesBIMixMetric, SalesBISellerMetric,
-  SalesBISellersCompare, SalesBISellersReport, SalesBITopProduct, SalesBIUnmatchedProduct,
+  SalesBISellersCompare, SalesBISellersOptions, SalesBISellersReport, SalesBITopProduct,
+  SalesBIUnmatchedProduct,
 } from '../types';
 import {
   CHART_ANIM, CHART_ANIM_FAST, CHART_TOOLTIP_STYLE, ChartCard, DeltaPill,
   KpiCard, ParticipationBar, SellerAvatar, Tabs, cn, money, num, pct,
   useIsDesktop,
 } from '../components/SalesBIWidgets';
-
-const SUCURSALES = ['Caseros', 'Canning', 'Norcenter', 'Lanus'] as const;
 
 // Paleta para gráficos categóricos (donuts, barras agrupadas, etc.).
 // El orden importa: índice 0 = serie principal del overview / vendedor A.
@@ -121,9 +120,18 @@ export function SalesBISellersPage() {
   const initialCompare = previousRange(iso(monthStart(now)), iso(now));
   const [compareDesde, setCompareDesde] = useState(initialCompare.desde);
   const [compareHasta, setCompareHasta] = useState(initialCompare.hasta);
-  const [sucursal, setSucursal] = useState('');
+  // `empresa` = slug de companies.id, '' = todas. `sucursales` = multi-select
+  // por nombre legacy ("Caseros", "Canning", …). Vacío = todas. `tipo` = canal.
+  const [empresa, setEmpresa] = useState('');
+  const [selectedSucursales, setSelectedSucursales] = useState<Set<string>>(new Set());
   const [tipo, setTipo] = useState('');
   const [selectedSellers, setSelectedSellers] = useState<Set<string>>(new Set());
+  // Compare vs período anterior — OFF por default. El usuario decide cuándo
+  // activarla. Antes era siempre activa y los KpiCards mostraban delta de un
+  // período que no necesariamente quería ver.
+  const [compareEnabled, setCompareEnabled] = useState(false);
+  // Opciones de empresa + sucursales — se cargan una vez al montar.
+  const [options, setOptions] = useState<SalesBISellersOptions | null>(null);
 
   // Estado por tab
   const [profileSellerId, setProfileSellerId] = useState<string>('');
@@ -142,11 +150,30 @@ export function SalesBISellersPage() {
   async function load() {
     setLoading(true);
     setError('');
+    const sucursalesParam = [...selectedSucursales].join(',');
+    const baseParams = {
+      fecha_desde: desde,
+      fecha_hasta: hasta,
+      empresa: empresa || undefined,
+      sucursales: sucursalesParam || undefined,
+      tipo: tipo || undefined,
+      vendedores: vendedoresParam || undefined,
+    };
     try {
-      const [rep, comp] = await Promise.all([
-        fetchSalesBISellersReport({ fecha_desde: desde, fecha_hasta: hasta, sucursal: sucursal || undefined, tipo: tipo || undefined, vendedores: vendedoresParam || undefined }),
-        fetchSalesBISellersCompare({ base_desde: desde, base_hasta: hasta, compare_desde: compareDesde, compare_hasta: compareHasta, sucursal: sucursal || undefined, tipo: tipo || undefined, vendedores: vendedoresParam || undefined }),
-      ]);
+      // El compare se hace solo si el usuario lo activó. Cuando está OFF,
+      // todos los charts ya se renderizan sin "anterior" (hasAnterior=false).
+      const repPromise = fetchSalesBISellersReport(baseParams);
+      const compPromise: Promise<SalesBISellersCompare | null> = compareEnabled
+        ? fetchSalesBISellersCompare({
+            base_desde: desde, base_hasta: hasta,
+            compare_desde: compareDesde, compare_hasta: compareHasta,
+            empresa: empresa || undefined,
+            sucursales: sucursalesParam || undefined,
+            tipo: tipo || undefined,
+            vendedores: vendedoresParam || undefined,
+          })
+        : Promise.resolve(null);
+      const [rep, comp] = await Promise.all([repPromise, compPromise]);
       setReport(rep);
       setCompare(comp);
       // Defaultear los selectores de perfil/compare al primer y segundo vendedor.
@@ -170,6 +197,11 @@ export function SalesBISellersPage() {
   }
 
   useEffect(() => { load(); }, []);
+
+  // Opciones se cargan UNA vez (no dependen del filtro de fechas).
+  useEffect(() => {
+    fetchSalesBISellersOptions().then(setOptions).catch(() => setOptions({ empresas: [], sucursales: [] }));
+  }, []);
 
   function applyPreset(kind: string) {
     const today = new Date();
@@ -198,9 +230,13 @@ export function SalesBISellersPage() {
     if (!report) return;
     setExporting(kind);
     try {
+      // Para export pasamos la primera sucursal seleccionada como `sucursal`
+      // legacy (los exporters todavía no soportan multi). Si el usuario quiere
+      // exportar un subset, pre-filtra el set de sucursales antes.
+      const sucursalLegacy = [...selectedSucursales][0] || '';
       const payload = {
         fecha_desde: desde, fecha_hasta: hasta,
-        sucursal: sucursal || undefined, tipo: tipo || undefined,
+        sucursal: sucursalLegacy || undefined, tipo: tipo || undefined,
         vendedores: [...selectedSellers],
         compare_desde: compareDesde, compare_hasta: compareHasta,
         titulo: 'Informe de vendedores', logo: 'GV',
@@ -251,10 +287,13 @@ export function SalesBISellersPage() {
         hasta={hasta} setHasta={setHasta}
         compareDesde={compareDesde} setCompareDesde={setCompareDesde}
         compareHasta={compareHasta} setCompareHasta={setCompareHasta}
-        sucursal={sucursal} setSucursal={setSucursal}
+        compareEnabled={compareEnabled} setCompareEnabled={setCompareEnabled}
+        empresa={empresa} setEmpresa={setEmpresa}
+        selectedSucursales={selectedSucursales} setSelectedSucursales={setSelectedSucursales}
         tipo={tipo} setTipo={setTipo}
         selectedSellers={selectedSellers} setSelectedSellers={setSelectedSellers}
         sellerOptions={report?.sellers || []}
+        options={options}
         onApply={load}
         onPreset={applyPreset}
       />
@@ -285,7 +324,7 @@ export function SalesBISellersPage() {
 
       {report && (
         <>
-          {tab === 'overview' && <OverviewTab report={report} compare={compare} range={{ desde, hasta, sucursal, tipo }} />}
+          {tab === 'overview' && <OverviewTab report={report} compare={compare} range={{ desde, hasta, sucursal: [...selectedSucursales][0] || '', tipo }} />}
           {tab === 'profile' && (
             <ProfileTab
               report={report} compare={compare}
@@ -312,18 +351,25 @@ export function SalesBISellersPage() {
 function FiltersBar({
   desde, setDesde, hasta, setHasta,
   compareDesde, setCompareDesde, compareHasta, setCompareHasta,
-  sucursal, setSucursal, tipo, setTipo,
+  compareEnabled, setCompareEnabled,
+  empresa, setEmpresa,
+  selectedSucursales, setSelectedSucursales,
+  tipo, setTipo,
   selectedSellers, setSelectedSellers, sellerOptions,
+  options,
   onApply, onPreset,
 }: {
   desde: string; setDesde: (v: string) => void;
   hasta: string; setHasta: (v: string) => void;
   compareDesde: string; setCompareDesde: (v: string) => void;
   compareHasta: string; setCompareHasta: (v: string) => void;
-  sucursal: string; setSucursal: (v: string) => void;
+  compareEnabled: boolean; setCompareEnabled: (v: boolean) => void;
+  empresa: string; setEmpresa: (v: string) => void;
+  selectedSucursales: Set<string>; setSelectedSucursales: (s: Set<string>) => void;
   tipo: string; setTipo: (v: string) => void;
   selectedSellers: Set<string>; setSelectedSellers: (s: Set<string>) => void;
   sellerOptions: SalesBISellerMetric[];
+  options: SalesBISellersOptions | null;
   onApply: () => void;
   onPreset: (kind: string) => void;
 }) {
@@ -333,19 +379,59 @@ function FiltersBar({
     ['month', 'Mes actual'], ['prev-month', 'Mes anterior'],
     ['30', 'Últimos 30 días'],
   ];
+
+  // Si hay empresa elegida, mostrar solo las sucursales de esa empresa. Si
+  // ninguna, mostrar todas. La selección de sucursal se preserva entre
+  // cambios de empresa (las que ya no apliquen quedan invisibles pero
+  // siguen en el Set; el `Limpiar` las saca).
+  const empresaSucursales = useMemo(() => {
+    const all = options?.sucursales ?? [];
+    if (!empresa) return all;
+    return all.filter((s) => s.empresa_id === empresa);
+  }, [options, empresa]);
+
+  function toggleSucursal(name: string) {
+    const next = new Set(selectedSucursales);
+    if (next.has(name)) next.delete(name);
+    else next.add(name);
+    setSelectedSucursales(next);
+  }
+
+  function toggleSeller(key: string) {
+    const next = new Set(selectedSellers);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setSelectedSellers(next);
+  }
+
   return (
     <section className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)]/60 p-4 backdrop-blur space-y-3">
-      <div className="grid gap-3 lg:grid-cols-[1fr_1fr_180px_160px_auto]">
+      {/* Fila 1: rango + empresa + canal + aplicar */}
+      <div className="grid gap-3 lg:grid-cols-[1fr_minmax(180px,220px)_minmax(160px,180px)_auto]">
         <div className="grid grid-cols-2 gap-2">
           <DateField label="Desde" value={desde} onChange={setDesde} accent="var(--chart-blue)" />
           <DateField label="Hasta" value={hasta} onChange={setHasta} accent="var(--chart-blue)" />
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <DateField label="Comparar desde" value={compareDesde} onChange={setCompareDesde} accent="var(--chart-violet)" />
-          <DateField label="Comparar hasta" value={compareHasta} onChange={setCompareHasta} accent="var(--chart-violet)" />
-        </div>
-        <SelectField label="Sucursal" value={sucursal} onChange={setSucursal} options={[['', 'Todas las sucursales'], ...SUCURSALES.map((s) => [s, s] as [string, string])]} />
-        <SelectField label="Canal" value={tipo} onChange={setTipo} options={[['', 'Local + online'], ['local', 'Local'], ['online', 'Online']]} />
+        <SelectField
+          label="Empresa"
+          value={empresa}
+          onChange={(v) => {
+            setEmpresa(v);
+            // Al cambiar de empresa, limpiamos sucursales que ya no apliquen.
+            if (v) {
+              const validNames = new Set((options?.sucursales ?? []).filter((s) => s.empresa_id === v).map((s) => s.name));
+              const filtered = new Set([...selectedSucursales].filter((n) => validNames.has(n)));
+              if (filtered.size !== selectedSucursales.size) setSelectedSucursales(filtered);
+            }
+          }}
+          options={[['', 'Todas las empresas'], ...(options?.empresas ?? []).map((e) => [e.id, e.name] as [string, string])]}
+        />
+        <SelectField
+          label="Canal"
+          value={tipo}
+          onChange={setTipo}
+          options={[['', 'Local + online'], ['local', 'Local'], ['online', 'Online']]}
+        />
         <div className="flex items-end">
           <button onClick={onApply} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[color:var(--chart-blue)] px-5 py-2.5 text-sm font-black text-white hover:brightness-110">
             <Wand2 size={15} /> Aplicar
@@ -353,6 +439,7 @@ function FiltersBar({
         </div>
       </div>
 
+      {/* Presets */}
       <div className="flex flex-wrap gap-2">
         {presets.map(([key, label]) => (
           <button
@@ -365,6 +452,77 @@ function FiltersBar({
         ))}
       </div>
 
+      {/* Sucursales — multi-select por chips */}
+      {empresaSucursales.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="mr-1 flex items-center gap-1 text-[11px] font-bold uppercase tracking-widest text-[color:var(--text-3)]">
+            <Filter size={12} /> Sucursales
+          </span>
+          {empresaSucursales.map((s) => {
+            const active = selectedSucursales.has(s.name);
+            return (
+              <button
+                key={s.name}
+                onClick={() => toggleSucursal(s.name)}
+                title={`${s.name} · ${options?.empresas.find((e) => e.id === s.empresa_id)?.name || s.empresa_id}`}
+                className={cn(
+                  'rounded-full px-3 py-1 text-xs font-bold transition',
+                  active
+                    ? 'bg-[color:var(--chart-violet)] text-white shadow-[0_4px_12px_-4px_var(--chart-violet)]'
+                    : 'bg-[color:var(--surface-2)] text-[color:var(--text-2)] hover:text-[color:var(--text)]',
+                )}
+              >
+                {s.name}
+              </button>
+            );
+          })}
+          {selectedSucursales.size > 0 && (
+            <button
+              onClick={() => setSelectedSucursales(new Set())}
+              className="ml-auto text-[11px] font-bold text-[color:var(--text-3)] hover:text-[color:var(--text)]"
+            >
+              Limpiar
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Toggle compare vs período anterior */}
+      <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3">
+        <label className="flex items-center gap-3 cursor-pointer">
+          <span className={cn(
+            'inline-flex h-5 w-9 items-center rounded-full transition-colors',
+            compareEnabled ? 'bg-[color:var(--chart-violet)]' : 'bg-[color:var(--border-strong)]'
+          )}>
+            <span className={cn(
+              'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+              compareEnabled ? 'translate-x-4' : 'translate-x-0.5'
+            )} />
+          </span>
+          <input
+            type="checkbox"
+            checked={compareEnabled}
+            onChange={(e) => setCompareEnabled(e.target.checked)}
+            className="sr-only"
+          />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-bold text-[color:var(--text)]">Comparar contra otro período</div>
+            <div className="text-[11px] text-[color:var(--text-3)]">
+              {compareEnabled
+                ? 'Los KPIs muestran delta % y los gráficos overlay del período anterior.'
+                : 'Ver solo los datos del rango actual sin comparación.'}
+            </div>
+          </div>
+        </label>
+        {compareEnabled && (
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <DateField label="Comparar desde" value={compareDesde} onChange={setCompareDesde} accent="var(--chart-violet)" />
+            <DateField label="Comparar hasta" value={compareHasta} onChange={setCompareHasta} accent="var(--chart-violet)" />
+          </div>
+        )}
+      </div>
+
+      {/* Vendedores — multi-select por chips */}
       {sellerOptions.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="mr-1 flex items-center gap-1 text-[11px] font-bold uppercase tracking-widest text-[color:var(--text-3)]">
@@ -375,12 +533,7 @@ function FiltersBar({
             return (
               <button
                 key={seller.vendedor_normalized}
-                onClick={() => {
-                  const next = new Set(selectedSellers);
-                  if (next.has(seller.vendedor_normalized)) next.delete(seller.vendedor_normalized);
-                  else next.add(seller.vendedor_normalized);
-                  setSelectedSellers(next);
-                }}
+                onClick={() => toggleSeller(seller.vendedor_normalized)}
                 className={cn(
                   'rounded-full px-3 py-1 text-xs font-bold transition',
                   active
