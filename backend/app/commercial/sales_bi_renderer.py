@@ -138,6 +138,8 @@ def render_sellers_pdf(report: dict[str, Any], *, compare: dict[str, Any] | None
         ("Tickets", _num(totals.get("tickets"))),
         ("Ticket prom.", _money(totals.get("ticket_promedio"))),
         ("Saldo", _money(totals.get("saldo"))),
+        ("Senas", _num(totals.get("sena_tickets"))),
+        ("Saldo senas", _money(totals.get("sena_saldo_pendiente"))),
     ]
     if "margen_porcentaje" in totals:
         kpis.append(("Margen", f"{float(totals.get('margen_porcentaje') or 0):.1f}%"))
@@ -166,7 +168,7 @@ def render_sellers_pdf(report: dict[str, Any], *, compare: dict[str, Any] | None
     ))
 
     sellers = report.get("sellers", [])[:12]
-    rows = [["Vendedor", "Sucursal", "Cobrado", "Unid.", "Tickets", "Ticket prom.", "Part. suc.", "Part. emp."]]
+    rows = [["Vendedor", "Sucursal", "Cobrado", "Unid.", "Tickets", "Senas", "Saldo senas", "Ticket prom.", "Part. suc.", "Part. emp."]]
     for s in sellers:
         rows.append([
             s.get("vendedor", ""),
@@ -174,12 +176,14 @@ def render_sellers_pdf(report: dict[str, Any], *, compare: dict[str, Any] | None
             _money(s.get("total_cobrado")),
             _num(s.get("unidades")),
             _num(s.get("tickets")),
+            _num(s.get("sena_tickets")),
+            _money(s.get("sena_saldo_pendiente")),
             _money(s.get("ticket_promedio")),
             f"{float(s.get('sucursal_participacion_pct') or s.get('participacion_pct') or 0):.1f}%",
             f"{float(s.get('empresa_participacion_pct') or s.get('participacion_pct') or 0):.1f}%",
         ])
     story.append(Paragraph("Ranking de vendedores", section))
-    story.append(Table(rows, repeatRows=1, colWidths=[56 * mm, 28 * mm, 32 * mm, 20 * mm, 20 * mm, 30 * mm, 22 * mm, 22 * mm], style=TableStyle([
+    story.append(Table(rows, repeatRows=1, colWidths=[48 * mm, 26 * mm, 28 * mm, 17 * mm, 17 * mm, 16 * mm, 24 * mm, 26 * mm, 20 * mm, 20 * mm], style=TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), NAVY),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D8E1F0")),
@@ -246,17 +250,21 @@ def render_sellers_xlsx(report: dict[str, Any], *, compare: dict[str, Any] | Non
             pass
     totals = report.get("totals", {}) or {}
     rows = [["Metrica", "Valor"]]
-    for key in ("total_cobrado", "total_vendido", "saldo", "unidades", "tickets", "ticket_promedio", "participacion_pct", "diferencia", "margen_porcentaje"):
+    for key in (
+        "total_cobrado", "total_vendido", "saldo", "unidades", "tickets", "ticket_promedio",
+        "sena_tickets", "sena_total_vendido", "sena_monto_cobrado", "sena_saldo_pendiente",
+        "sena_pct_tickets", "sena_ticket_promedio", "participacion_pct", "diferencia", "margen_porcentaje",
+    ):
         if key in totals:
             rows.append([key, totals.get(key)])
     _write_rows(ws, rows)
 
     ws_sellers = wb.create_sheet("Vendedores")
     _write_rows(ws_sellers, [[
-        "Vendedor", "Sucursal principal", "Cobrado", "Vendido", "Saldo", "Unidades", "Tickets", "Ticket promedio", "Part. sucursal %", "Part. empresa %", "Ranking sucursal", "Ranking empresa", "Margen %"
+        "Vendedor", "Sucursal principal", "Cobrado", "Vendido", "Saldo", "Unidades", "Tickets", "Senas", "Monto cobrado senas", "Saldo senas", "% tickets con sena", "Ticket promedio", "Part. sucursal %", "Part. empresa %", "Ranking sucursal", "Ranking empresa", "Margen %"
     ]] + [[
         s.get("vendedor"), s.get("sucursal"), s.get("total_cobrado"), s.get("total_vendido"), s.get("saldo"), s.get("unidades"),
-        s.get("tickets"), s.get("ticket_promedio"),
+        s.get("tickets"), s.get("sena_tickets"), s.get("sena_monto_cobrado"), s.get("sena_saldo_pendiente"), s.get("sena_pct_tickets"), s.get("ticket_promedio"),
         s.get("sucursal_participacion_pct", s.get("participacion_pct")),
         s.get("empresa_participacion_pct", s.get("participacion_pct")),
         s.get("rank_sucursal", ""),

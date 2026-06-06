@@ -1946,6 +1946,7 @@ def _metric_bucket() -> dict[str, Any]:
         "lineas": 0,
         "diferencia": 0.0,
         "_tickets": set(),
+        "_ticket_totals": {},
     }
 
 
@@ -1956,20 +1957,42 @@ def _branch_report_key(imp: SalesImport) -> str:
 def _add_metric(bucket: dict[str, Any], record: SalesRecord) -> None:
     cantidad = int(record.cantidad or 0)
     total_vendido = _num(record.pvp) * cantidad
+    total_cobrado = _num(record.total_cobrado)
+    saldo = _num(record.saldo)
     bucket["total_vendido"] += total_vendido
-    bucket["total_cobrado"] += _num(record.total_cobrado)
-    bucket["saldo"] += _num(record.saldo)
+    bucket["total_cobrado"] += total_cobrado
+    bucket["saldo"] += saldo
     bucket["unidades"] += cantidad
     bucket["lineas"] += 1
     bucket["diferencia"] += _num(record.diferencia)
     ticket_key = str(record.remito or "").strip() or f"linea-{record.id}"
     bucket["_tickets"].add(ticket_key)
+    ticket_totals = bucket.setdefault("_ticket_totals", {})
+    ticket_bucket = ticket_totals.setdefault(ticket_key, {"total_vendido": 0.0, "total_cobrado": 0.0, "saldo": 0.0})
+    ticket_bucket["total_vendido"] += total_vendido
+    ticket_bucket["total_cobrado"] += total_cobrado
+    ticket_bucket["saldo"] += saldo
 
 
 def _finalize_metric(bucket: dict[str, Any], *, include_margin: bool, total_reference: float | None = None) -> dict[str, Any]:
     tickets = len(bucket.get("_tickets") or set())
     total_cobrado = float(bucket.get("total_cobrado") or 0.0)
     diferencia = float(bucket.get("diferencia") or 0.0)
+    sena_tickets = 0
+    sena_total_vendido = 0.0
+    sena_monto_cobrado = 0.0
+    sena_saldo_pendiente = 0.0
+    for ticket in (bucket.get("_ticket_totals") or {}).values():
+        ticket_vendido = float(ticket.get("total_vendido") or 0.0)
+        ticket_cobrado = float(ticket.get("total_cobrado") or 0.0)
+        ticket_saldo = max(float(ticket.get("saldo") or 0.0), ticket_vendido - ticket_cobrado)
+        # Sena = remito con cobro parcial. Un remito sin pago cargado queda
+        # como saldo, pero no se cuenta como sena comercial.
+        if ticket_cobrado > 0.01 and ticket_saldo > 0.01:
+            sena_tickets += 1
+            sena_total_vendido += ticket_vendido
+            sena_monto_cobrado += ticket_cobrado
+            sena_saldo_pendiente += ticket_saldo
     out = {
         "total_vendido": round(float(bucket.get("total_vendido") or 0.0), 2),
         "total_cobrado": round(total_cobrado, 2),
@@ -1979,6 +2002,12 @@ def _finalize_metric(bucket: dict[str, Any], *, include_margin: bool, total_refe
         "tickets": tickets,
         "ticket_promedio": round(total_cobrado / tickets, 2) if tickets else 0.0,
         "participacion_pct": round(total_cobrado / total_reference * 100, 2) if total_reference else 0.0,
+        "sena_tickets": sena_tickets,
+        "sena_total_vendido": round(sena_total_vendido, 2),
+        "sena_monto_cobrado": round(sena_monto_cobrado, 2),
+        "sena_saldo_pendiente": round(sena_saldo_pendiente, 2),
+        "sena_pct_tickets": round(sena_tickets / tickets * 100, 2) if tickets else 0.0,
+        "sena_ticket_promedio": round(sena_monto_cobrado / sena_tickets, 2) if sena_tickets else 0.0,
     }
     if include_margin:
         out["diferencia"] = round(diferencia, 2)
@@ -1988,7 +2017,11 @@ def _finalize_metric(bucket: dict[str, Any], *, include_margin: bool, total_refe
 
 def _delta_metric(base: dict[str, Any], compare: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    for key in ("total_vendido", "total_cobrado", "saldo", "unidades", "tickets", "ticket_promedio", "diferencia", "margen_porcentaje"):
+    for key in (
+        "total_vendido", "total_cobrado", "saldo", "unidades", "tickets", "ticket_promedio",
+        "sena_tickets", "sena_total_vendido", "sena_monto_cobrado", "sena_saldo_pendiente",
+        "sena_pct_tickets", "sena_ticket_promedio", "diferencia", "margen_porcentaje",
+    ):
         if key not in base and key not in compare:
             continue
         a = float(base.get(key) or 0)

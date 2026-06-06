@@ -612,17 +612,25 @@ function OverviewTab({
   }, [report.daily_series, compare]);
 
   const maxSellerCobrado = Math.max(1, ...report.sellers.map((s) => s.total_cobrado));
+  const sellersWithSenas = useMemo(
+    () => report.sellers
+      .filter((s) => (s.sena_tickets || 0) > 0)
+      .sort((a, b) => (b.sena_tickets || 0) - (a.sena_tickets || 0) || (b.sena_saldo_pendiente || 0) - (a.sena_saldo_pendiente || 0)),
+    [report.sellers],
+  );
 
   return (
     <div className="space-y-5">
       {/* KPI cards (6) — 2 cols en mobile, 3 en tablet, 6 en desktop */}
-      <div className="grid gap-2.5 grid-cols-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-6">
+      <div className="grid gap-2.5 grid-cols-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4 xl:grid-cols-8">
         <KpiCard label="Cobrado"          accent="positive" value={totals.total_cobrado}   prev={baseTotals?.total_cobrado}   format={money} />
         <KpiCard label="Vendido"          accent="blue"     value={totals.total_vendido}   prev={baseTotals?.total_vendido}   format={money} />
         <KpiCard label="Unidades"         accent="violet"   value={totals.unidades}        prev={baseTotals?.unidades}        format={num} />
         <KpiCard label="Tickets"          accent="amber"    value={totals.tickets}         prev={baseTotals?.tickets}         format={num} />
         <KpiCard label="Ticket promedio"  accent="teal"     value={totals.ticket_promedio} prev={baseTotals?.ticket_promedio} format={money} />
         <KpiCard label="Saldo"            accent="negative" value={totals.saldo}           prev={baseTotals?.saldo}           format={money} invertDelta />
+        <KpiCard label="Señas"            accent="amber"    value={totals.sena_tickets || 0} prev={baseTotals?.sena_tickets}   format={num} />
+        <KpiCard label="Saldo señas"      accent="negative" value={totals.sena_saldo_pendiente || 0} prev={baseTotals?.sena_saldo_pendiente} format={money} invertDelta />
       </div>
 
       {/* Evolución + Mix pago */}
@@ -676,6 +684,12 @@ function OverviewTab({
       </ChartCard>
 
       {/* Marca / Categoría toggle */}
+      {sellersWithSenas.length > 0 && (
+        <ChartCard title="Señas por vendedor" subtitle="Remitos con cobro parcial y saldo pendiente">
+          <SenaRanking sellers={sellersWithSenas} />
+        </ChartCard>
+      )}
+
       <div className="grid gap-4 lg:grid-cols-2">
         <ChartCard
           title={mixView === 'brand' ? 'Ventas por marca' : 'Ventas por categoría'}
@@ -755,6 +769,41 @@ function RankingRow({
         <div className="text-right text-sm font-black tabular-nums text-[color:var(--text)]">{money(seller.total_cobrado)}</div>
         <div className="text-right"><DeltaPill value={deltaPct} /></div>
       </div>
+    </div>
+  );
+}
+
+function SenaRanking({ sellers }: { sellers: SalesBISellerMetric[] }) {
+  const maxSenas = Math.max(1, ...sellers.map((s) => s.sena_tickets || 0));
+  return (
+    <div className="grid gap-2 lg:grid-cols-2">
+      {sellers.slice(0, 10).map((seller, idx) => {
+        const senaTickets = seller.sena_tickets || 0;
+        const width = (senaTickets / maxSenas) * 100;
+        return (
+          <div key={seller.vendedor_normalized} className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3">
+            <div className="flex items-center gap-3">
+              <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[color:var(--chart-amber)]/40 bg-[color:var(--chart-amber)]/10 text-xs font-black text-[color:var(--chart-amber)]">
+                #{idx + 1}
+              </span>
+              <SellerAvatar name={seller.vendedor} size="sm" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-black text-[color:var(--text)]">{seller.vendedor}</div>
+                <div className="text-[10px] uppercase tracking-wide text-[color:var(--text-3)]">
+                  {num(senaTickets)} señas · {seller.sena_pct_tickets?.toFixed(1) || '0.0'}% de sus tickets
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-sm font-black tabular-nums text-[color:var(--chart-amber)]">{money(seller.sena_monto_cobrado || 0)}</div>
+                <div className="text-[10px] tabular-nums text-[color:var(--text-3)]">saldo {money(seller.sena_saldo_pendiente || 0)}</div>
+              </div>
+            </div>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-[color:var(--surface)]">
+              <div className="h-full rounded-full bg-gradient-to-r from-[color:var(--chart-amber)] to-[color:var(--chart-negative)] transition-[width] duration-700 ease-out" style={{ width: `${width}%` }} />
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1065,13 +1114,15 @@ function ProfileTab({
       </div>
 
       {/* KPIs personales — mismo grid responsive */}
-      <div className="grid gap-2.5 grid-cols-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-6">
+      <div className="grid gap-2.5 grid-cols-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4 xl:grid-cols-8">
         <KpiCard label="Cobrado"         accent="positive" value={seller.total_cobrado} prev={prevSellerDelta?.delta?.total_cobrado?.comparado} format={money} />
         <KpiCard label="Unidades"        accent="blue"     value={seller.unidades}      prev={prevSellerDelta?.delta?.unidades?.comparado}      format={num} />
         <KpiCard label="Tickets"         accent="amber"    value={seller.tickets}       prev={prevSellerDelta?.delta?.tickets?.comparado}       format={num} />
         <KpiCard label="Ticket promedio" accent="teal"     value={ticketProm}           prev={prevTicketProm}                                    format={money} />
         <KpiCard label="Vendido"         accent="violet"   value={seller.total_vendido} prev={prevSellerDelta?.delta?.total_vendido?.comparado} format={money} />
         <KpiCard label="Part. sucursal"  accent="blue"     value={branchParticipation} format={(n) => `${n.toFixed(1)}%`} />
+        <KpiCard label="Señas"           accent="amber"    value={seller.sena_tickets || 0} prev={prevSellerDelta?.delta?.sena_tickets?.comparado} format={num} />
+        <KpiCard label="Saldo señas"     accent="negative" value={seller.sena_saldo_pendiente || 0} prev={prevSellerDelta?.delta?.sena_saldo_pendiente?.comparado} format={money} invertDelta />
       </div>
 
       {/* Evolución triple */}
@@ -1144,6 +1195,8 @@ function CompareTab({
     { label: 'Unidades',         aVal: a.unidades,         bVal: b.unidades,         fmt: num },
     { label: 'Tickets',          aVal: a.tickets,          bVal: b.tickets,          fmt: num },
     { label: 'Ticket promedio',  aVal: ticketPromA,        bVal: ticketPromB,        fmt: money },
+    { label: 'Señas',            aVal: a.sena_tickets || 0, bVal: b.sena_tickets || 0, fmt: num },
+    { label: 'Saldo señas',      aVal: a.sena_saldo_pendiente || 0, bVal: b.sena_saldo_pendiente || 0, fmt: money },
     { label: 'Participación',    aVal: a.participacion_pct, bVal: b.participacion_pct, fmt: (n) => `${n.toFixed(1)}%` },
   ];
 
@@ -1152,6 +1205,7 @@ function CompareTab({
     { metric: 'Cobrado',    A: norm(a.total_cobrado, b.total_cobrado),       B: norm(b.total_cobrado, a.total_cobrado) },
     { metric: 'Unidades',   A: norm(a.unidades, b.unidades),                 B: norm(b.unidades, a.unidades) },
     { metric: 'Tickets',    A: norm(a.tickets, b.tickets),                   B: norm(b.tickets, a.tickets) },
+    { metric: 'Señas',      A: norm(a.sena_tickets || 0, b.sena_tickets || 0), B: norm(b.sena_tickets || 0, a.sena_tickets || 0) },
     { metric: 'Tick. prom', A: norm(ticketPromA, ticketPromB),               B: norm(ticketPromB, ticketPromA) },
     { metric: 'Vendido',    A: norm(a.total_vendido, b.total_vendido),       B: norm(b.total_vendido, a.total_vendido) },
     { metric: 'Particip.',  A: norm(a.participacion_pct, b.participacion_pct), B: norm(b.participacion_pct, a.participacion_pct) },
@@ -1363,6 +1417,8 @@ function PeriodsTab({ report, compare }: { report: SalesBISellersReport; compare
                 <th className="py-2 text-right font-bold">Δ $</th>
                 <th className="py-2 text-right font-bold">Δ %</th>
                 <th className="py-2 text-right font-bold">Tickets</th>
+                <th className="py-2 text-right font-bold">Señas</th>
+                <th className="py-2 text-right font-bold">Saldo señas</th>
                 <th className="py-2 text-right font-bold">Ticket prom.</th>
               </tr>
             </thead>
@@ -1379,6 +1435,8 @@ function PeriodsTab({ report, compare }: { report: SalesBISellersReport; compare
                   </td>
                   <td className="py-2.5 text-right"><DeltaPill value={pctVal} /></td>
                   <td className="py-2.5 text-right tabular-nums text-[color:var(--text-2)]">{num(m.tickets)}</td>
+                  <td className="py-2.5 text-right tabular-nums text-[color:var(--chart-amber)]">{num(m.sena_tickets || 0)}</td>
+                  <td className="py-2.5 text-right tabular-nums text-[color:var(--text-2)]">{money(m.sena_saldo_pendiente || 0)}</td>
                   <td className="py-2.5 text-right tabular-nums text-[color:var(--text-2)]">{money(ticketProm)}</td>
                 </tr>
               ))}

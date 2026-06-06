@@ -584,6 +584,12 @@ export interface SalesBIMetricSummary {
   tickets: number;
   ticket_promedio: number;
   participacion_pct: number;
+  sena_tickets: number;
+  sena_total_vendido: number;
+  sena_monto_cobrado: number;
+  sena_saldo_pendiente: number;
+  sena_pct_tickets: number;
+  sena_ticket_promedio: number;
   diferencia?: number;
   margen_porcentaje?: number;
 }

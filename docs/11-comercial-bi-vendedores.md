@@ -223,6 +223,21 @@ Si el monto ingresado es menor que la suma de productos del remito, el sistema
 lo deja como sena/saldo pendiente. No se asume que una venta esta cobrada al
 100% si no hay medio de pago cargado.
 
+Para metricas comerciales, una `sena` se cuenta por remito cuando:
+
+- El remito tiene cobro real mayor a cero.
+- El remito tiene saldo pendiente mayor a cero.
+- Se deduplica por remito, no por linea de producto.
+
+Esto permite medir cuantas senas genera cada vendedor sin inflar el numero en
+ventas con varios productos. Las metricas derivadas son:
+
+- `sena_tickets`: cantidad de remitos con cobro parcial.
+- `sena_monto_cobrado`: monto efectivamente ingresado en esos remitos.
+- `sena_saldo_pendiente`: saldo pendiente de esos remitos.
+- `sena_pct_tickets`: porcentaje de tickets/remitos del vendedor que fueron senas.
+- `sena_ticket_promedio`: cobro promedio por sena.
+
 Si una hoja `On Line` no trae sucursal propia, hereda la sucursal detectada en
 otra hoja valida del mismo archivo, por ejemplo `Planilla`. Como respaldo, el
 importador puede inferir aliases como `SUR` o `NORTE` desde el nombre del
@@ -268,6 +283,7 @@ KPIs principales:
 - Total vendido.
 - Total cobrado.
 - Saldo.
+- Senas y saldo pendiente de senas.
 - Unidades.
 - Tickets/remitos.
 - Ticket promedio.
