@@ -38,6 +38,7 @@ import type {
 import {
   CHART_ANIM, CHART_ANIM_FAST, CHART_TOOLTIP_STYLE, ChartCard, DeltaPill,
   KpiCard, ParticipationBar, SellerAvatar, Tabs, cn, money, num, pct,
+  useIsDesktop,
 } from '../components/SalesBIWidgets';
 
 const SUCURSALES = ['Caseros', 'Canning', 'Norcenter', 'Lanus'] as const;
@@ -211,8 +212,9 @@ export function SalesBISellersPage() {
     }
   }
 
+  // pb-28 en mobile (deja espacio al bottom nav fijo) / md:pb-14 desktop.
   return (
-    <div className="mx-auto max-w-[1400px] space-y-5 pb-14">
+    <div className="mx-auto max-w-[1400px] space-y-5 pb-28 md:pb-14">
       {/* ── HEADER ───────────────────────────────────────────────────── */}
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
@@ -500,7 +502,7 @@ function OverviewTab({
       </div>
 
       {/* Ranking de vendedores */}
-      <ChartCard title="Ranking de vendedores" subtitle="Doble barra: actual (azul→violeta) y período anterior (gris)">
+      <ChartCard title="Ranking de vendedores" subtitle="Barra azul→violeta: actual · barra gris: período anterior">
         <div className="space-y-1.5">
           {report.sellers.map((m, idx) => {
             const prev = compare?.sellers?.find((s) => s.vendedor_normalized === m.vendedor_normalized);
@@ -509,22 +511,12 @@ function OverviewTab({
             const widthPrev = (prevCobrado / maxSellerCobrado) * 100;
             const deltaPct = prev?.delta?.total_cobrado?.delta_pct ?? null;
             return (
-              <div key={m.vendedor_normalized} className="grid grid-cols-[40px_minmax(170px,1.4fr)_minmax(0,4fr)_minmax(120px,auto)_minmax(60px,auto)] items-center gap-3 rounded-xl px-2 py-1.5 transition hover:bg-[color:var(--surface-hover)]">
-                <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-[color:var(--border)] text-xs font-black text-[color:var(--text-2)]">#{idx + 1}</span>
-                <div className="flex items-center gap-2 min-w-0">
-                  <SellerAvatar name={m.vendedor} size="sm" />
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-bold text-[color:var(--text)]">{m.vendedor}</div>
-                    <div className="text-[10px] uppercase tracking-wide text-[color:var(--text-3)]">{num(m.tickets)} tk · {num(m.unidades)} u</div>
-                  </div>
-                </div>
-                <div className="relative h-5">
-                  <div className="absolute inset-y-0 left-0 rounded bg-[color:var(--chart-ghost)] transition-[width] duration-700 ease-out" style={{ width: `${widthPrev}%` }} />
-                  <div className="absolute inset-y-0 left-0 rounded bg-gradient-to-r from-[color:var(--chart-blue)] to-[color:var(--chart-violet)] transition-[width] duration-700 ease-out" style={{ width: `${widthCurr}%` }} />
-                </div>
-                <div className="text-right text-sm font-black tabular-nums text-[color:var(--text)]">{money(m.total_cobrado)}</div>
-                <div className="text-right"><DeltaPill value={deltaPct} /></div>
-              </div>
+              <RankingRow
+                key={m.vendedor_normalized}
+                rank={idx + 1} seller={m}
+                widthCurr={widthCurr} widthPrev={widthPrev}
+                deltaPct={deltaPct}
+              />
             );
           })}
         </div>
@@ -560,6 +552,60 @@ function OverviewTab({
   );
 }
 
+function RankingRow({
+  rank, seller, widthCurr, widthPrev, deltaPct,
+}: {
+  rank: number;
+  seller: SalesBISellerMetric;
+  widthCurr: number;
+  widthPrev: number;
+  deltaPct: number | null;
+}) {
+  // Renderizamos DOS layouts y switcheamos por CSS (`md:hidden` / `hidden md:grid`).
+  // Antes intenté hacer uno solo con grid responsive pero el 4fr de la barra
+  // colapsaba a 0px en mobile y el ranking se veía sin información visual.
+  return (
+    <div className="rounded-xl px-2 py-2 transition hover:bg-[color:var(--surface-hover)] md:px-2 md:py-1.5">
+      {/* ── Mobile ── */}
+      <div className="md:hidden">
+        <div className="flex items-center gap-2.5">
+          <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[color:var(--border)] text-[11px] font-black text-[color:var(--text-2)]">#{rank}</span>
+          <SellerAvatar name={seller.vendedor} size="sm" />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-bold text-[color:var(--text)]">{seller.vendedor}</div>
+            <div className="text-[10px] uppercase tracking-wide text-[color:var(--text-3)]">{num(seller.tickets)} tk · {num(seller.unidades)} u</div>
+          </div>
+          <div className="text-right">
+            <div className="text-sm font-black tabular-nums text-[color:var(--text)]">{money(seller.total_cobrado)}</div>
+            <div className="mt-0.5 flex justify-end"><DeltaPill value={deltaPct} /></div>
+          </div>
+        </div>
+        <div className="relative mt-2 h-2 overflow-hidden rounded-full bg-[color:var(--surface-2)]">
+          <div className="absolute inset-y-0 left-0 rounded bg-[color:var(--chart-ghost)] transition-[width] duration-700 ease-out" style={{ width: `${widthPrev}%` }} />
+          <div className="absolute inset-y-0 left-0 rounded bg-gradient-to-r from-[color:var(--chart-blue)] to-[color:var(--chart-violet)] transition-[width] duration-700 ease-out" style={{ width: `${widthCurr}%` }} />
+        </div>
+      </div>
+      {/* ── Desktop ── */}
+      <div className="hidden md:grid md:grid-cols-[40px_minmax(170px,1.4fr)_minmax(0,4fr)_minmax(120px,auto)_minmax(60px,auto)] md:items-center md:gap-3">
+        <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-[color:var(--border)] text-xs font-black text-[color:var(--text-2)]">#{rank}</span>
+        <div className="flex items-center gap-2 min-w-0">
+          <SellerAvatar name={seller.vendedor} size="sm" />
+          <div className="min-w-0">
+            <div className="truncate text-sm font-bold text-[color:var(--text)]">{seller.vendedor}</div>
+            <div className="text-[10px] uppercase tracking-wide text-[color:var(--text-3)]">{num(seller.tickets)} tk · {num(seller.unidades)} u</div>
+          </div>
+        </div>
+        <div className="relative h-5">
+          <div className="absolute inset-y-0 left-0 rounded bg-[color:var(--chart-ghost)] transition-[width] duration-700 ease-out" style={{ width: `${widthPrev}%` }} />
+          <div className="absolute inset-y-0 left-0 rounded bg-gradient-to-r from-[color:var(--chart-blue)] to-[color:var(--chart-violet)] transition-[width] duration-700 ease-out" style={{ width: `${widthCurr}%` }} />
+        </div>
+        <div className="text-right text-sm font-black tabular-nums text-[color:var(--text)]">{money(seller.total_cobrado)}</div>
+        <div className="text-right"><DeltaPill value={deltaPct} /></div>
+      </div>
+    </div>
+  );
+}
+
 function PaymentMixLegend({ mix }: { mix: Array<{ name: string; value: number }> }) {
   const total = mix.reduce((acc, m) => acc + (m.value || 0), 0);
   return (
@@ -581,11 +627,33 @@ function PaymentMixLegend({ mix }: { mix: Array<{ name: string; value: number }>
 }
 
 function MixBars({ current, previous, limit }: { current: SalesBIMixMetric[]; previous: SalesBIMixMetric[]; limit: number }) {
+  const isDesktop = useIsDesktop();
   const top = current.slice(0, limit);
   const data = top.map((row) => {
     const prev = previous.find((p) => p.name === row.name);
     return { name: row.name, actual: row.total_cobrado, anterior: prev?.total_cobrado ?? 0 };
   });
+
+  // En mobile flippeamos a layout horizontal (barras horizontales, labels
+  // en Y axis sin rotación). Antes las labels iban rotadas a -12° y
+  // quedaban cortadas / superpuestas.
+  if (!isDesktop) {
+    const height = Math.max(180, data.length * 36 + 60);
+    return (
+      <ResponsiveContainer width="100%" height={height}>
+        <BarChart data={data} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" horizontal={false} />
+          <XAxis type="number" stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(0)}M`} />
+          <YAxis type="category" dataKey="name" stroke="var(--text-3)" tick={{ fontSize: 11 }} width={88} interval={0} />
+          <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
+          <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-2)' }} />
+          <Bar dataKey="anterior" name="Anterior" fill="var(--chart-ghost)" radius={[0, 4, 4, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+          <Bar dataKey="actual" name="Actual" fill="var(--chart-teal)" radius={[0, 4, 4, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={100} animationEasing={CHART_ANIM.easing} />
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  }
+
   return (
     <ResponsiveContainer width="100%" height={260}>
       <BarChart data={data}>
@@ -596,6 +664,68 @@ function MixBars({ current, previous, limit }: { current: SalesBIMixMetric[]; pr
         <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-2)' }} />
         <Bar dataKey="anterior" name="Anterior" fill="var(--chart-ghost)" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
         <Bar dataKey="actual" name="Actual" fill="var(--chart-teal)" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={100} animationEasing={CHART_ANIM.easing} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function CategoryBars({ data }: { data: SalesBIMixMetric[] }) {
+  const isDesktop = useIsDesktop();
+  if (!isDesktop) {
+    // Horizontal en mobile — las 5 categorías son "LINEA BLANCA",
+    // "CLIMATIZACION", "TV / AUDIO" etc. que rotadas no entran.
+    return (
+      <ResponsiveContainer width="100%" height={Math.max(180, data.length * 36 + 40)}>
+        <BarChart data={data} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" horizontal={false} />
+          <XAxis type="number" stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`} />
+          <YAxis type="category" dataKey="name" stroke="var(--text-3)" tick={{ fontSize: 11 }} width={110} interval={0} />
+          <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
+          <Bar dataKey="total_cobrado" fill="var(--chart-amber)" radius={[0, 4, 4, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  }
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <BarChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+        <XAxis dataKey="name" stroke="var(--text-3)" tick={{ fontSize: 10 }} interval={0} angle={-15} textAnchor="end" height={50} />
+        <YAxis stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`} />
+        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
+        <Bar dataKey="total_cobrado" fill="var(--chart-amber)" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function CompareBrandBars({ data, aName, bName }: { data: Array<{ name: string; A: number; B: number }>; aName: string; bName: string }) {
+  const isDesktop = useIsDesktop();
+  if (!isDesktop) {
+    return (
+      <ResponsiveContainer width="100%" height={Math.max(220, data.length * 40 + 60)}>
+        <BarChart data={data} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" horizontal={false} />
+          <XAxis type="number" stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`} />
+          <YAxis type="category" dataKey="name" stroke="var(--text-3)" tick={{ fontSize: 11 }} width={100} interval={0} />
+          <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
+          <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-2)' }} />
+          <Bar dataKey="A" name={aName} fill="var(--chart-blue)" radius={[0, 4, 4, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+          <Bar dataKey="B" name={bName} fill="var(--chart-violet)" radius={[0, 4, 4, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={140} animationEasing={CHART_ANIM.easing} />
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  }
+  return (
+    <ResponsiveContainer width="100%" height={280}>
+      <BarChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+        <XAxis dataKey="name" stroke="var(--text-3)" tick={{ fontSize: 11 }} interval={0} angle={-12} textAnchor="end" height={60} />
+        <YAxis stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`} />
+        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
+        <Legend wrapperStyle={{ fontSize: 12, color: 'var(--text-2)' }} />
+        <Bar dataKey="A" name={aName} fill="var(--chart-blue)" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+        <Bar dataKey="B" name={bName} fill="var(--chart-violet)" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={140} animationEasing={CHART_ANIM.easing} />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -766,15 +896,7 @@ function ProfileTab({
         </ChartCard>
 
         <ChartCard title="Mix por categoría" subtitle="5 grandes líneas comerciales">
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={sellerCategory}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-              <XAxis dataKey="name" stroke="var(--text-3)" tick={{ fontSize: 10 }} interval={0} angle={-15} textAnchor="end" height={50} />
-              <YAxis stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`} />
-              <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
-              <Bar dataKey="total_cobrado" fill="var(--chart-amber)" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
-            </BarChart>
-          </ResponsiveContainer>
+          <CategoryBars data={sellerCategory} />
         </ChartCard>
       </div>
 
@@ -944,17 +1066,7 @@ function CompareTab({
 
       {/* Brand comparison */}
       <ChartCard title="Marcas vendidas — comparación" subtitle="qué marca empuja cada uno">
-        <ResponsiveContainer width="100%" height={280}>
-          <BarChart data={brandCompare}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-            <XAxis dataKey="name" stroke="var(--text-3)" tick={{ fontSize: 11 }} interval={0} angle={-12} textAnchor="end" height={60} />
-            <YAxis stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`} />
-            <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
-            <Legend wrapperStyle={{ fontSize: 12, color: 'var(--text-2)' }} />
-            <Bar dataKey="A" name={a.vendedor} fill="var(--chart-blue)" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
-            <Bar dataKey="B" name={b.vendedor} fill="var(--chart-violet)" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={140} animationEasing={CHART_ANIM.easing} />
-          </BarChart>
-        </ResponsiveContainer>
+        <CompareBrandBars data={brandCompare} aName={a.vendedor} bName={b.vendedor} />
       </ChartCard>
 
       {/* Top productos lado a lado */}

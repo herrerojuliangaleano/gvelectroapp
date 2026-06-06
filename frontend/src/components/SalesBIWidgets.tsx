@@ -11,9 +11,30 @@
  */
 import { ArrowDownRight, ArrowUpRight } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Area, ComposedChart, Line, ResponsiveContainer,
 } from 'recharts';
+
+// ── Media query hook ───────────────────────────────────────────────────────
+/** Devuelve true si el viewport matchea la query. Reactivo a resize. */
+export function useMediaQuery(query: string): boolean {
+  const get = () => (typeof window !== 'undefined' ? window.matchMedia(query).matches : false);
+  const [matches, setMatches] = useState(get);
+  useEffect(() => {
+    const mql = window.matchMedia(query);
+    const onChange = () => setMatches(mql.matches);
+    onChange();
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, [query]);
+  return matches;
+}
+
+/** `true` en viewports >= 768px (Tailwind `md:`). */
+export function useIsDesktop() {
+  return useMediaQuery('(min-width: 768px)');
+}
 
 // ── Animaciones (constantes para usar en todos los charts) ──────────────────
 export const CHART_ANIM = {
