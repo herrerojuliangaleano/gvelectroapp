@@ -193,7 +193,8 @@ async def analyze(
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"No se pudo leer la planilla: {exc}")
 
-    parsed = analyze_sheets(sheets_data, sucursal_override=sucursal or "")
+    source_name = file.filename if file else (sheet_url or "")
+    parsed = analyze_sheets(sheets_data, sucursal_override=sucursal or "", source_name=source_name or "")
     previews = [_build_preview(s) for s in parsed]
     return AnalyzeResponse(sheets=previews, temp_file_key=temp_key)
 

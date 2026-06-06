@@ -223,6 +223,11 @@ Si el monto ingresado es menor que la suma de productos del remito, el sistema
 lo deja como sena/saldo pendiente. No se asume que una venta esta cobrada al
 100% si no hay medio de pago cargado.
 
+Si una hoja `On Line` no trae sucursal propia, hereda la sucursal detectada en
+otra hoja valida del mismo archivo, por ejemplo `Planilla`. Como respaldo, el
+importador puede inferir aliases como `SUR` o `NORTE` desde el nombre del
+archivo.
+
 En planillas locales, las columnas bajo el grupo `SENA` se suman como cobro
 parcial del remito, junto con los medios de pago principales.
 

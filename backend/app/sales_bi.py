@@ -164,6 +164,38 @@ def _normalize_sucursal(name: str) -> str:
     """Map spreadsheet aliases (NORTE → Norcenter, SUR → Lanus) to canonical names."""
     return _SUCURSAL_ALIASES.get(name.upper().strip(), name.strip())
 
+def _is_placeholder_sucursal(value: str, sheet_name: str) -> bool:
+    normalized = _norm(value)
+    if not normalized:
+        return True
+    return normalized == _norm(sheet_name) or normalized in (_SHEET_NAME_LOCAL | _SHEET_NAME_ONLINE)
+
+
+def _infer_sucursal_from_source_name(source_name: str) -> str:
+    source_norm = _norm(Path(str(source_name or "")).stem)
+    if not source_norm:
+        return ""
+    words = set(source_norm.split())
+    for alias, canonical in _SUCURSAL_ALIASES.items():
+        if _norm(alias) in words:
+            return canonical
+    for canonical in set(_SUCURSAL_ALIASES.values()):
+        if _norm(canonical) in source_norm:
+            return canonical
+    return ""
+
+
+def _infer_workbook_sucursal(sheets: dict[str, list[list]], source_name: str = "") -> str:
+    for name, rows in sheets.items():
+        if _classify_sheet_name(name) is None:
+            continue
+        meta = _detect_metadata(rows)
+        sucursal = _normalize_sucursal(str(meta.get("sucursal") or "").strip())
+        if sucursal and not _is_placeholder_sucursal(sucursal, name):
+            return sucursal
+    return _infer_sucursal_from_source_name(source_name)
+
+
 _COLUMN_ALIASES: dict[str, list[str]] = {
     "remito": ["REMITO", "NRO REMITO", "N REMITO", "NUMERO REMITO", "N REMITO", "REM"],
     "pedido": ["PEDIDO", "NUMERO PEDIDO", "N PEDIDO", "NRO PEDIDO", "N ORDEN", "ORDEN"],
@@ -1152,14 +1184,17 @@ def _sheet_totals(records: list[dict]) -> dict:
 # ── public API ────────────────────────────────────────────────────────────────
 
 
-def analyze_sheets(sheets: dict[str, list[list]], sucursal_override: str = "") -> list[dict]:
+def analyze_sheets(sheets: dict[str, list[list]], sucursal_override: str = "", source_name: str = "") -> list[dict]:
     results = []
+    workbook_sucursal = "" if sucursal_override else _infer_workbook_sucursal(sheets, source_name)
     for name, rows in sheets.items():
         tipo_hoja = _classify_sheet_name(name)
         if tipo_hoja is None:
             # Skip sheets that are not 'Planilla' or 'On Line'
             continue
         parsed = _parse_sheet(name, rows, sucursal_override=sucursal_override)
+        if workbook_sucursal and _is_placeholder_sucursal(parsed.get("sucursal", ""), parsed.get("sheet_name", name)):
+            parsed["sucursal"] = workbook_sucursal
         totals = _sheet_totals(parsed["records"])
         parsed.update(totals)
         results.append(parsed)
