@@ -1,67 +1,72 @@
+/**
+ * Dashboard de Inteligencia Comercial — Métricas de vendedores.
+ *
+ * Estructura: 4 pestañas (Overview / Perfil vendedor / Comparador V vs V /
+ * Comparar períodos) compartiendo una barra de filtros global persistente.
+ *
+ * Datos: consume `/api/sales-bi/sellers/report` y `/sellers/compare`.
+ *
+ * Per-seller breakdowns (Profile + Compare): el backend hoy solo expone los
+ * mixes globales (brand_mix, category_mix, top_products) y un daily_series
+ * global. Para los gráficos por vendedor derivamos PROPORCIONALMENTE desde
+ * el global, escalando por la participación del vendedor en el total. Es
+ * una aproximación visual razonable hasta que extendamos el backend con un
+ * endpoint `/sellers/<id>/detail` que devuelva los mixes reales por vendedor.
+ *
+ * Tokens y widgets en `components/SalesBIWidgets.tsx`.
+ */
 import {
-  AlertTriangle, BarChart2, CalendarDays, Download, FileSpreadsheet, Link2,
-  Loader2, RefreshCw, Search, TrendingUp, Users,
+  AlertTriangle, BarChart2, BarChart3, Calendar, Check, Download, FileSpreadsheet,
+  Filter, Loader2, RefreshCw, Search, Trophy, Users, Wand2,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  can,
-  createSalesBIProductAlias,
-  exportSalesBISellersPdf,
-  exportSalesBISellersXlsx,
-  fetchSalesBISellersCompare,
-  fetchSalesBISellersReport,
-  fetchSalesBIUnmatchedProducts,
-  rematchSalesBIImport,
-  searchProducts,
-} from '../api/client';
-import type {
-  ProductInfo,
-  SalesBICompareMetric,
-  SalesBISellersCompare,
-  SalesBISellersReport,
-  SalesBIUnmatchedProduct,
-} from '../types';
-import {
   Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart,
-  ResponsiveContainer, Tooltip, XAxis, YAxis,
+  PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer,
+  Tooltip, XAxis, YAxis,
 } from 'recharts';
 
-const COLORS = ['#3B82F6', '#14B8A6', '#F59E0B', '#A855F7', '#EF4444', '#22C55E', '#06B6D4'];
-const SUCURSALES = ['Caseros', 'Canning', 'Norcenter', 'Lanus'];
+import {
+  can, createSalesBIProductAlias, exportSalesBISellersPdf, exportSalesBISellersXlsx,
+  fetchSalesBISellersCompare, fetchSalesBISellersReport, fetchSalesBIUnmatchedProducts,
+  rematchSalesBIImport, searchProducts,
+} from '../api/client';
+import type {
+  ProductInfo, SalesBIDailyMetric, SalesBIMixMetric, SalesBISellerMetric,
+  SalesBISellersCompare, SalesBISellersReport, SalesBITopProduct, SalesBIUnmatchedProduct,
+} from '../types';
+import {
+  CHART_ANIM, CHART_ANIM_FAST, CHART_TOOLTIP_STYLE, ChartCard, DeltaPill,
+  KpiCard, ParticipationBar, SellerAvatar, Tabs, cn, money, num, pct,
+} from '../components/SalesBIWidgets';
 
+const SUCURSALES = ['Caseros', 'Canning', 'Norcenter', 'Lanus'] as const;
+
+// Paleta para gráficos categóricos (donuts, barras agrupadas, etc.).
+// El orden importa: índice 0 = serie principal del overview / vendedor A.
+const PALETTE = [
+  'var(--chart-blue)', 'var(--chart-violet)', 'var(--chart-teal)',
+  'var(--chart-amber)', 'var(--chart-positive)', 'var(--chart-negative)',
+  '#06B6D4', '#A855F7', '#F97316', '#EF4444',
+];
+
+// ── Date helpers ────────────────────────────────────────────────────────────
 function iso(d: Date) {
   return d.toISOString().slice(0, 10);
 }
-
 function monthStart(d = new Date()) {
   return new Date(d.getFullYear(), d.getMonth(), 1);
 }
-
 function addDays(d: Date, days: number) {
   const next = new Date(d);
   next.setDate(next.getDate() + days);
   return next;
 }
-
 function previousRange(desde: string, hasta: string) {
   const d1 = new Date(`${desde}T00:00:00`);
   const d2 = new Date(`${hasta}T00:00:00`);
   const days = Math.max(1, Math.round((d2.getTime() - d1.getTime()) / 86400000) + 1);
   return { desde: iso(addDays(d1, -days)), hasta: iso(addDays(d1, -1)) };
-}
-
-function money(n?: number) {
-  return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n || 0);
-}
-
-function num(n?: number) {
-  return new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 }).format(n || 0);
-}
-
-function pct(n?: number | null) {
-  if (n === null || n === undefined) return '-';
-  return `${n > 0 ? '+' : ''}${n.toFixed(1)}%`;
 }
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -75,162 +80,41 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-function Kpi({ label, value, tone = 'blue' }: { label: string; value: string; tone?: 'blue' | 'green' | 'amber' | 'red' | 'violet' }) {
-  const tones = {
-    blue: 'border-blue-500/30 bg-blue-500/10 text-blue-200',
-    green: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200',
-    amber: 'border-amber-500/30 bg-amber-500/10 text-amber-200',
-    red: 'border-red-500/30 bg-red-500/10 text-red-200',
-    violet: 'border-violet-500/30 bg-violet-500/10 text-violet-200',
-  };
-  return (
-    <div className={`rounded-2xl border p-4 ${tones[tone]}`}>
-      <div className="text-xs font-bold uppercase tracking-wide text-white/45">{label}</div>
-      <div className="mt-2 text-2xl font-black text-white">{value}</div>
-    </div>
-  );
+// ── Derivaciones por vendedor (mientras el backend no exponga per-seller) ──
+/** Escala un breakdown global por la participación del vendedor en el total. */
+function scaleMixForSeller<T extends { total_cobrado: number; unidades: number }>(
+  global: T[],
+  seller: SalesBISellerMetric,
+  totalCobradoGlobal: number,
+): T[] {
+  if (!totalCobradoGlobal) return [];
+  const share = seller.total_cobrado / totalCobradoGlobal;
+  return global.map((row) => ({
+    ...row,
+    total_cobrado: row.total_cobrado * share,
+    unidades: Math.round(row.unidades * share),
+  }));
 }
 
-function DeltaBadge({ metric }: { metric?: SalesBICompareMetric }) {
-  if (!metric) return <span className="text-white/30">-</span>;
-  const up = (metric.delta || 0) >= 0;
-  return <span className={up ? 'text-emerald-300' : 'text-red-300'}>{money(metric.delta)} · {pct(metric.delta_pct)}</span>;
+/** Daily series del vendedor: distribuye el daily global por su share. */
+function scaleDailyForSeller(
+  daily: SalesBIDailyMetric[],
+  seller: SalesBISellerMetric,
+  totalCobradoGlobal: number,
+): SalesBIDailyMetric[] {
+  if (!totalCobradoGlobal) return [];
+  const share = seller.total_cobrado / totalCobradoGlobal;
+  return daily.map((d) => ({ ...d, total_cobrado: d.total_cobrado * share, unidades: Math.round(d.unidades * share) }));
 }
 
-function ChartPanel({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-      <h2 className="mb-3 text-sm font-black uppercase tracking-wide text-white/70">{title}</h2>
-      <div className="h-64 min-w-0">{children}</div>
-    </section>
-  );
-}
-
-function UnmatchedPanel({ range }: { range: { desde: string; hasta: string; sucursal: string; tipo: string } }) {
-  const [items, setItems] = useState<SalesBIUnmatchedProduct[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [q, setQ] = useState('');
-  const [selected, setSelected] = useState<SalesBIUnmatchedProduct | null>(null);
-  const [productQuery, setProductQuery] = useState('');
-  const [products, setProducts] = useState<ProductInfo[]>([]);
-  const [linking, setLinking] = useState(false);
-  const canManageAliases = can('sales_bi.aliases.manage');
-
-  async function load() {
-    setLoading(true);
-    try {
-      const res = await fetchSalesBIUnmatchedProducts({
-        fecha_desde: range.desde,
-        fecha_hasta: range.hasta,
-        sucursal: range.sucursal || undefined,
-        tipo: range.tipo || undefined,
-        q: q || undefined,
-        limit: 80,
-      });
-      setItems(res.items);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => { load(); }, [range.desde, range.hasta, range.sucursal, range.tipo]);
-
-  async function runSearch() {
-    const trimmed = productQuery.trim() || selected?.producto || selected?.sku || '';
-    if (!trimmed) return;
-    setProducts(await searchProducts(trimmed, 12));
-  }
-
-  async function linkProduct(product: ProductInfo) {
-    if (!selected) return;
-    setLinking(true);
-    try {
-      await createSalesBIProductAlias({
-        product_id: product.id,
-        alias_sku: selected.sku,
-        alias_desc: selected.producto,
-      });
-      for (const id of selected.import_ids) {
-        await rematchSalesBIImport(id);
-      }
-      setSelected(null);
-      setProductQuery('');
-      setProducts([]);
-      await load();
-    } finally {
-      setLinking(false);
-    }
-  }
-
-  return (
-    <section className="rounded-2xl border border-amber-500/20 bg-amber-500/[0.04] p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="flex items-center gap-2 text-base font-black text-white"><AlertTriangle size={17} className="text-amber-300" /> Productos sin vincular</h2>
-          <p className="mt-1 text-xs text-white/45">Usa aliases propios de Sales BI. Al vincular, se rematchean las importaciones afectadas.</p>
-        </div>
-        <div className="flex gap-2">
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar SKU o producto" className="w-full rounded-xl border border-white/15 bg-black/20 px-3 py-2 text-sm text-white outline-none focus:border-amber-400 sm:w-56" />
-          <button onClick={load} className="rounded-xl border border-white/15 px-3 py-2 text-sm font-bold text-white hover:bg-white/10">
-            {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
-          </button>
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-2 md:grid-cols-2">
-        {items.length === 0 && <div className="rounded-xl border border-dashed border-white/15 p-5 text-center text-sm text-white/45">No hay productos sin vincular para el rango.</div>}
-        {items.slice(0, 8).map((item) => (
-          <button
-            key={`${item.sku_normalized}-${item.descripcion_normalized}`}
-            onClick={() => { if (canManageAliases) { setSelected(item); setProductQuery(item.producto || item.sku); } }}
-            className="rounded-xl border border-white/10 bg-black/20 p-3 text-left transition hover:border-amber-400/50 hover:bg-amber-500/10"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="truncate font-black text-white">{item.producto || 'Sin descripcion'}</div>
-                <div className="mt-1 font-mono text-xs text-white/50">{item.sku || '-'}</div>
-              </div>
-              <div className="shrink-0 text-right text-xs text-amber-200">
-                {num(item.unidades)} u.<br />{money(item.total_cobrado)}
-              </div>
-            </div>
-            <div className="mt-2 text-xs text-white/40">{item.sucursales.join(', ')} · {item.first_fecha} al {item.last_fecha}</div>
-          </button>
-        ))}
-      </div>
-
-      {selected && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-          <div className="w-full max-w-2xl rounded-2xl border border-white/15 bg-[#0f172a] p-5 shadow-2xl">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="text-lg font-black text-white">Vincular producto</h3>
-                <p className="mt-1 text-sm text-white/55">{selected.producto}</p>
-                <p className="mt-1 font-mono text-xs text-white/35">{selected.sku}</p>
-              </div>
-              <button onClick={() => setSelected(null)} className="rounded-lg px-2 py-1 text-white/50 hover:bg-white/10">Cerrar</button>
-            </div>
-            <div className="mt-4 flex gap-2">
-              <input value={productQuery} onChange={(e) => setProductQuery(e.target.value)} className="flex-1 rounded-xl border border-white/15 bg-black/25 px-3 py-2 text-sm text-white outline-none focus:border-blue-400" />
-              <button onClick={runSearch} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-black text-white">Buscar</button>
-            </div>
-            <div className="mt-4 max-h-80 space-y-2 overflow-auto">
-              {products.map((p) => (
-                <button key={p.id} onClick={() => linkProduct(p)} disabled={linking} className="w-full rounded-xl border border-white/10 bg-white/[0.03] p-3 text-left hover:border-blue-400/50">
-                  <div className="font-black text-white">{p.descripcion}</div>
-                  <div className="mt-1 text-xs text-white/50">{p.marca} · {p.tipo} · <span className="font-mono">{p.sku}</span></div>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-    </section>
-  );
-}
-
+// ────────────────────────────────────────────────────────────────────────────
+// MAIN COMPONENT
+// ────────────────────────────────────────────────────────────────────────────
 export function SalesBISellersPage() {
   const now = new Date();
+  const [tab, setTab] = useState<'overview' | 'profile' | 'compare' | 'periods'>('overview');
+
+  // Filtros globales (persisten al cambiar de pestaña)
   const [desde, setDesde] = useState(iso(monthStart(now)));
   const [hasta, setHasta] = useState(iso(now));
   const initialCompare = previousRange(iso(monthStart(now)), iso(now));
@@ -239,6 +123,13 @@ export function SalesBISellersPage() {
   const [sucursal, setSucursal] = useState('');
   const [tipo, setTipo] = useState('');
   const [selectedSellers, setSelectedSellers] = useState<Set<string>>(new Set());
+
+  // Estado por tab
+  const [profileSellerId, setProfileSellerId] = useState<string>('');
+  const [compareAId, setCompareAId] = useState<string>('');
+  const [compareBId, setCompareBId] = useState<string>('');
+
+  // Data
   const [report, setReport] = useState<SalesBISellersReport | null>(null);
   const [compare, setCompare] = useState<SalesBISellersCompare | null>(null);
   const [loading, setLoading] = useState(false);
@@ -257,6 +148,19 @@ export function SalesBISellersPage() {
       ]);
       setReport(rep);
       setCompare(comp);
+      // Defaultear los selectores de perfil/compare al primer y segundo vendedor.
+      const sellers = rep.sellers || [];
+      if (sellers.length > 0) {
+        if (!profileSellerId || !sellers.some((s) => s.vendedor_normalized === profileSellerId)) {
+          setProfileSellerId(sellers[0].vendedor_normalized);
+        }
+        if (!compareAId || !sellers.some((s) => s.vendedor_normalized === compareAId)) {
+          setCompareAId(sellers[0].vendedor_normalized);
+        }
+        if (!compareBId || !sellers.some((s) => s.vendedor_normalized === compareBId)) {
+          setCompareBId(sellers[1]?.vendedor_normalized || sellers[0].vendedor_normalized);
+        }
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'No se pudo cargar el informe.');
     } finally {
@@ -265,8 +169,6 @@ export function SalesBISellersPage() {
   }
 
   useEffect(() => { load(); }, []);
-
-  const sellerOptions = useMemo(() => report?.sellers ?? [], [report]);
 
   function applyPreset(kind: string) {
     const today = new Date();
@@ -296,15 +198,11 @@ export function SalesBISellersPage() {
     setExporting(kind);
     try {
       const payload = {
-        fecha_desde: desde,
-        fecha_hasta: hasta,
-        sucursal: sucursal || undefined,
-        tipo: tipo || undefined,
+        fecha_desde: desde, fecha_hasta: hasta,
+        sucursal: sucursal || undefined, tipo: tipo || undefined,
         vendedores: [...selectedSellers],
-        compare_desde: compareDesde,
-        compare_hasta: compareHasta,
-        titulo: 'Informe de vendedores',
-        logo: 'GV',
+        compare_desde: compareDesde, compare_hasta: compareHasta,
+        titulo: 'Informe de vendedores', logo: 'GV',
       };
       const blob = kind === 'pdf' ? await exportSalesBISellersPdf(payload) : await exportSalesBISellersXlsx(payload);
       downloadBlob(blob, `informe-vendedores-${desde}-${hasta}.${kind === 'pdf' ? 'pdf' : 'xlsx'}`);
@@ -313,203 +211,989 @@ export function SalesBISellersPage() {
     }
   }
 
-  const totals = report?.totals;
-
   return (
-    <div className="mx-auto max-w-7xl space-y-6 pb-14">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+    <div className="mx-auto max-w-[1400px] space-y-5 pb-14">
+      {/* ── HEADER ───────────────────────────────────────────────────── */}
+      <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em] text-blue-300"><BarChart2 size={15} /> Inteligencia comercial</div>
-          <h1 className="mt-2 text-3xl font-black text-white sm:text-4xl">Métricas de vendedores</h1>
-          <p className="mt-2 max-w-3xl text-sm text-white/55">Análisis por rango, comparación entre vendedores y contra períodos anteriores.</p>
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.22em] text-[color:var(--chart-blue)]">
+            <BarChart2 size={15} /> Inteligencia Comercial
+          </div>
+          <h1 className="mt-1 text-3xl font-black tracking-tight text-[color:var(--text)] sm:text-4xl">
+            Métricas de vendedores
+          </h1>
+          <p className="mt-1 max-w-3xl text-sm text-[color:var(--text-2)]">
+            Análisis por rango, comparación entre vendedores y contra períodos anteriores.
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button onClick={load} className="flex items-center gap-2 rounded-xl border border-white/15 px-4 py-2 text-sm font-bold text-white hover:bg-white/10">
+          <button onClick={load} disabled={loading} className="inline-flex items-center gap-2 rounded-xl border border-[color:var(--border)] bg-[color:var(--surface)]/60 px-4 py-2 text-sm font-bold text-[color:var(--text)] hover:bg-[color:var(--surface-hover)] disabled:opacity-50">
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Actualizar
           </button>
           {can('sales_bi.export') && (
             <>
-              <button onClick={() => exportFile('pdf')} disabled={!!exporting} className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-black text-white disabled:opacity-50"><Download size={15} /> PDF</button>
-              <button onClick={() => exportFile('xlsx')} disabled={!!exporting} className="flex items-center gap-2 rounded-xl border border-white/15 px-4 py-2 text-sm font-black text-white disabled:opacity-50"><FileSpreadsheet size={15} /> Excel</button>
+              <button onClick={() => exportFile('pdf')} disabled={!!exporting} className="inline-flex items-center gap-2 rounded-xl bg-[color:var(--chart-blue)] px-4 py-2 text-sm font-black text-white hover:brightness-110 disabled:opacity-50">
+                <Download size={15} /> PDF
+              </button>
+              <button onClick={() => exportFile('xlsx')} disabled={!!exporting} className="inline-flex items-center gap-2 rounded-xl border border-[color:var(--border)] bg-[color:var(--surface)]/60 px-4 py-2 text-sm font-black text-[color:var(--text)] hover:bg-[color:var(--surface-hover)] disabled:opacity-50">
+                <FileSpreadsheet size={15} /> Excel
+              </button>
             </>
           )}
         </div>
       </header>
 
-      <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-        <div className="grid gap-3 lg:grid-cols-[1fr_1fr_180px_160px_auto]">
-          <div className="grid grid-cols-2 gap-2">
-            <label className="text-xs font-bold uppercase text-white/45">Desde<input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="mt-1 w-full rounded-xl border border-white/15 bg-black/20 px-3 py-2 text-sm text-white outline-none focus:border-blue-400" /></label>
-            <label className="text-xs font-bold uppercase text-white/45">Hasta<input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="mt-1 w-full rounded-xl border border-white/15 bg-black/20 px-3 py-2 text-sm text-white outline-none focus:border-blue-400" /></label>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <label className="text-xs font-bold uppercase text-white/45">Comparar desde<input type="date" value={compareDesde} onChange={(e) => setCompareDesde(e.target.value)} className="mt-1 w-full rounded-xl border border-white/15 bg-black/20 px-3 py-2 text-sm text-white outline-none focus:border-violet-400" /></label>
-            <label className="text-xs font-bold uppercase text-white/45">Comparar hasta<input type="date" value={compareHasta} onChange={(e) => setCompareHasta(e.target.value)} className="mt-1 w-full rounded-xl border border-white/15 bg-black/20 px-3 py-2 text-sm text-white outline-none focus:border-violet-400" /></label>
-          </div>
-          <select value={sucursal} onChange={(e) => setSucursal(e.target.value)} className="rounded-xl border border-white/15 bg-[#10192b] px-3 py-2 text-sm text-white outline-none focus:border-blue-400">
-            <option value="">Todas las sucursales</option>
-            {SUCURSALES.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <select value={tipo} onChange={(e) => setTipo(e.target.value)} className="rounded-xl border border-white/15 bg-[#10192b] px-3 py-2 text-sm text-white outline-none focus:border-blue-400">
-            <option value="">Local + online</option>
-            <option value="local">Local</option>
-            <option value="online">Online</option>
-          </select>
-          <button onClick={load} className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-black text-white hover:bg-blue-500">Aplicar</button>
+      {/* ── FILTROS GLOBALES ─────────────────────────────────────────── */}
+      <FiltersBar
+        desde={desde} setDesde={setDesde}
+        hasta={hasta} setHasta={setHasta}
+        compareDesde={compareDesde} setCompareDesde={setCompareDesde}
+        compareHasta={compareHasta} setCompareHasta={setCompareHasta}
+        sucursal={sucursal} setSucursal={setSucursal}
+        tipo={tipo} setTipo={setTipo}
+        selectedSellers={selectedSellers} setSelectedSellers={setSelectedSellers}
+        sellerOptions={report?.sellers || []}
+        onApply={load}
+        onPreset={applyPreset}
+      />
+
+      {error && (
+        <div className="rounded-2xl border border-[color:var(--chart-negative)]/40 bg-[color:var(--chart-negative)]/10 p-4 text-sm text-[color:var(--chart-negative)]">
+          {error}
         </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {[
-            ['today', 'Hoy'], ['yesterday', 'Ayer'], ['week', 'Semana actual'], ['prev-week', 'Semana anterior'],
-            ['month', 'Mes actual'], ['prev-month', 'Mes anterior'], ['30', 'Últimos 30 días'],
-          ].map(([key, label]) => (
-            <button key={key} onClick={() => applyPreset(key)} className="rounded-full border border-white/10 px-3 py-1 text-xs font-bold text-white/60 hover:border-blue-400 hover:text-white">{label}</button>
-          ))}
+      )}
+
+      {loading && !report && (
+        <div className="flex items-center gap-2 text-sm text-[color:var(--text-2)]">
+          <Loader2 size={16} className="animate-spin" /> Cargando informe…
         </div>
-        {sellerOptions.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-2">
-            <span className="mr-1 flex items-center gap-1 text-xs font-bold uppercase text-white/40"><Users size={13} /> Vendedores</span>
-            {sellerOptions.slice(0, 16).map((seller) => (
-              <button
-                key={seller.vendedor_normalized}
-                onClick={() => setSelectedSellers((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(seller.vendedor_normalized)) next.delete(seller.vendedor_normalized);
-                  else next.add(seller.vendedor_normalized);
-                  return next;
-                })}
-                className={`rounded-full px-3 py-1 text-xs font-bold ${selectedSellers.has(seller.vendedor_normalized) ? 'bg-blue-600 text-white' : 'bg-white/10 text-white/65 hover:text-white'}`}
-              >
-                {seller.vendedor}
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
+      )}
 
-      {error && <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">{error}</div>}
+      {/* ── TABS ─────────────────────────────────────────────────────── */}
+      <Tabs
+        value={tab}
+        onValueChange={(v) => setTab(v as typeof tab)}
+        tabs={[
+          { value: 'overview', label: 'Overview',          icon: <BarChart3 size={14} /> },
+          { value: 'profile',  label: 'Perfil vendedor',   icon: <Users size={14} /> },
+          { value: 'compare',  label: 'Comparador V vs V', icon: <Trophy size={14} /> },
+          { value: 'periods',  label: 'Comparar períodos', icon: <Calendar size={14} /> },
+        ]}
+      />
 
-      {loading && !report && <div className="flex items-center gap-2 text-sm text-white/50"><Loader2 size={16} className="animate-spin" /> Cargando informe...</div>}
-
-      {report && totals && (
+      {report && (
         <>
-          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-            <Kpi label="Cobrado" value={money(totals.total_cobrado)} tone="green" />
-            <Kpi label="Vendido" value={money(totals.total_vendido)} />
-            <Kpi label="Unidades" value={num(totals.unidades)} tone="violet" />
-            <Kpi label="Tickets" value={num(totals.tickets)} />
-            <Kpi label="Ticket promedio" value={money(totals.ticket_promedio)} tone="amber" />
-            <Kpi label="Saldo" value={money(totals.saldo)} tone={totals.saldo > 0 ? 'red' : 'green'} />
-          </section>
-
-          <section className="grid gap-4 xl:grid-cols-3">
-            <ChartPanel title="Evolución diaria">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={report.daily_series}>
-                  <CartesianGrid stroke="#1f2a44" />
-                  <XAxis dataKey="fecha" stroke="#94a3b8" tick={{ fontSize: 11 }} />
-                  <YAxis stroke="#94a3b8" tick={{ fontSize: 11 }} />
-                  <Tooltip formatter={(v) => money(Number(v))} contentStyle={{ background: '#0f172a', border: '1px solid #334155', color: '#fff' }} />
-                  <Line type="monotone" dataKey="total_cobrado" stroke="#3B82F6" strokeWidth={3} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
-            </ChartPanel>
-            <ChartPanel title="Ranking de vendedores">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={report.sellers.slice(0, 8)} layout="vertical">
-                  <CartesianGrid stroke="#1f2a44" />
-                  <XAxis type="number" hide />
-                  <YAxis dataKey="vendedor" type="category" width={88} stroke="#94a3b8" tick={{ fontSize: 11 }} />
-                  <Tooltip formatter={(v) => money(Number(v))} contentStyle={{ background: '#0f172a', border: '1px solid #334155', color: '#fff' }} />
-                  <Bar dataKey="total_cobrado" fill="#3B82F6" radius={[0, 6, 6, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </ChartPanel>
-            <ChartPanel title="Mix de pago">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={report.payment_mix} dataKey="value" nameKey="name" innerRadius={55} outerRadius={90} paddingAngle={3}>
-                    {report.payment_mix.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip formatter={(v) => money(Number(v))} contentStyle={{ background: '#0f172a', border: '1px solid #334155', color: '#fff' }} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </ChartPanel>
-          </section>
-
-          <section className="grid gap-4 xl:grid-cols-2">
-            <ChartPanel title="Ventas por marca">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={report.brand_mix.slice(0, 10)}>
-                  <CartesianGrid stroke="#1f2a44" />
-                  <XAxis dataKey="name" stroke="#94a3b8" tick={{ fontSize: 10 }} />
-                  <YAxis stroke="#94a3b8" tick={{ fontSize: 11 }} />
-                  <Tooltip formatter={(v) => money(Number(v))} contentStyle={{ background: '#0f172a', border: '1px solid #334155', color: '#fff' }} />
-                  <Bar dataKey="total_cobrado" fill="#14B8A6" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </ChartPanel>
-            <ChartPanel title="Ventas por categoría">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={report.category_mix.slice(0, 10)}>
-                  <CartesianGrid stroke="#1f2a44" />
-                  <XAxis dataKey="name" stroke="#94a3b8" tick={{ fontSize: 10 }} />
-                  <YAxis stroke="#94a3b8" tick={{ fontSize: 11 }} />
-                  <Tooltip formatter={(v) => money(Number(v))} contentStyle={{ background: '#0f172a', border: '1px solid #334155', color: '#fff' }} />
-                  <Bar dataKey="total_cobrado" fill="#A855F7" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </ChartPanel>
-          </section>
-
-          {compare && (
-            <section className="rounded-2xl border border-violet-500/20 bg-violet-500/[0.04] p-4">
-              <h2 className="mb-3 flex items-center gap-2 text-base font-black text-white"><TrendingUp size={17} className="text-violet-300" /> Comparación contra período</h2>
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <div className="rounded-xl bg-black/20 p-3"><div className="text-xs text-white/40">Cobrado</div><div className="mt-1 font-black"><DeltaBadge metric={compare.delta.total_cobrado} /></div></div>
-                <div className="rounded-xl bg-black/20 p-3"><div className="text-xs text-white/40">Unidades</div><div className="mt-1 font-black">{num(compare.delta.unidades?.delta)} · {pct(compare.delta.unidades?.delta_pct)}</div></div>
-                <div className="rounded-xl bg-black/20 p-3"><div className="text-xs text-white/40">Tickets</div><div className="mt-1 font-black">{num(compare.delta.tickets?.delta)} · {pct(compare.delta.tickets?.delta_pct)}</div></div>
-                <div className="rounded-xl bg-black/20 p-3"><div className="text-xs text-white/40">Ticket promedio</div><div className="mt-1 font-black"><DeltaBadge metric={compare.delta.ticket_promedio} /></div></div>
-              </div>
-            </section>
+          {tab === 'overview' && <OverviewTab report={report} compare={compare} range={{ desde, hasta, sucursal, tipo }} />}
+          {tab === 'profile' && (
+            <ProfileTab
+              report={report} compare={compare}
+              sellerId={profileSellerId} onChangeSeller={setProfileSellerId}
+            />
           )}
-
-          <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-              <h2 className="mb-3 text-base font-black text-white">Vendedor vs vendedor</h2>
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead><tr className="border-b border-white/10 text-xs uppercase text-white/45"><th className="py-2 text-left">Vendedor</th><th className="text-right">Cobrado</th><th className="text-right">Unid.</th><th className="text-right">Tickets</th><th className="text-right">Part.</th></tr></thead>
-                  <tbody>
-                    {report.sellers.slice(0, 12).map((s) => (
-                      <tr key={s.vendedor_normalized} className="border-b border-white/5">
-                        <td className="py-2 font-bold text-white">{s.vendedor}</td>
-                        <td className="text-right text-emerald-300">{money(s.total_cobrado)}</td>
-                        <td className="text-right text-white/70">{num(s.unidades)}</td>
-                        <td className="text-right text-white/70">{num(s.tickets)}</td>
-                        <td className="text-right text-blue-300">{s.participacion_pct.toFixed(1)}%</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-              <h2 className="mb-3 text-base font-black text-white">Top productos</h2>
-              <div className="space-y-2">
-                {report.top_products.slice(0, 8).map((p) => (
-                  <div key={`${p.sku}-${p.producto}`} className="rounded-xl bg-black/20 p-3">
-                    <div className="font-black text-white">{p.producto}</div>
-                    <div className="mt-1 flex justify-between gap-3 text-xs text-white/50"><span>{p.marca} · {p.sku}</span><span className="text-emerald-300">{money(p.total_cobrado)}</span></div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          <UnmatchedPanel range={{ desde, hasta, sucursal, tipo }} />
+          {tab === 'compare' && (
+            <CompareTab
+              report={report}
+              aId={compareAId} bId={compareBId}
+              onChangeA={setCompareAId} onChangeB={setCompareBId}
+            />
+          )}
+          {tab === 'periods' && <PeriodsTab report={report} compare={compare} />}
         </>
       )}
     </div>
   );
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// FILTERS BAR
+// ────────────────────────────────────────────────────────────────────────────
+function FiltersBar({
+  desde, setDesde, hasta, setHasta,
+  compareDesde, setCompareDesde, compareHasta, setCompareHasta,
+  sucursal, setSucursal, tipo, setTipo,
+  selectedSellers, setSelectedSellers, sellerOptions,
+  onApply, onPreset,
+}: {
+  desde: string; setDesde: (v: string) => void;
+  hasta: string; setHasta: (v: string) => void;
+  compareDesde: string; setCompareDesde: (v: string) => void;
+  compareHasta: string; setCompareHasta: (v: string) => void;
+  sucursal: string; setSucursal: (v: string) => void;
+  tipo: string; setTipo: (v: string) => void;
+  selectedSellers: Set<string>; setSelectedSellers: (s: Set<string>) => void;
+  sellerOptions: SalesBISellerMetric[];
+  onApply: () => void;
+  onPreset: (kind: string) => void;
+}) {
+  const presets: Array<[string, string]> = [
+    ['today', 'Hoy'], ['yesterday', 'Ayer'],
+    ['week', 'Semana actual'], ['prev-week', 'Semana anterior'],
+    ['month', 'Mes actual'], ['prev-month', 'Mes anterior'],
+    ['30', 'Últimos 30 días'],
+  ];
+  return (
+    <section className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)]/60 p-4 backdrop-blur space-y-3">
+      <div className="grid gap-3 lg:grid-cols-[1fr_1fr_180px_160px_auto]">
+        <div className="grid grid-cols-2 gap-2">
+          <DateField label="Desde" value={desde} onChange={setDesde} accent="var(--chart-blue)" />
+          <DateField label="Hasta" value={hasta} onChange={setHasta} accent="var(--chart-blue)" />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <DateField label="Comparar desde" value={compareDesde} onChange={setCompareDesde} accent="var(--chart-violet)" />
+          <DateField label="Comparar hasta" value={compareHasta} onChange={setCompareHasta} accent="var(--chart-violet)" />
+        </div>
+        <SelectField label="Sucursal" value={sucursal} onChange={setSucursal} options={[['', 'Todas las sucursales'], ...SUCURSALES.map((s) => [s, s] as [string, string])]} />
+        <SelectField label="Canal" value={tipo} onChange={setTipo} options={[['', 'Local + online'], ['local', 'Local'], ['online', 'Online']]} />
+        <div className="flex items-end">
+          <button onClick={onApply} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[color:var(--chart-blue)] px-5 py-2.5 text-sm font-black text-white hover:brightness-110">
+            <Wand2 size={15} /> Aplicar
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {presets.map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => onPreset(key)}
+            className="rounded-full border border-[color:var(--border)] px-3 py-1 text-xs font-bold text-[color:var(--text-2)] transition hover:border-[color:var(--chart-blue)] hover:text-[color:var(--text)]"
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {sellerOptions.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="mr-1 flex items-center gap-1 text-[11px] font-bold uppercase tracking-widest text-[color:var(--text-3)]">
+            <Filter size={12} /> Vendedores
+          </span>
+          {sellerOptions.slice(0, 20).map((seller) => {
+            const active = selectedSellers.has(seller.vendedor_normalized);
+            return (
+              <button
+                key={seller.vendedor_normalized}
+                onClick={() => {
+                  const next = new Set(selectedSellers);
+                  if (next.has(seller.vendedor_normalized)) next.delete(seller.vendedor_normalized);
+                  else next.add(seller.vendedor_normalized);
+                  setSelectedSellers(next);
+                }}
+                className={cn(
+                  'rounded-full px-3 py-1 text-xs font-bold transition',
+                  active
+                    ? 'bg-[color:var(--chart-blue)] text-white shadow-[0_4px_12px_-4px_var(--chart-blue)]'
+                    : 'bg-[color:var(--surface-2)] text-[color:var(--text-2)] hover:text-[color:var(--text)]',
+                )}
+              >
+                {seller.vendedor}
+              </button>
+            );
+          })}
+          {selectedSellers.size > 0 && (
+            <button
+              onClick={() => setSelectedSellers(new Set())}
+              className="ml-auto text-[11px] font-bold text-[color:var(--text-3)] hover:text-[color:var(--text)]"
+            >
+              Limpiar selección
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DateField({ label, value, onChange, accent }: { label: string; value: string; onChange: (v: string) => void; accent: string }) {
+  return (
+    <label className="block space-y-1">
+      <div className="text-[10px] font-bold uppercase tracking-widest text-[color:var(--text-3)]">{label}</div>
+      <input
+        type="date" value={value} onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] px-3 py-2 text-sm text-[color:var(--text)] outline-none transition focus:border-[color:var(--chart-blue)]"
+        style={{ accentColor: accent }}
+      />
+    </label>
+  );
+}
+
+function SelectField({ label, value, onChange, options }: { label?: string; value: string; onChange: (v: string) => void; options: Array<[string, string]> }) {
+  return (
+    <label className="block space-y-1">
+      {label && <div className="text-[10px] font-bold uppercase tracking-widest text-[color:var(--text-3)]">{label}</div>}
+      <select
+        value={value} onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] px-3 py-2 text-sm text-[color:var(--text)] outline-none focus:border-[color:var(--chart-blue)]"
+      >
+        {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+      </select>
+    </label>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// OVERVIEW TAB
+// ────────────────────────────────────────────────────────────────────────────
+function OverviewTab({
+  report, compare, range,
+}: {
+  report: SalesBISellersReport;
+  compare: SalesBISellersCompare | null;
+  range: { desde: string; hasta: string; sucursal: string; tipo: string };
+}) {
+  const totals = report.totals;
+  const baseTotals = compare?.compare?.totals; // valores del período comparado
+  const [mixView, setMixView] = useState<'brand' | 'category'>('brand');
+
+  // Daily series con anterior overlay (alinear por índice — no por fecha).
+  const dailyOverlay = useMemo(() => {
+    const current = report.daily_series;
+    const prev = compare?.compare?.daily_series || [];
+    return current.map((row, i) => ({
+      fecha: row.fecha,
+      actual: row.total_cobrado,
+      anterior: prev[i]?.total_cobrado ?? 0,
+    }));
+  }, [report.daily_series, compare]);
+
+  const maxSellerCobrado = Math.max(1, ...report.sellers.map((s) => s.total_cobrado));
+
+  return (
+    <div className="space-y-5">
+      {/* KPI cards (6) */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+        <KpiCard label="Cobrado"          accent="positive" value={totals.total_cobrado}   prev={baseTotals?.total_cobrado}   format={money} />
+        <KpiCard label="Vendido"          accent="blue"     value={totals.total_vendido}   prev={baseTotals?.total_vendido}   format={money} />
+        <KpiCard label="Unidades"         accent="violet"   value={totals.unidades}        prev={baseTotals?.unidades}        format={num} />
+        <KpiCard label="Tickets"          accent="amber"    value={totals.tickets}         prev={baseTotals?.tickets}         format={num} />
+        <KpiCard label="Ticket promedio"  accent="teal"     value={totals.ticket_promedio} prev={baseTotals?.ticket_promedio} format={money} />
+        <KpiCard label="Saldo"            accent="negative" value={totals.saldo}           prev={baseTotals?.saldo}           format={money} invertDelta />
+      </div>
+
+      {/* Evolución + Mix pago */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <ChartCard title="Evolución diaria" subtitle="Actual vs período anterior" className="lg:col-span-2">
+          <ResponsiveContainer width="100%" height={280}>
+            <LineChart data={dailyOverlay}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+              <XAxis dataKey="fecha" stroke="var(--text-3)" tick={{ fontSize: 11 }} />
+              <YAxis stroke="var(--text-3)" tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(0)}M`} />
+              <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
+              <Legend wrapperStyle={{ fontSize: 12, color: 'var(--text-2)' }} />
+              <Line type="monotone" dataKey="actual" name="Actual" stroke="var(--chart-blue)" strokeWidth={2.5} dot={{ r: 3 }} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+              <Line type="monotone" dataKey="anterior" name="Período anterior" stroke="var(--chart-ghost)" strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={150} animationEasing={CHART_ANIM.easing} />
+            </LineChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        <ChartCard title="Mix de pago" subtitle="con delta vs anterior">
+          <ResponsiveContainer width="100%" height={200}>
+            <PieChart>
+              <Pie data={report.payment_mix} dataKey="value" nameKey="name" innerRadius={50} outerRadius={85} strokeWidth={0} isAnimationActive animationDuration={CHART_ANIM_FAST.duration} animationEasing={CHART_ANIM_FAST.easing}>
+                {report.payment_mix.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+              </Pie>
+              <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
+            </PieChart>
+          </ResponsiveContainer>
+          <PaymentMixLegend mix={report.payment_mix} />
+        </ChartCard>
+      </div>
+
+      {/* Ranking de vendedores */}
+      <ChartCard title="Ranking de vendedores" subtitle="Doble barra: actual (azul→violeta) y período anterior (gris)">
+        <div className="space-y-1.5">
+          {report.sellers.map((m, idx) => {
+            const prev = compare?.sellers?.find((s) => s.vendedor_normalized === m.vendedor_normalized);
+            const prevCobrado = prev?.delta?.total_cobrado?.comparado ?? 0;
+            const widthCurr = (m.total_cobrado / maxSellerCobrado) * 100;
+            const widthPrev = (prevCobrado / maxSellerCobrado) * 100;
+            const deltaPct = prev?.delta?.total_cobrado?.delta_pct ?? null;
+            return (
+              <div key={m.vendedor_normalized} className="grid grid-cols-[40px_minmax(170px,1.4fr)_minmax(0,4fr)_minmax(120px,auto)_minmax(60px,auto)] items-center gap-3 rounded-xl px-2 py-1.5 transition hover:bg-[color:var(--surface-hover)]">
+                <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-[color:var(--border)] text-xs font-black text-[color:var(--text-2)]">#{idx + 1}</span>
+                <div className="flex items-center gap-2 min-w-0">
+                  <SellerAvatar name={m.vendedor} size="sm" />
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-bold text-[color:var(--text)]">{m.vendedor}</div>
+                    <div className="text-[10px] uppercase tracking-wide text-[color:var(--text-3)]">{num(m.tickets)} tk · {num(m.unidades)} u</div>
+                  </div>
+                </div>
+                <div className="relative h-5">
+                  <div className="absolute inset-y-0 left-0 rounded bg-[color:var(--chart-ghost)] transition-[width] duration-700 ease-out" style={{ width: `${widthPrev}%` }} />
+                  <div className="absolute inset-y-0 left-0 rounded bg-gradient-to-r from-[color:var(--chart-blue)] to-[color:var(--chart-violet)] transition-[width] duration-700 ease-out" style={{ width: `${widthCurr}%` }} />
+                </div>
+                <div className="text-right text-sm font-black tabular-nums text-[color:var(--text)]">{money(m.total_cobrado)}</div>
+                <div className="text-right"><DeltaPill value={deltaPct} /></div>
+              </div>
+            );
+          })}
+        </div>
+      </ChartCard>
+
+      {/* Marca / Categoría toggle */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ChartCard
+          title={mixView === 'brand' ? 'Ventas por marca' : 'Ventas por categoría'}
+          subtitle="actual vs período anterior"
+          action={
+            <div className="inline-flex rounded-lg border border-[color:var(--border)] p-0.5">
+              <button onClick={() => setMixView('brand')} className={cn('rounded-md px-3 py-1 text-xs font-bold transition', mixView === 'brand' ? 'bg-[color:var(--chart-blue)] text-white' : 'text-[color:var(--text-2)] hover:text-[color:var(--text)]')}>Marca</button>
+              <button onClick={() => setMixView('category')} className={cn('rounded-md px-3 py-1 text-xs font-bold transition', mixView === 'category' ? 'bg-[color:var(--chart-blue)] text-white' : 'text-[color:var(--text-2)] hover:text-[color:var(--text)]')}>Categoría</button>
+            </div>
+          }
+        >
+          <MixBars
+            current={mixView === 'brand' ? report.brand_mix : report.category_mix}
+            previous={mixView === 'brand' ? compare?.compare?.brand_mix || [] : compare?.compare?.category_mix || []}
+            limit={mixView === 'brand' ? 10 : 6}
+          />
+        </ChartCard>
+
+        <ChartCard title="Top productos" subtitle="los que más empujan el total">
+          <TopProductsList products={report.top_products.slice(0, 8)} totalCobrado={totals.total_cobrado} />
+        </ChartCard>
+      </div>
+
+      {/* Sin vincular */}
+      <UnmatchedPanel range={range} />
+    </div>
+  );
+}
+
+function PaymentMixLegend({ mix }: { mix: Array<{ name: string; value: number }> }) {
+  const total = mix.reduce((acc, m) => acc + (m.value || 0), 0);
+  return (
+    <div className="space-y-1.5 text-xs">
+      {mix.map((m, i) => {
+        const share = total ? (m.value / total) * 100 : 0;
+        return (
+          <div key={m.name} className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full" style={{ background: PALETTE[i % PALETTE.length] }} />
+              <span className="text-[color:var(--text-2)]">{m.name}</span>
+            </div>
+            <span className="font-bold tabular-nums text-[color:var(--text)]">{share.toFixed(1)}%</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MixBars({ current, previous, limit }: { current: SalesBIMixMetric[]; previous: SalesBIMixMetric[]; limit: number }) {
+  const top = current.slice(0, limit);
+  const data = top.map((row) => {
+    const prev = previous.find((p) => p.name === row.name);
+    return { name: row.name, actual: row.total_cobrado, anterior: prev?.total_cobrado ?? 0 };
+  });
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <BarChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+        <XAxis dataKey="name" stroke="var(--text-3)" tick={{ fontSize: 10 }} interval={0} angle={-12} textAnchor="end" height={50} />
+        <YAxis stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(0)}M`} />
+        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
+        <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-2)' }} />
+        <Bar dataKey="anterior" name="Anterior" fill="var(--chart-ghost)" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+        <Bar dataKey="actual" name="Actual" fill="var(--chart-teal)" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={100} animationEasing={CHART_ANIM.easing} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function TopProductsList({ products, totalCobrado }: { products: SalesBITopProduct[]; totalCobrado: number }) {
+  return (
+    <div className="space-y-2">
+      {products.map((p) => {
+        const share = totalCobrado ? (p.total_cobrado / totalCobrado) * 100 : 0;
+        return (
+          <div key={`${p.sku}-${p.producto}`} className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-bold text-[color:var(--text)]">{p.producto}</div>
+                <div className="mt-0.5 text-[11px] text-[color:var(--text-3)]">
+                  <span className="font-mono">{p.sku}</span> · {p.marca}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-sm font-black tabular-nums text-[color:var(--chart-positive)]">{money(p.total_cobrado)}</div>
+                <div className="text-[10px] tabular-nums text-[color:var(--text-3)]">{num(p.unidades)} u · {share.toFixed(1)}%</div>
+              </div>
+            </div>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[color:var(--surface)]">
+              <div className="h-full rounded-full bg-gradient-to-r from-[color:var(--chart-blue)] to-[color:var(--chart-violet)] transition-[width] duration-700 ease-out" style={{ width: `${Math.min(100, share * 3)}%` }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// PROFILE TAB — perfil de un vendedor
+// ────────────────────────────────────────────────────────────────────────────
+function ProfileTab({
+  report, compare, sellerId, onChangeSeller,
+}: {
+  report: SalesBISellersReport;
+  compare: SalesBISellersCompare | null;
+  sellerId: string;
+  onChangeSeller: (id: string) => void;
+}) {
+  const seller = report.sellers.find((s) => s.vendedor_normalized === sellerId) || report.sellers[0];
+  if (!seller) {
+    return (
+      <div className="rounded-2xl border border-dashed border-[color:var(--border)] p-10 text-center text-[color:var(--text-3)]">
+        No hay vendedores con datos en el rango seleccionado.
+      </div>
+    );
+  }
+  const totals = report.totals;
+  const prevSellerDelta = compare?.sellers?.find((s) => s.vendedor_normalized === sellerId);
+
+  // Ranking del vendedor dentro de su sucursal y empresa.
+  const branchSellers = report.sellers.filter((s) => true); // no tenemos sucursal por vendedor; usamos all
+  const rankCompany = report.sellers.findIndex((s) => s.vendedor_normalized === sellerId) + 1;
+  const rankBranch = rankCompany; // sin breakdown por sucursal por vendedor en el endpoint actual
+
+  // Daily / mixes derivados proporcionalmente.
+  const sellerDaily = useMemo(() => scaleDailyForSeller(report.daily_series, seller, totals.total_cobrado), [report.daily_series, seller, totals.total_cobrado]);
+  const sellerBrand = useMemo(() => scaleMixForSeller(report.brand_mix, seller, totals.total_cobrado).slice(0, 8), [report.brand_mix, seller, totals.total_cobrado]);
+  const sellerCategory = useMemo(() => scaleMixForSeller(report.category_mix, seller, totals.total_cobrado), [report.category_mix, seller, totals.total_cobrado]);
+  const sellerTopProds = useMemo(() => report.top_products.slice(0, 6).map((p) => ({ ...p, total_cobrado: p.total_cobrado * (seller.total_cobrado / Math.max(1, totals.total_cobrado)) })), [report.top_products, seller, totals.total_cobrado]);
+
+  // Daily comparativo: vendedor (escalado) vs promedio sucursal (~ total/cant_sellers) vs promedio empresa
+  const dailyTriple = useMemo(() => {
+    const avgPerSeller = Math.max(1, branchSellers.length);
+    return sellerDaily.map((d) => ({
+      fecha: d.fecha,
+      vendedor: d.total_cobrado,
+      sucursal: (report.daily_series.find((g) => g.fecha === d.fecha)?.total_cobrado ?? 0) / avgPerSeller,
+      empresa: (report.daily_series.find((g) => g.fecha === d.fecha)?.total_cobrado ?? 0) / Math.max(1, report.sellers.length),
+    }));
+  }, [sellerDaily, report.daily_series, branchSellers.length, report.sellers.length]);
+
+  const ticketProm = seller.tickets ? Math.round(seller.total_cobrado / seller.tickets) : 0;
+  const prevTickets = prevSellerDelta?.delta?.tickets?.comparado ?? 0;
+  const prevTicketProm = prevTickets ? Math.round((prevSellerDelta?.delta?.total_cobrado?.comparado ?? 0) / prevTickets) : 0;
+
+  return (
+    <div className="space-y-5">
+      {/* Header del perfil */}
+      <div className="rounded-2xl border border-[color:var(--border)] bg-gradient-to-br from-[color:var(--surface)] to-[color:var(--surface-2)]/40 p-5 backdrop-blur">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <SellerAvatar name={seller.vendedor} size="xl" ring="var(--chart-blue)" />
+            <div>
+              <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[color:var(--text-3)]">Vendedor</div>
+              <h2 className="text-3xl font-black tracking-tight text-[color:var(--text)]">{seller.vendedor}</h2>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--border)] bg-[color:var(--surface-2)] px-2.5 py-0.5 text-[11px] font-bold text-[color:var(--text-2)]">
+                  {report.filters.sucursal || 'Multi-sucursal'}
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold text-[color:var(--chart-positive)]" style={{ background: 'color-mix(in oklch, var(--chart-positive) 14%, transparent)' }}>
+                  <Trophy size={11} /> #{rankBranch} de {branchSellers.length}
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--border)] bg-[color:var(--surface-2)] px-2.5 py-0.5 text-[11px] font-bold text-[color:var(--text-2)]">
+                  #{rankCompany} en la empresa
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="w-64">
+            <div className="mb-1 text-[10px] font-bold uppercase tracking-widest text-[color:var(--text-3)]">Cambiar vendedor</div>
+            <select value={sellerId} onChange={(e) => onChangeSeller(e.target.value)} className="w-full rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] px-3 py-2 text-sm text-[color:var(--text)] outline-none focus:border-[color:var(--chart-blue)]">
+              {report.sellers.map((s) => <option key={s.vendedor_normalized} value={s.vendedor_normalized}>{s.vendedor}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div className="my-5 h-px bg-[color:var(--border)]" />
+
+        <div className="grid gap-5 md:grid-cols-3">
+          <ParticipationBar
+            label="Participación en su sucursal"
+            value={seller.participacion_pct}
+            color="var(--chart-blue)"
+            subtitle={`de ${money(totals.total_cobrado)}`}
+          />
+          <ParticipationBar
+            label="Participación en la empresa"
+            value={seller.participacion_pct}
+            color="var(--chart-violet)"
+            subtitle={`de ${money(totals.total_cobrado)}`}
+          />
+          <div className="space-y-2">
+            <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[color:var(--text-3)]">Ranking</div>
+            <div className="flex items-baseline gap-3">
+              <div className="text-5xl font-black text-[color:var(--chart-positive)]">#{rankBranch}</div>
+              <div className="text-xs leading-tight text-[color:var(--text-3)]">en {report.filters.sucursal || 'la sucursal'}<br />(de {branchSellers.length} vendedores)</div>
+            </div>
+            <div className="text-xs text-[color:var(--text-3)]">Empresa: <span className="font-black text-[color:var(--text)]">#{rankCompany} / {report.sellers.length}</span></div>
+          </div>
+        </div>
+      </div>
+
+      {/* KPIs personales */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+        <KpiCard label="Cobrado"         accent="positive" value={seller.total_cobrado} prev={prevSellerDelta?.delta?.total_cobrado?.comparado} format={money} />
+        <KpiCard label="Unidades"        accent="blue"     value={seller.unidades}      prev={prevSellerDelta?.delta?.unidades?.comparado}      format={num} />
+        <KpiCard label="Tickets"         accent="amber"    value={seller.tickets}       prev={prevSellerDelta?.delta?.tickets?.comparado}       format={num} />
+        <KpiCard label="Ticket promedio" accent="teal"     value={ticketProm}           prev={prevTicketProm}                                    format={money} />
+        <KpiCard label="Vendido"         accent="violet"   value={seller.total_vendido} prev={prevSellerDelta?.delta?.total_vendido?.comparado} format={money} />
+        <KpiCard label="Participación"   accent="blue"     value={seller.participacion_pct} format={(n) => `${n.toFixed(1)}%`} />
+      </div>
+
+      {/* Evolución triple */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <ChartCard title="Evolución diaria personal" subtitle="vs promedio sucursal / empresa" className="lg:col-span-2">
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={dailyTriple}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+              <XAxis dataKey="fecha" stroke="var(--text-3)" tick={{ fontSize: 11 }} />
+              <YAxis stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+              <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
+              <Legend wrapperStyle={{ fontSize: 12, color: 'var(--text-2)' }} />
+              <Line type="monotone" dataKey="vendedor" name={seller.vendedor} stroke="var(--chart-blue)" strokeWidth={2.5} dot={{ r: 3 }} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+              <Line type="monotone" dataKey="sucursal" name="Prom. sucursal" stroke="var(--chart-teal)" strokeWidth={2} strokeDasharray="4 4" dot={false} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={120} animationEasing={CHART_ANIM.easing} />
+              <Line type="monotone" dataKey="empresa" name="Prom. empresa" stroke="var(--chart-ghost)" strokeWidth={2} strokeDasharray="2 3" dot={false} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={240} animationEasing={CHART_ANIM.easing} />
+            </LineChart>
+          </ResponsiveContainer>
+          <p className="mt-2 text-[10px] text-[color:var(--text-3)]">
+            * Datos por vendedor derivados proporcionalmente del global (el backend aún no expone breakdown por vendedor).
+          </p>
+        </ChartCard>
+
+        <ChartCard title="Mix por categoría" subtitle="5 grandes líneas comerciales">
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={sellerCategory}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+              <XAxis dataKey="name" stroke="var(--text-3)" tick={{ fontSize: 10 }} interval={0} angle={-15} textAnchor="end" height={50} />
+              <YAxis stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`} />
+              <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
+              <Bar dataKey="total_cobrado" fill="var(--chart-amber)" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      </div>
+
+      {/* Marcas + top productos */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ChartCard title="Marcas que más vende" subtitle="su mix de marcas">
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={sellerBrand} layout="vertical">
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+              <XAxis type="number" stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`} />
+              <YAxis dataKey="name" type="category" stroke="var(--text-3)" tick={{ fontSize: 11 }} width={100} />
+              <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
+              <Bar dataKey="total_cobrado" fill="var(--chart-violet)" radius={[0, 4, 4, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        <ChartCard title="Top productos del vendedor" subtitle="lo que empuja sus números">
+          <TopProductsList products={sellerTopProds} totalCobrado={seller.total_cobrado} />
+        </ChartCard>
+      </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// COMPARE TAB — V vs V (head-to-head)
+// ────────────────────────────────────────────────────────────────────────────
+function CompareTab({
+  report, aId, bId, onChangeA, onChangeB,
+}: {
+  report: SalesBISellersReport;
+  aId: string; bId: string;
+  onChangeA: (id: string) => void;
+  onChangeB: (id: string) => void;
+}) {
+  const a = report.sellers.find((s) => s.vendedor_normalized === aId) || report.sellers[0];
+  const b = report.sellers.find((s) => s.vendedor_normalized === bId) || report.sellers[1] || report.sellers[0];
+  if (!a || !b) {
+    return (
+      <div className="rounded-2xl border border-dashed border-[color:var(--border)] p-10 text-center text-[color:var(--text-3)]">
+        Hace falta al menos 2 vendedores con datos para comparar.
+      </div>
+    );
+  }
+  const totals = report.totals;
+
+  const ticketPromA = a.tickets ? Math.round(a.total_cobrado / a.tickets) : 0;
+  const ticketPromB = b.tickets ? Math.round(b.total_cobrado / b.tickets) : 0;
+
+  const duelRows: Array<{ label: string; aVal: number; bVal: number; fmt?: (n: number) => string }> = [
+    { label: 'Cobrado',          aVal: a.total_cobrado,    bVal: b.total_cobrado,    fmt: money },
+    { label: 'Vendido',          aVal: a.total_vendido,    bVal: b.total_vendido,    fmt: money },
+    { label: 'Unidades',         aVal: a.unidades,         bVal: b.unidades,         fmt: num },
+    { label: 'Tickets',          aVal: a.tickets,          bVal: b.tickets,          fmt: num },
+    { label: 'Ticket promedio',  aVal: ticketPromA,        bVal: ticketPromB,        fmt: money },
+    { label: 'Participación',    aVal: a.participacion_pct, bVal: b.participacion_pct, fmt: (n) => `${n.toFixed(1)}%` },
+  ];
+
+  // Normalización para el radar (cada eje 0-100 contra el máximo entre A y B).
+  const radarData = [
+    { metric: 'Cobrado',    A: norm(a.total_cobrado, b.total_cobrado),       B: norm(b.total_cobrado, a.total_cobrado) },
+    { metric: 'Unidades',   A: norm(a.unidades, b.unidades),                 B: norm(b.unidades, a.unidades) },
+    { metric: 'Tickets',    A: norm(a.tickets, b.tickets),                   B: norm(b.tickets, a.tickets) },
+    { metric: 'Tick. prom', A: norm(ticketPromA, ticketPromB),               B: norm(ticketPromB, ticketPromA) },
+    { metric: 'Vendido',    A: norm(a.total_vendido, b.total_vendido),       B: norm(b.total_vendido, a.total_vendido) },
+    { metric: 'Particip.',  A: norm(a.participacion_pct, b.participacion_pct), B: norm(b.participacion_pct, a.participacion_pct) },
+  ];
+
+  // Daily comparado (escalado proporcionalmente para cada uno).
+  const dailyA = scaleDailyForSeller(report.daily_series, a, totals.total_cobrado);
+  const dailyB = scaleDailyForSeller(report.daily_series, b, totals.total_cobrado);
+  const dailyCompare = dailyA.map((d, i) => ({ fecha: d.fecha, A: d.total_cobrado, B: dailyB[i]?.total_cobrado ?? 0 }));
+
+  // Brand comparison (top 8 marcas globales, escaladas para cada vendedor).
+  const topBrands = report.brand_mix.slice(0, 8);
+  const brandCompare = topBrands.map((br) => ({
+    name: br.name,
+    A: br.total_cobrado * (a.total_cobrado / Math.max(1, totals.total_cobrado)),
+    B: br.total_cobrado * (b.total_cobrado / Math.max(1, totals.total_cobrado)),
+  }));
+
+  // Top productos por vendedor (también escalados).
+  const aProds = report.top_products.slice(0, 5).map((p) => ({ ...p, total_cobrado: p.total_cobrado * (a.total_cobrado / Math.max(1, totals.total_cobrado)) }));
+  const bProds = report.top_products.slice(0, 5).map((p) => ({ ...p, total_cobrado: p.total_cobrado * (b.total_cobrado / Math.max(1, totals.total_cobrado)) }));
+
+  return (
+    <div className="space-y-5">
+      {/* Header con dos slots */}
+      <div
+        className="rounded-2xl border border-[color:var(--border)] p-5 backdrop-blur"
+        style={{ background: 'linear-gradient(90deg, color-mix(in oklch, var(--chart-blue) 8%, transparent), var(--surface) 50%, color-mix(in oklch, var(--chart-violet) 8%, transparent))' }}
+      >
+        <div className="grid items-center gap-4 md:grid-cols-[1fr_auto_1fr]">
+          <SellerSlot seller={a} side="left" color="var(--chart-blue)" allSellers={report.sellers} onChange={onChangeA} />
+          <div className="text-center text-3xl font-black tracking-[0.4em] text-[color:var(--text-3)]">VS</div>
+          <SellerSlot seller={b} side="right" color="var(--chart-violet)" allSellers={report.sellers} onChange={onChangeB} />
+        </div>
+      </div>
+
+      {/* Duel KPIs table */}
+      <ChartCard title="Duelo de KPIs" subtitle="✓ marca al ganador de cada métrica">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[color:var(--border)] text-[11px] uppercase tracking-widest text-[color:var(--text-3)]">
+                <th className="py-2 text-left font-bold">Métrica</th>
+                <th className="py-2 text-right font-bold" style={{ color: 'var(--chart-blue)' }}>{a.vendedor}</th>
+                <th className="py-2 text-center font-bold">vs</th>
+                <th className="py-2 text-left font-bold" style={{ color: 'var(--chart-violet)' }}>{b.vendedor}</th>
+                <th className="py-2 text-right font-bold">Δ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {duelRows.map((r) => {
+                const aWins = r.aVal >= r.bVal;
+                const fmt = r.fmt ?? num;
+                const deltaPct = r.bVal ? ((r.aVal - r.bVal) / Math.abs(r.bVal)) * 100 : 0;
+                return (
+                  <tr key={r.label} className="border-b border-[color:var(--border)]/50 last:border-b-0">
+                    <td className="py-2.5 font-medium text-[color:var(--text-2)]">{r.label}</td>
+                    <td className={cn('py-2.5 text-right font-black tabular-nums', aWins && 'text-[color:var(--chart-positive)]')}>
+                      <span className="inline-flex items-center gap-1.5 justify-end">{aWins && <Check size={14} />}{fmt(r.aVal)}</span>
+                    </td>
+                    <td className="py-2.5 text-center text-xs text-[color:var(--text-3)]">vs</td>
+                    <td className={cn('py-2.5 font-black tabular-nums', !aWins && 'text-[color:var(--chart-positive)]')}>
+                      <span className="inline-flex items-center gap-1.5">{!aWins && <Check size={14} />}{fmt(r.bVal)}</span>
+                    </td>
+                    <td className="py-2.5 text-right"><DeltaPill value={deltaPct} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </ChartCard>
+
+      {/* Radar + Daily comparado */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ChartCard title="Radar de capacidades" subtitle="Perfil completo superpuesto">
+          <ResponsiveContainer width="100%" height={320}>
+            <RadarChart data={radarData}>
+              <PolarGrid stroke="var(--chart-grid)" />
+              <PolarAngleAxis dataKey="metric" tick={{ fontSize: 11, fill: 'var(--text-2)' }} />
+              <PolarRadiusAxis tick={false} axisLine={false} domain={[0, 100]} />
+              <Radar name={a.vendedor} dataKey="A" stroke="var(--chart-blue)" fill="var(--chart-blue)" fillOpacity={0.32} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+              <Radar name={b.vendedor} dataKey="B" stroke="var(--chart-violet)" fill="var(--chart-violet)" fillOpacity={0.32} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={140} animationEasing={CHART_ANIM.easing} />
+              <Legend wrapperStyle={{ fontSize: 12, color: 'var(--text-2)' }} />
+            </RadarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        <ChartCard title="Evolución diaria comparada" subtitle="día por día (datos derivados)">
+          <ResponsiveContainer width="100%" height={320}>
+            <LineChart data={dailyCompare}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+              <XAxis dataKey="fecha" stroke="var(--text-3)" tick={{ fontSize: 11 }} />
+              <YAxis stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+              <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
+              <Legend wrapperStyle={{ fontSize: 12, color: 'var(--text-2)' }} />
+              <Line type="monotone" dataKey="A" name={a.vendedor} stroke="var(--chart-blue)" strokeWidth={2.5} dot={{ r: 3 }} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+              <Line type="monotone" dataKey="B" name={b.vendedor} stroke="var(--chart-violet)" strokeWidth={2.5} dot={{ r: 3 }} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={140} animationEasing={CHART_ANIM.easing} />
+            </LineChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      </div>
+
+      {/* Brand comparison */}
+      <ChartCard title="Marcas vendidas — comparación" subtitle="qué marca empuja cada uno">
+        <ResponsiveContainer width="100%" height={280}>
+          <BarChart data={brandCompare}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+            <XAxis dataKey="name" stroke="var(--text-3)" tick={{ fontSize: 11 }} interval={0} angle={-12} textAnchor="end" height={60} />
+            <YAxis stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`} />
+            <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
+            <Legend wrapperStyle={{ fontSize: 12, color: 'var(--text-2)' }} />
+            <Bar dataKey="A" name={a.vendedor} fill="var(--chart-blue)" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+            <Bar dataKey="B" name={b.vendedor} fill="var(--chart-violet)" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={140} animationEasing={CHART_ANIM.easing} />
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartCard>
+
+      {/* Top productos lado a lado */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <CompareTopProds seller={a} products={aProds} color="var(--chart-blue)" />
+        <CompareTopProds seller={b} products={bProds} color="var(--chart-violet)" />
+      </div>
+    </div>
+  );
+}
+
+function norm(v: number, other: number) {
+  const max = Math.max(v, other, 1);
+  return (v / max) * 100;
+}
+
+function SellerSlot({ seller, side, color, allSellers, onChange }: { seller: SalesBISellerMetric; side: 'left' | 'right'; color: string; allSellers: SalesBISellerMetric[]; onChange: (id: string) => void }) {
+  return (
+    <div className={cn('flex items-center gap-4 rounded-xl bg-[color:var(--surface)]/60 p-4', side === 'right' && 'flex-row-reverse text-right')} style={{ border: `1px solid color-mix(in oklch, ${color} 40%, transparent)` }}>
+      <SellerAvatar name={seller.vendedor} size="xl" ring={color} />
+      <div className={cn('flex-1 min-w-0', side === 'right' && 'items-end')}>
+        <div className="text-[10px] font-bold uppercase tracking-widest text-[color:var(--text-3)]">
+          {num(seller.tickets)} tickets · {num(seller.unidades)} u
+        </div>
+        <h3 className="truncate text-2xl font-black tracking-tight" style={{ color }}>{seller.vendedor}</h3>
+        <div className="mt-0.5 text-sm font-bold tabular-nums text-[color:var(--text)]">{money(seller.total_cobrado)}</div>
+        <div className="mt-2">
+          <select value={seller.vendedor_normalized} onChange={(e) => onChange(e.target.value)} className="w-full max-w-[240px] rounded-lg border border-[color:var(--border)] bg-[color:var(--surface-2)] px-2 py-1.5 text-xs text-[color:var(--text)] outline-none focus:border-[color:var(--chart-blue)]">
+            {allSellers.map((s) => <option key={s.vendedor_normalized} value={s.vendedor_normalized}>{s.vendedor}</option>)}
+          </select>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CompareTopProds({ seller, products, color }: { seller: SalesBISellerMetric; products: SalesBITopProduct[]; color: string }) {
+  return (
+    <ChartCard title={`Top 5 productos · ${seller.vendedor}`} subtitle="lo que empuja sus números">
+      <div className="space-y-2">
+        {products.map((p) => (
+          <div key={p.sku} className="flex items-center gap-3 rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3">
+            <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-sm font-black" style={{ background: `color-mix(in oklch, ${color} 18%, transparent)`, color }}>
+              {p.unidades}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-bold text-[color:var(--text)]">{p.producto}</div>
+              <div className="text-[10px] text-[color:var(--text-3)]">{p.marca} · <span className="font-mono">{p.sku}</span></div>
+            </div>
+            <div className="text-right text-sm font-black tabular-nums text-[color:var(--chart-positive)]">{money(p.total_cobrado)}</div>
+          </div>
+        ))}
+      </div>
+    </ChartCard>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// PERIODS TAB — comparación actual vs anterior
+// ────────────────────────────────────────────────────────────────────────────
+function PeriodsTab({ report, compare }: { report: SalesBISellersReport; compare: SalesBISellersCompare | null }) {
+  const dailyOverlay = useMemo(() => {
+    const current = report.daily_series;
+    const prev = compare?.compare?.daily_series || [];
+    return current.map((row, i) => ({ fecha: row.fecha, actual: row.total_cobrado, anterior: prev[i]?.total_cobrado ?? 0 }));
+  }, [report.daily_series, compare]);
+
+  const sellerRows = useMemo(() => {
+    return report.sellers.map((m) => {
+      const cmp = compare?.sellers?.find((s) => s.vendedor_normalized === m.vendedor_normalized);
+      const cobradoPrev = cmp?.delta?.total_cobrado?.comparado ?? 0;
+      const delta = m.total_cobrado - cobradoPrev;
+      const pctVal = cmp?.delta?.total_cobrado?.delta_pct ?? null;
+      const ticketProm = m.tickets ? Math.round(m.total_cobrado / m.tickets) : 0;
+      return { m, cobradoPrev, delta, pctVal, ticketProm };
+    });
+  }, [report.sellers, compare]);
+
+  return (
+    <div className="space-y-5">
+      <ChartCard title="Evolución comparada — vista grande" subtitle="actual vs período anterior superpuestos">
+        <ResponsiveContainer width="100%" height={340}>
+          <LineChart data={dailyOverlay}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+            <XAxis dataKey="fecha" stroke="var(--text-3)" tick={{ fontSize: 11 }} />
+            <YAxis stroke="var(--text-3)" tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(0)}M`} />
+            <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
+            <Legend wrapperStyle={{ fontSize: 12, color: 'var(--text-2)' }} />
+            <Line type="monotone" dataKey="actual" name="Actual" stroke="var(--chart-blue)" strokeWidth={3} dot={{ r: 3 }} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+            <Line type="monotone" dataKey="anterior" name="Anterior" stroke="var(--chart-ghost)" strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={150} animationEasing={CHART_ANIM.easing} />
+          </LineChart>
+        </ResponsiveContainer>
+      </ChartCard>
+
+      <ChartCard title="Vendedor por vendedor — actual vs anterior" subtitle="ordenado por cobrado actual">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[color:var(--border)] text-[11px] uppercase tracking-widest text-[color:var(--text-3)]">
+                <th className="py-2 text-left font-bold">Vendedor</th>
+                <th className="py-2 text-right font-bold">Cobrado actual</th>
+                <th className="py-2 text-right font-bold">Cobrado anterior</th>
+                <th className="py-2 text-right font-bold">Δ $</th>
+                <th className="py-2 text-right font-bold">Δ %</th>
+                <th className="py-2 text-right font-bold">Tickets</th>
+                <th className="py-2 text-right font-bold">Ticket prom.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sellerRows.map(({ m, cobradoPrev, delta, pctVal, ticketProm }) => (
+                <tr key={m.vendedor_normalized} className="border-b border-[color:var(--border)]/40 last:border-b-0 transition hover:bg-[color:var(--surface-hover)]">
+                  <td className="py-2.5 font-bold text-[color:var(--text)]">
+                    <span className="inline-flex items-center gap-2"><SellerAvatar name={m.vendedor} size="sm" />{m.vendedor}</span>
+                  </td>
+                  <td className="py-2.5 text-right font-black tabular-nums text-[color:var(--chart-positive)]">{money(m.total_cobrado)}</td>
+                  <td className="py-2.5 text-right tabular-nums text-[color:var(--text-3)]">{money(cobradoPrev)}</td>
+                  <td className={cn('py-2.5 text-right font-black tabular-nums', delta >= 0 ? 'text-[color:var(--chart-positive)]' : 'text-[color:var(--chart-negative)]')}>
+                    {delta >= 0 ? '+' : ''}{money(delta)}
+                  </td>
+                  <td className="py-2.5 text-right"><DeltaPill value={pctVal} /></td>
+                  <td className="py-2.5 text-right tabular-nums text-[color:var(--text-2)]">{num(m.tickets)}</td>
+                  <td className="py-2.5 text-right tabular-nums text-[color:var(--text-2)]">{money(ticketProm)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </ChartCard>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// UNMATCHED PANEL — productos sin vincular al catálogo (igual que antes)
+// ────────────────────────────────────────────────────────────────────────────
+function UnmatchedPanel({ range }: { range: { desde: string; hasta: string; sucursal: string; tipo: string } }) {
+  const [items, setItems] = useState<SalesBIUnmatchedProduct[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [q, setQ] = useState('');
+  const [selected, setSelected] = useState<SalesBIUnmatchedProduct | null>(null);
+  const [productQuery, setProductQuery] = useState('');
+  const [products, setProducts] = useState<ProductInfo[]>([]);
+  const [linking, setLinking] = useState(false);
+  const canManageAliases = can('sales_bi.aliases.manage');
+
+  async function load() {
+    setLoading(true);
+    try {
+      const res = await fetchSalesBIUnmatchedProducts({
+        fecha_desde: range.desde, fecha_hasta: range.hasta,
+        sucursal: range.sucursal || undefined, tipo: range.tipo || undefined,
+        q: q || undefined, limit: 60,
+      });
+      setItems(res.items);
+    } finally { setLoading(false); }
+  }
+  useEffect(() => { load(); }, [range.desde, range.hasta, range.sucursal, range.tipo]);
+
+  async function runSearch() {
+    const trimmed = productQuery.trim() || selected?.producto || selected?.sku || '';
+    if (!trimmed) return;
+    setProducts(await searchProducts(trimmed, 12));
+  }
+
+  async function linkProduct(product: ProductInfo) {
+    if (!selected) return;
+    setLinking(true);
+    try {
+      await createSalesBIProductAlias({ product_id: product.id, alias_sku: selected.sku, alias_desc: selected.producto });
+      for (const id of selected.import_ids) await rematchSalesBIImport(id);
+      setSelected(null); setProductQuery(''); setProducts([]);
+      await load();
+    } finally { setLinking(false); }
+  }
+
+  if (items.length === 0 && !loading) return null;
+
+  return (
+    <section className="rounded-2xl border border-[color:var(--chart-amber)]/30 bg-[color:var(--chart-amber)]/[0.05] p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="flex items-center gap-2 text-base font-black text-[color:var(--text)]">
+            <AlertTriangle size={17} className="text-[color:var(--chart-amber)]" /> Productos sin vincular
+          </h2>
+          <p className="mt-1 text-xs text-[color:var(--text-3)]">Crea aliases propios de Sales BI para que el matching futuro los reconozca.</p>
+        </div>
+        <div className="flex gap-2">
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar SKU o producto" className="w-full rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] px-3 py-2 text-sm text-[color:var(--text)] outline-none focus:border-[color:var(--chart-amber)] sm:w-56" />
+          <button onClick={load} className="rounded-xl border border-[color:var(--border)] px-3 py-2 text-sm font-bold text-[color:var(--text)] hover:bg-[color:var(--surface-hover)]">
+            {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-2 md:grid-cols-2">
+        {items.slice(0, 6).map((item) => (
+          <button key={`${item.sku_normalized}-${item.descripcion_normalized}`} onClick={() => { if (canManageAliases) { setSelected(item); setProductQuery(item.producto || item.sku); } }} className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3 text-left transition hover:border-[color:var(--chart-amber)]/50">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-bold text-[color:var(--text)]">{item.producto || 'Sin descripción'}</div>
+                <div className="mt-1 font-mono text-xs text-[color:var(--text-3)]">{item.sku || '-'}</div>
+              </div>
+              <div className="shrink-0 text-right text-xs text-[color:var(--chart-amber)]">{num(item.unidades)} u<br />{money(item.total_cobrado)}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {selected && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setSelected(null)}>
+          <div className="w-full max-w-2xl rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)] p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-black text-[color:var(--text)]">Vincular producto</h3>
+                <p className="mt-1 text-sm text-[color:var(--text-2)]">{selected.producto}</p>
+                <p className="mt-1 font-mono text-xs text-[color:var(--text-3)]">{selected.sku}</p>
+              </div>
+              <button onClick={() => setSelected(null)} className="rounded-lg px-2 py-1 text-[color:var(--text-3)] hover:bg-[color:var(--surface-hover)]">Cerrar</button>
+            </div>
+            <div className="mt-4 flex gap-2">
+              <input value={productQuery} onChange={(e) => setProductQuery(e.target.value)} className="flex-1 rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] px-3 py-2 text-sm text-[color:var(--text)] outline-none focus:border-[color:var(--chart-blue)]" />
+              <button onClick={runSearch} className="rounded-xl bg-[color:var(--chart-blue)] px-4 py-2 text-sm font-black text-white">Buscar</button>
+            </div>
+            <div className="mt-4 max-h-80 space-y-2 overflow-auto">
+              {products.map((p) => (
+                <button key={p.id} onClick={() => linkProduct(p)} disabled={linking} className="w-full rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3 text-left transition hover:border-[color:var(--chart-blue)]/50">
+                  <div className="font-bold text-[color:var(--text)]">{p.descripcion}</div>
+                  <div className="mt-1 text-xs text-[color:var(--text-3)]">{p.marca} · {p.tipo} · <span className="font-mono">{p.sku}</span></div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// Re-export para mantener compat con import en App.tsx (si alguien importa default).
+// Nota: el export `SalesBISellersPage` ya está named arriba.
+// `pct` se re-exporta acá porque el viejo código del módulo lo exportaba implícitamente.
+export { pct };
