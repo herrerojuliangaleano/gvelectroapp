@@ -633,21 +633,28 @@ function MixBars({ current, previous, limit }: { current: SalesBIMixMetric[]; pr
     const prev = previous.find((p) => p.name === row.name);
     return { name: row.name, actual: row.total_cobrado, anterior: prev?.total_cobrado ?? 0 };
   });
+  // Si el período comparado no tiene datos para ninguna marca/categoría,
+  // ocultamos la serie "Anterior" + su entrada en la leyenda. Mostrarla
+  // vacía confundía: el legend aparecía pero las barras grises no.
+  const hasAnterior = data.some((d) => d.anterior > 0);
 
   // En mobile flippeamos a layout horizontal (barras horizontales, labels
   // en Y axis sin rotación). Antes las labels iban rotadas a -12° y
   // quedaban cortadas / superpuestas.
   if (!isDesktop) {
-    const height = Math.max(180, data.length * 36 + 60);
+    const rowH = hasAnterior ? 42 : 30;            // 2 barras vs 1 barra
+    const height = Math.max(200, data.length * rowH + 70);
     return (
       <ResponsiveContainer width="100%" height={height}>
-        <BarChart data={data} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 0 }}>
+        <BarChart data={data} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 0 }} barCategoryGap={hasAnterior ? '18%' : '12%'}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" horizontal={false} />
           <XAxis type="number" stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(0)}M`} />
-          <YAxis type="category" dataKey="name" stroke="var(--text-3)" tick={{ fontSize: 11 }} width={88} interval={0} />
+          <YAxis type="category" dataKey="name" stroke="var(--text-3)" tick={{ fontSize: 11 }} width={92} interval={0} />
           <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
-          <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-2)' }} />
-          <Bar dataKey="anterior" name="Anterior" fill="var(--chart-ghost)" radius={[0, 4, 4, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+          {hasAnterior && <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-2)' }} />}
+          {hasAnterior && (
+            <Bar dataKey="anterior" name="Anterior" fill="var(--chart-ghost)" radius={[0, 4, 4, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+          )}
           <Bar dataKey="actual" name="Actual" fill="var(--chart-teal)" radius={[0, 4, 4, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={100} animationEasing={CHART_ANIM.easing} />
         </BarChart>
       </ResponsiveContainer>
@@ -656,13 +663,15 @@ function MixBars({ current, previous, limit }: { current: SalesBIMixMetric[]; pr
 
   return (
     <ResponsiveContainer width="100%" height={260}>
-      <BarChart data={data}>
+      <BarChart data={data} barCategoryGap={hasAnterior ? '20%' : '14%'}>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
         <XAxis dataKey="name" stroke="var(--text-3)" tick={{ fontSize: 10 }} interval={0} angle={-12} textAnchor="end" height={50} />
         <YAxis stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(0)}M`} />
         <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
-        <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-2)' }} />
-        <Bar dataKey="anterior" name="Anterior" fill="var(--chart-ghost)" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+        {hasAnterior && <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-2)' }} />}
+        {hasAnterior && (
+          <Bar dataKey="anterior" name="Anterior" fill="var(--chart-ghost)" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+        )}
         <Bar dataKey="actual" name="Actual" fill="var(--chart-teal)" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={100} animationEasing={CHART_ANIM.easing} />
       </BarChart>
     </ResponsiveContainer>
@@ -732,22 +741,34 @@ function CompareBrandBars({ data, aName, bName }: { data: Array<{ name: string; 
 }
 
 function TopProductsList({ products, totalCobrado }: { products: SalesBITopProduct[]; totalCobrado: number }) {
+  // Layout: arriba el título a 2 líneas (line-clamp) + abajo una fila con
+  // sku/marca a la izquierda y precio/unidades a la derecha. Antes el
+  // título iba en la misma fila que el precio con `truncate` + `flex-1`,
+  // pero en mobile la columna derecha quedaba pisada y el título se
+  // cortaba mid-palabra sin ellipsis. Stack vertical lo resuelve.
   return (
     <div className="space-y-2">
       {products.map((p) => {
         const share = totalCobrado ? (p.total_cobrado / totalCobrado) * 100 : 0;
         return (
-          <div key={`${p.sku}-${p.producto}`} className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3">
-            <div className="flex items-start justify-between gap-3">
+          <div key={`${p.sku}-${p.producto}`} className="overflow-hidden rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3">
+            {/* Título a hasta 2 líneas. Si entra todo, ocupa 1; si no, 2 con ellipsis. */}
+            <div
+              className="text-sm font-bold leading-snug text-[color:var(--text)]"
+              style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+            >
+              {p.producto}
+            </div>
+            <div className="mt-1.5 flex items-end justify-between gap-2">
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-bold text-[color:var(--text)]">{p.producto}</div>
-                <div className="mt-0.5 text-[11px] text-[color:var(--text-3)]">
-                  <span className="font-mono">{p.sku}</span> · {p.marca}
+                <div className="truncate text-[11px] text-[color:var(--text-3)]">
+                  <span className="font-mono">{p.sku || '-'}</span>
+                  {p.marca ? <> · {p.marca}</> : null}
                 </div>
               </div>
-              <div className="text-right">
-                <div className="text-sm font-black tabular-nums text-[color:var(--chart-positive)]">{money(p.total_cobrado)}</div>
-                <div className="text-[10px] tabular-nums text-[color:var(--text-3)]">{num(p.unidades)} u · {share.toFixed(1)}%</div>
+              <div className="shrink-0 text-right">
+                <div className="whitespace-nowrap text-sm font-black tabular-nums text-[color:var(--chart-positive)]">{money(p.total_cobrado)}</div>
+                <div className="whitespace-nowrap text-[10px] tabular-nums text-[color:var(--text-3)]">{num(p.unidades)} u · {share.toFixed(1)}%</div>
               </div>
             </div>
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[color:var(--surface)]">
