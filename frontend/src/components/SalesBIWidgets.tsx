@@ -77,6 +77,8 @@ export function buildSparkline(prev: number, value: number, points = 12) {
 export interface TabDef {
   value: string;
   label: string;
+  /** Versión abreviada para mobile (<sm). Si no se pasa, usa `label`. */
+  shortLabel?: string;
   icon?: ReactNode;
 }
 
@@ -84,7 +86,14 @@ export function Tabs({
   value, onValueChange, tabs,
 }: { value: string; onValueChange: (v: string) => void; tabs: TabDef[] }) {
   return (
-    <div role="tablist" className="inline-flex h-11 items-center gap-1 rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)] p-1">
+    // En mobile el container scrollea horizontal si hace falta. En desktop
+    // queda como pill compacto. `whitespace-nowrap` en cada botón evita que
+    // labels largos como "Comparador V vs V" se partan en varias líneas.
+    <div
+      role="tablist"
+      className="-mx-1 flex h-11 items-center gap-1 overflow-x-auto rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)] p-1 px-2 sm:inline-flex sm:overflow-visible sm:px-1"
+      style={{ scrollbarWidth: 'none' }}
+    >
       {tabs.map((tab) => {
         const active = tab.value === value;
         return (
@@ -94,14 +103,16 @@ export function Tabs({
             aria-selected={active}
             onClick={() => onValueChange(tab.value)}
             className={cn(
-              'inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-all duration-200',
+              'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl px-3 py-1.5 text-xs font-bold transition-all duration-200 sm:gap-2 sm:px-4 sm:py-2 sm:text-sm',
               active
                 ? 'bg-[color:var(--chart-blue)] text-white shadow-[0_4px_14px_-4px_var(--chart-blue)]'
                 : 'text-[color:var(--text-2)] hover:bg-white/[0.04] hover:text-white',
             )}
           >
             {tab.icon}
-            <span>{tab.label}</span>
+            {/* Label corto en mobile, largo en desktop */}
+            <span className="sm:hidden">{tab.shortLabel || tab.label}</span>
+            <span className="hidden sm:inline">{tab.label}</span>
           </button>
         );
       })}
@@ -215,13 +226,15 @@ export function KpiCard({
   const gradId = `kpi-grad-${label.replace(/[^a-z0-9]/gi, '')}`;
   const data = buildSparkline(safePrev, value, 14);
   return (
-    <div className="group relative overflow-hidden rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)]/60 p-4 backdrop-blur transition-colors duration-200 hover:border-[color:var(--border-strong)]">
-      <div className="flex items-start justify-between gap-2">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--text-3)]">{label}</div>
+    // Padding y tipografía responsive — en mobile el card es más chico para
+    // que entren 2-3 por fila sin gigantes.
+    <div className="group relative overflow-hidden rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)]/60 p-3 backdrop-blur transition-colors duration-200 hover:border-[color:var(--border-strong)] sm:p-4">
+      <div className="flex items-start justify-between gap-1.5 sm:gap-2">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[color:var(--text-3)] sm:text-[11px] sm:tracking-[0.18em]">{label}</div>
         {Number.isFinite(rawPct) && safePrev !== 0 && (
           <div
             className={cn(
-              'inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums',
+              'inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums sm:px-2 sm:text-[11px]',
               positiveDirection ? 'text-[color:var(--chart-positive)]' : 'text-[color:var(--chart-negative)]',
             )}
             style={{
@@ -230,13 +243,13 @@ export function KpiCard({
                 : 'color-mix(in oklch, var(--chart-negative) 14%, transparent)',
             }}
           >
-            {up ? <ArrowUpRight size={11} /> : <ArrowDownRight size={11} />}
+            {up ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />}
             {up ? '+' : ''}{rawPct.toFixed(1)}%
           </div>
         )}
       </div>
-      <div className="mt-1.5 text-2xl font-black tracking-tight text-[color:var(--text)] tabular-nums">{format(value)}</div>
-      <div className="mt-3 h-12">
+      <div className="mt-1 text-base font-black tracking-tight text-[color:var(--text)] tabular-nums sm:mt-1.5 sm:text-2xl">{format(value)}</div>
+      <div className="mt-2 h-9 sm:mt-3 sm:h-12">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={data} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
             <defs>

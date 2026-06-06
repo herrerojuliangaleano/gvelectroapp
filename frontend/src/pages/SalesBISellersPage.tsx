@@ -274,10 +274,10 @@ export function SalesBISellersPage() {
         value={tab}
         onValueChange={(v) => setTab(v as typeof tab)}
         tabs={[
-          { value: 'overview', label: 'Overview',          icon: <BarChart3 size={14} /> },
-          { value: 'profile',  label: 'Perfil vendedor',   icon: <Users size={14} /> },
-          { value: 'compare',  label: 'Comparador V vs V', icon: <Trophy size={14} /> },
-          { value: 'periods',  label: 'Comparar períodos', icon: <Calendar size={14} /> },
+          { value: 'overview', label: 'Overview',          shortLabel: 'Overview', icon: <BarChart3 size={14} /> },
+          { value: 'profile',  label: 'Perfil vendedor',   shortLabel: 'Perfil',   icon: <Users size={14} /> },
+          { value: 'compare',  label: 'Comparador V vs V', shortLabel: 'V vs V',   icon: <Trophy size={14} /> },
+          { value: 'periods',  label: 'Comparar períodos', shortLabel: 'Períodos', icon: <Calendar size={14} /> },
         ]}
       />
 
@@ -460,8 +460,8 @@ function OverviewTab({
 
   return (
     <div className="space-y-5">
-      {/* KPI cards (6) */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+      {/* KPI cards (6) — 2 cols en mobile, 3 en tablet, 6 en desktop */}
+      <div className="grid gap-2.5 grid-cols-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-6">
         <KpiCard label="Cobrado"          accent="positive" value={totals.total_cobrado}   prev={baseTotals?.total_cobrado}   format={money} />
         <KpiCard label="Vendido"          accent="blue"     value={totals.total_vendido}   prev={baseTotals?.total_vendido}   format={money} />
         <KpiCard label="Unidades"         accent="violet"   value={totals.unidades}        prev={baseTotals?.unidades}        format={num} />
@@ -735,8 +735,8 @@ function ProfileTab({
         </div>
       </div>
 
-      {/* KPIs personales */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+      {/* KPIs personales — mismo grid responsive */}
+      <div className="grid gap-2.5 grid-cols-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-6">
         <KpiCard label="Cobrado"         accent="positive" value={seller.total_cobrado} prev={prevSellerDelta?.delta?.total_cobrado?.comparado} format={money} />
         <KpiCard label="Unidades"        accent="blue"     value={seller.unidades}      prev={prevSellerDelta?.delta?.unidades?.comparado}      format={num} />
         <KpiCard label="Tickets"         accent="amber"    value={seller.tickets}       prev={prevSellerDelta?.delta?.tickets?.comparado}       format={num} />
