@@ -15,6 +15,7 @@ function SheetCard({
   onToggle,
   replace,
   onReplaceChange,
+  fileName,
 }: {
   id: string;
   sheet: SalesBISheetPreview;
@@ -22,6 +23,10 @@ function SheetCard({
   onToggle: () => void;
   replace: boolean;
   onReplaceChange: (v: boolean) => void;
+  /** Nombre del archivo Excel del que vino la hoja (multi-file). Si está
+   *  presente, se muestra como badge para distinguir hojas con el mismo
+   *  nombre que vinieron de archivos distintos. */
+  fileName?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasConflict = !!sheet.conflict_import_id;
@@ -38,6 +43,11 @@ function SheetCard({
         />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
+            {fileName && (
+              <span className="rounded bg-white/10 px-2 py-0.5 text-[10px] font-mono text-white/55" title={fileName}>
+                📄 {fileName.length > 28 ? fileName.slice(0, 25) + '…' : fileName}
+              </span>
+            )}
             <span className="font-bold text-white">{sheet.sheet_name}</span>
             <span className={`rounded px-2 py-0.5 text-xs font-medium ${sheet.tipo === 'online' ? 'bg-sky-500/20 text-sky-300' : 'bg-emerald-500/20 text-emerald-300'}`}>
               {sheet.tipo === 'online' ? 'WEB' : 'Local'}
@@ -161,11 +171,16 @@ const SUCURSALES = ['Caseros', 'Canning', 'Norcenter', 'Lanus'] as const;
 type SucursalName = typeof SUCURSALES[number];
 
 type SheetEntry = {
-  id: string; // `${sucursal}::${sheet_name}` for url tab, `file::${sheet_name}` for file tab
+  id: string;
+  // - URL tab: `${sucursal}::${sheet_name}`
+  // - File tab: `file::${fileName}::${sheet_name}` — el fileName es necesario
+  //   en el id para que dos archivos con una hoja llamada "Planilla" no
+  //   colisionen cuando subís múltiples archivos en simultáneo.
   sheet: SalesBISheetPreview;
   url: string;       // empty for file tab
   sucursal: string;  // empty for file tab (auto-detected)
-  temp_file_key: string | null; // only for file tab
+  temp_file_key: string | null; // only for file tab — uno por archivo
+  fileName?: string; // solo file tab — para mostrarlo en la UI
 };
 
 export function SalesBIImportPage() {
@@ -174,6 +189,9 @@ export function SalesBIImportPage() {
   const [tab, setTab] = useState<'file' | 'url'>('file');
   const [urls, setUrls] = useState<Record<SucursalName, string>>({ Caseros: '', Canning: '', Norcenter: '', Lanus: '' });
   const [analyzing, setAnalyzing] = useState(false);
+  // Progreso del análisis cuando se suben varios archivos a la vez
+  // ({ done: cuántos archivos terminaron, total: cuántos en total }).
+  const [analyzeProgress, setAnalyzeProgress] = useState<{ done: number; total: number } | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
   const [entries, setEntries] = useState<SheetEntry[]>([]);
@@ -189,28 +207,53 @@ export function SalesBIImportPage() {
   }
 
   async function handleAnalyzeFile() {
-    const file = fileRef.current?.files?.[0];
-    if (!file) return;
+    const files = fileRef.current?.files;
+    if (!files || files.length === 0) return;
+    const fileList = Array.from(files);
     setError('');
     setEntries([]);
     setSelected(new Set());
     setReplaceMap({});
     setAnalyzing(true);
+    setAnalyzeProgress({ done: 0, total: fileList.length });
+    // Analizamos en batches de 3 para no saturar el backend si el usuario
+    // sube 30+ planillas. Cada análisis sube el archivo, lo parsea y
+    // devuelve un `temp_file_key` que después usamos en confirm.
+    const batchSize = 3;
+    const allEntries: SheetEntry[] = [];
+    const errors: string[] = [];
     try {
-      const result = await salesBIAnalyzeFile(file);
-      const newEntries: SheetEntry[] = result.sheets.map((sheet) => ({
-        id: `file::${sheet.sheet_name}`,
-        sheet,
-        url: '',
-        sucursal: '',
-        temp_file_key: result.temp_file_key,
-      }));
-      setEntries(newEntries);
-      setSelected(new Set(newEntries.filter((e) => e.sheet.ok && e.sheet.total_records > 0).map((e) => e.id)));
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Error al analizar el archivo.');
+      for (let i = 0; i < fileList.length; i += batchSize) {
+        const batch = fileList.slice(i, i + batchSize);
+        const results = await Promise.allSettled(batch.map((f) => salesBIAnalyzeFile(f)));
+        results.forEach((res, idx) => {
+          const file = batch[idx];
+          if (res.status === 'rejected') {
+            const msg = res.reason instanceof Error ? res.reason.message : String(res.reason);
+            errors.push(`${file.name}: ${msg}`);
+            return;
+          }
+          for (const sheet of res.value.sheets) {
+            allEntries.push({
+              id: `file::${file.name}::${sheet.sheet_name}`,
+              sheet,
+              url: '',
+              sucursal: '',
+              temp_file_key: res.value.temp_file_key,
+              fileName: file.name,
+            });
+          }
+        });
+        setAnalyzeProgress({ done: Math.min(i + batchSize, fileList.length), total: fileList.length });
+      }
+      setEntries(allEntries);
+      setSelected(new Set(allEntries.filter((e) => e.sheet.ok && e.sheet.total_records > 0).map((e) => e.id)));
+      if (errors.length > 0) setError(`Algunas planillas fallaron: ${errors.join(' | ')}`);
     } finally {
       setAnalyzing(false);
+      setAnalyzeProgress(null);
+      // Limpiar el input para que el usuario pueda re-seleccionar los mismos archivos
+      if (fileRef.current) fileRef.current.value = '';
     }
   }
 
@@ -256,19 +299,42 @@ export function SalesBIImportPage() {
       const selectedEntries = entries.filter((e) => selected.has(e.id));
 
       if (tab === 'file') {
-        const entry = selectedEntries[0];
-        if (!entry) return;
-        const temp_file_key = entry.temp_file_key ?? undefined;
-        const replace = selectedEntries.some((e) => replaceMap[e.id]);
-        const result = await salesBIConfirm({
-          temp_file_key,
-          sheet_names: selectedEntries.map((e) => e.sheet.sheet_name),
-          replace,
-        });
-        if (result.imported.length > 0) {
+        // Agrupamos por temp_file_key: cada archivo subido tiene su propio
+        // key, y cada confirm SOLO importa hojas de UN file_key. Si el
+        // usuario subió 37 planillas, hacemos 37 (o N≤37 según cuántas
+        // tengan hojas seleccionadas) llamadas a /confirm.
+        const byKey = new Map<string, { temp_file_key: string; sheetNames: string[]; replace: boolean; fileName: string }>();
+        for (const e of selectedEntries) {
+          if (!e.temp_file_key) continue;
+          const group = byKey.get(e.temp_file_key) ?? {
+            temp_file_key: e.temp_file_key,
+            sheetNames: [],
+            replace: false,
+            fileName: e.fileName || 'archivo',
+          };
+          group.sheetNames.push(e.sheet.sheet_name);
+          if (replaceMap[e.id]) group.replace = true;
+          byKey.set(e.temp_file_key, group);
+        }
+
+        let totalImported = 0;
+        const allSkipped: string[] = [];
+        // Secuencial: cada confirm puede insertar muchos records, no queremos
+        // 37 transacciones contra Postgres en paralelo.
+        for (const { temp_file_key, sheetNames, replace, fileName } of byKey.values()) {
+          try {
+            const result = await salesBIConfirm({ temp_file_key, sheet_names: sheetNames, replace });
+            totalImported += result.imported.length;
+            allSkipped.push(...result.skipped.map((s) => `${fileName}: ${s.reason}`));
+          } catch (e) {
+            allSkipped.push(`${fileName}: ${e instanceof Error ? e.message : 'Error'}`);
+          }
+        }
+
+        if (totalImported > 0) {
           navigate('/ventas-bi/historial');
         } else {
-          setError('Ninguna hoja fue importada. ' + result.skipped.map((s) => s.reason).join(' '));
+          setError('Ninguna hoja fue importada. ' + allSkipped.join(' | '));
         }
         return;
       }
@@ -346,15 +412,35 @@ export function SalesBIImportPage() {
 
         {tab === 'file' ? (
           <div
-            onClick={() => fileRef.current?.click()}
-            className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-white/20 p-8 text-center transition-all hover:border-indigo-500/50 hover:bg-indigo-500/5"
+            onClick={() => { if (!analyzing) fileRef.current?.click(); }}
+            className={`flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-8 text-center transition-all ${analyzing ? 'border-indigo-500/60 bg-indigo-500/10 cursor-wait' : 'border-white/20 hover:border-indigo-500/50 hover:bg-indigo-500/5'}`}
           >
-            <FileSpreadsheet size={32} className="text-white/30" />
-            <div>
-              <p className="text-sm font-medium text-white/70">Hacé clic para seleccionar un archivo</p>
-              <p className="text-xs text-white/40">.xlsx — máx. 20 MB</p>
-            </div>
-            <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleAnalyzeFile} />
+            {analyzing && analyzeProgress ? (
+              <>
+                <Loader2 size={32} className="animate-spin text-indigo-300" />
+                <div>
+                  <p className="text-sm font-medium text-white">Analizando planillas…</p>
+                  <p className="mt-1 text-xs text-white/60">
+                    {analyzeProgress.done} de {analyzeProgress.total} ({Math.round((analyzeProgress.done / analyzeProgress.total) * 100)}%)
+                  </p>
+                </div>
+                <div className="mt-2 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-indigo-500 transition-[width] duration-300 ease-out"
+                    style={{ width: `${(analyzeProgress.done / analyzeProgress.total) * 100}%` }}
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <FileSpreadsheet size={32} className="text-white/30" />
+                <div>
+                  <p className="text-sm font-medium text-white/70">Hacé clic para seleccionar uno o varios archivos</p>
+                  <p className="text-xs text-white/40">.xlsx — máx. 20 MB por archivo (podés subir 30+ en una sola carga)</p>
+                </div>
+              </>
+            )}
+            <input ref={fileRef} type="file" accept=".xlsx,.xls" multiple className="hidden" onChange={handleAnalyzeFile} />
           </div>
         ) : (
           <div className="space-y-3">
@@ -401,9 +487,41 @@ export function SalesBIImportPage() {
       {/* Preview */}
       {entries.length > 0 && (
         <div className="space-y-4">
-          <h2 className="text-lg font-bold text-white">
-            Resultado del análisis — {entries.length} hoja{entries.length !== 1 ? 's' : ''}
-          </h2>
+          {/* Summary header */}
+          {(() => {
+            const fileNames = new Set(entries.map((e) => e.fileName).filter(Boolean));
+            const totalSheets = entries.length;
+            const selCount = entries.filter((e) => selected.has(e.id)).length;
+            const okCount = entries.filter((e) => e.sheet.ok && e.sheet.total_records > 0).length;
+            return (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-lg font-bold text-white">
+                  Resultado del análisis
+                  <span className="ml-2 text-sm font-normal text-white/55">
+                    {fileNames.size > 0 && `${fileNames.size} archivo${fileNames.size !== 1 ? 's' : ''} · `}
+                    {totalSheets} hoja{totalSheets !== 1 ? 's' : ''} ({okCount} con datos)
+                  </span>
+                </h2>
+                <div className="flex items-center gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setSelected(new Set(entries.filter((e) => e.sheet.ok && e.sheet.total_records > 0).map((e) => e.id)))}
+                    className="rounded-lg border border-white/15 px-3 py-1.5 font-bold text-white/70 hover:bg-white/10 hover:text-white"
+                  >
+                    Seleccionar todas ({okCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelected(new Set())}
+                    disabled={selCount === 0}
+                    className="rounded-lg border border-white/15 px-3 py-1.5 font-bold text-white/70 hover:bg-white/10 hover:text-white disabled:opacity-40"
+                  >
+                    Limpiar
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
 
           <div className="space-y-3">
             {entries.map((entry) => (
@@ -415,6 +533,7 @@ export function SalesBIImportPage() {
                 onToggle={() => toggleSheet(entry.id)}
                 replace={!!replaceMap[entry.id]}
                 onReplaceChange={(v) => setReplaceMap((prev) => ({ ...prev, [entry.id]: v }))}
+                fileName={entry.fileName}
               />
             ))}
           </div>

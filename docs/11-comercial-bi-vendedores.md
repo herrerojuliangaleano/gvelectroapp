@@ -171,6 +171,42 @@ apagado:
 Cuando esta encendido, aparecen los dos date pickers de "Comparar
 desde/hasta" y se restaura el comportamiento original.
 
+### Importacion de multiples planillas Excel a la vez
+
+Desde junio/2026 la pantalla `/ventas-bi/importar` (tab "Archivo Excel")
+soporta seleccionar **N archivos en la misma carga**. Pensado para el
+caso real: el usuario tiene 30+ planillas del dia (varias sucursales x
+local/web x dias diferentes) y no quiere subirlas de a una.
+
+Flujo:
+
+1. El input file ahora tiene `multiple` -> el dialogo nativo permite
+   `Ctrl+click` / `Shift+click` para seleccionar varios.
+2. Para evitar saturar el backend, el frontend dispara `analyze` en
+   **batches de 3 archivos en paralelo** (`Promise.allSettled`):
+   - Si uno falla, el resto sigue y el error se agrega a la lista.
+   - Hay un indicador de progreso "Analizando N de M (X%)".
+3. Cada archivo produce su propio `temp_file_key` (igual que antes).
+   El frontend agrupa las hojas resultantes por `fileName` para que
+   no haya conflicto si dos archivos tienen una hoja "Planilla".
+4. El id de cada entry pasa a ser `file::<fileName>::<sheet_name>`
+   para garantizar unicidad.
+5. Cada `SheetCard` muestra un badge con el nombre del archivo origen
+   (`📄 <fileName>`) cuando viene de carga multi-file.
+6. Al confirmar, las entries seleccionadas se agrupan por
+   `temp_file_key` y se llaman `N` veces a `/sales-bi/confirm`
+   (una por archivo). **Secuencial** para no abrir 37 transacciones
+   contra Postgres al mismo tiempo.
+
+Errores de archivos individuales NO bloquean a los que andan: el
+resumen final lista cuales fallaron por nombre.
+
+Backend: no se cambio. Los endpoints `/analyze` y `/confirm` siempre
+manejaron un archivo a la vez; la "batchificacion" es 100% en el
+frontend. Si en el futuro hace falta procesar todos en una sola
+transaccion (para tener atomicidad), habria que agregar un
+`/confirm-batch` que reciba `[{temp_file_key, sheet_names}]`.
+
 ### Regla contable por remito
 
 Para evitar diferencias por la forma en que se cargan las planillas, el
