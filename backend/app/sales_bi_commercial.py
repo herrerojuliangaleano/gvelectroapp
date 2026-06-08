@@ -631,6 +631,64 @@ def _ranked(source: dict[str, dict[str, Any]], *, include_costs: bool, include_m
     return items[:limit]
 
 
+def _record_dimension(record: SalesBICommercialRecord, dimension: str) -> str:
+    if dimension == "date":
+        return _fmt_date(record.fecha)
+    if dimension == "brand":
+        return str(record.marca or "Sin marca")
+    if dimension == "line":
+        return str(record.tipo_producto or "Sin linea")
+    if dimension == "branch":
+        return str(record.sucursal or "Sin sucursal")
+    if dimension == "sale_type":
+        return str(record.tipo_venta or "Sin tipo")
+    return "Sin dato"
+
+
+def _cross_matrix(
+    records: list[SalesBICommercialRecord],
+    *,
+    row_dimension: str,
+    col_dimension: str,
+    include_costs: bool,
+    include_margin: bool,
+    row_limit: int = 20,
+    col_limit: int = 20,
+) -> list[dict[str, Any]]:
+    rows: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
+    row_totals: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    for record in records:
+        row = _record_dimension(record, row_dimension)
+        col = _record_dimension(record, col_dimension)
+        _add_metric(rows[row][col], record)
+        _add_metric(row_totals[row], record)
+
+    out: list[dict[str, Any]] = []
+    for row_name, cols in rows.items():
+        row_metric = _finalize_metric(
+            row_totals[row_name],
+            include_costs=include_costs,
+            include_margin=include_margin,
+        )
+        total_reference = float(row_metric.get("total_vendido") or 0.0)
+        out.append({
+            "name": row_name,
+            "total": row_metric,
+            "items": _ranked(
+                cols,
+                include_costs=include_costs,
+                include_margin=include_margin,
+                total_reference=total_reference,
+                limit=col_limit,
+            ),
+        })
+    if row_dimension == "date":
+        out.sort(key=lambda row: str(row["name"]))
+    else:
+        out.sort(key=lambda row: (float(row["total"].get("total_vendido") or 0), int(row["total"].get("unidades") or 0)), reverse=True)
+    return out[:row_limit]
+
+
 def _common_report(
     records: list[SalesBICommercialRecord],
     bounds: tuple[date, date],
@@ -647,6 +705,7 @@ def _common_report(
     branches: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
     tipo_venta: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
     products: dict[tuple[str, str], dict[str, Any]] = {}
+    product_branch_metrics: dict[tuple[str, str], dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
     unmatched = 0
 
     for record in records:
@@ -663,9 +722,12 @@ def _common_report(
                 "producto": key[1],
                 "marca": str(record.marca or ""),
                 "tipo_producto": str(record.tipo_producto or ""),
+                "branches": set(),
                 **_metric_bucket(),
             }
         _add_metric(products[key], record)
+        products[key]["branches"].add(str(record.sucursal or "Sin sucursal"))
+        _add_metric(product_branch_metrics[key][str(record.sucursal or "Sin sucursal")], record)
         if str(record.match_status or "unmatched") == "unmatched":
             unmatched += 1
 
@@ -682,6 +744,36 @@ def _common_report(
         for value in products.values()
     ]
     top_products.sort(key=lambda row: (float(row["total_vendido"]), int(row["unidades"])), reverse=True)
+    branch_names = sorted(str(name) for name in branches.keys())
+    branch_count = len(branch_names)
+    product_presence = []
+    for key, value in products.items():
+        present_branches = sorted(str(name) for name in (value.get("branches") or set()))
+        branch_metrics = []
+        for branch_name in present_branches:
+            branch_metrics.append({
+                "name": branch_name,
+                **_finalize_metric(
+                    product_branch_metrics[key][branch_name],
+                    include_costs=include_costs,
+                    include_margin=include_margin,
+                    total_reference=float(value.get("total_vendido") or 0.0),
+                ),
+            })
+        product_presence.append({
+            "sku": value["sku"],
+            "producto": value["producto"],
+            "marca": value["marca"],
+            "tipo_producto": value["tipo_producto"],
+            "branches": present_branches,
+            "branch_count": len(present_branches),
+            "is_common": branch_count > 0 and len(present_branches) == branch_count,
+            "is_exclusive": len(present_branches) == 1,
+            "exclusive_branch": present_branches[0] if len(present_branches) == 1 else "",
+            "branch_metrics": branch_metrics,
+            **_finalize_metric(value, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference),
+        })
+    product_presence.sort(key=lambda row: (int(row.get("branch_count") or 0), float(row.get("total_vendido") or 0.0)), reverse=True)
     return {
         "filters": {
             "fecha_desde": bounds[0].isoformat(),
@@ -701,7 +793,63 @@ def _common_report(
         "line_mix": _ranked(lines, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference),
         "branch_mix": _ranked(branches, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference),
         "sale_type_mix": _ranked(tipo_venta, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference),
-        "top_products": top_products[:25],
+        "branch_line_matrix": _cross_matrix(
+            records,
+            row_dimension="branch",
+            col_dimension="line",
+            include_costs=include_costs,
+            include_margin=include_margin,
+        ),
+        "branch_brand_matrix": _cross_matrix(
+            records,
+            row_dimension="branch",
+            col_dimension="brand",
+            include_costs=include_costs,
+            include_margin=include_margin,
+        ),
+        "brand_line_matrix": _cross_matrix(
+            records,
+            row_dimension="brand",
+            col_dimension="line",
+            include_costs=include_costs,
+            include_margin=include_margin,
+        ),
+        "brand_branch_matrix": _cross_matrix(
+            records,
+            row_dimension="brand",
+            col_dimension="branch",
+            include_costs=include_costs,
+            include_margin=include_margin,
+        ),
+        "date_line_matrix": _cross_matrix(
+            records,
+            row_dimension="date",
+            col_dimension="line",
+            include_costs=include_costs,
+            include_margin=include_margin,
+            row_limit=90,
+            col_limit=20,
+        ),
+        "date_brand_matrix": _cross_matrix(
+            records,
+            row_dimension="date",
+            col_dimension="brand",
+            include_costs=include_costs,
+            include_margin=include_margin,
+            row_limit=90,
+            col_limit=20,
+        ),
+        "date_branch_matrix": _cross_matrix(
+            records,
+            row_dimension="date",
+            col_dimension="branch",
+            include_costs=include_costs,
+            include_margin=include_margin,
+            row_limit=90,
+            col_limit=20,
+        ),
+        "top_products": top_products[:250],
+        "product_presence": product_presence[:300],
         "unmatched_count": unmatched,
     }
 
@@ -796,7 +944,12 @@ def build_branches_report(
     report["ranking"] = report["branch_mix"]
     if not kwargs.get("presentation"):
         report["opportunities"] = _branch_opportunities(fecha_desde, fecha_hasta, **kwargs)
-        report["profiles"] = _branch_profiles(report["branch_mix"], report["line_mix"])
+        report["profiles"] = _branch_profiles(
+            report["branch_mix"],
+            report["line_mix"],
+            report["branch_line_matrix"],
+            report["branch_brand_matrix"],
+        )
     else:
         report["opportunities"] = []
         report["profiles"] = []
@@ -912,22 +1065,83 @@ def _branch_opportunities(fecha_desde: str | None, fecha_hasta: str | None, **kw
     return out[:12]
 
 
-def _branch_profiles(branch_mix: list[dict[str, Any]], line_mix: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _branch_profiles(
+    branch_mix: list[dict[str, Any]],
+    line_mix: list[dict[str, Any]],
+    branch_line_matrix: list[dict[str, Any]],
+    branch_brand_matrix: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    company_line_share = {str(row.get("name") or ""): float(row.get("participacion_pct") or 0.0) for row in line_mix}
+    avg_pvp = sum(float(row.get("pvp_promedio") or 0.0) for row in branch_mix) / max(1, len(branch_mix))
+    avg_products = sum(float(row.get("productos") or 0.0) for row in branch_mix) / max(1, len(branch_mix))
+    lines_by_branch = {str(row.get("name") or ""): row for row in branch_line_matrix}
+    brands_by_branch = {str(row.get("name") or ""): row for row in branch_brand_matrix}
     profiles = []
-    top_line = line_mix[0]["name"] if line_mix else ""
     for branch in branch_mix:
+        branch_name = str(branch.get("name") or "")
         avg = float(branch.get("pvp_promedio") or 0)
-        if avg >= 700000:
-            profile = "Ticket alto"
-        elif avg <= 250000:
-            profile = "Ticket bajo / rotacion"
+        if avg >= avg_pvp * 1.15:
+            pvp_profile = "ALTO"
+            profile = "PVP promedio alto"
+        elif avg <= avg_pvp * 0.85:
+            pvp_profile = "BAJO"
+            profile = "PVP promedio bajo / rotacion"
         else:
-            profile = "Ticket medio"
+            pvp_profile = "MEDIO"
+            profile = "PVP promedio medio"
+
+        products = float(branch.get("productos") or 0.0)
+        if products >= avg_products * 1.15:
+            variety = "ALTA"
+        elif products <= avg_products * 0.85:
+            variety = "BAJA"
+        else:
+            variety = "MEDIA"
+
+        line_items = list((lines_by_branch.get(branch_name) or {}).get("items") or [])
+        brand_items = list((brands_by_branch.get(branch_name) or {}).get("items") or [])
+        top_line = str(line_items[0].get("name") or "") if line_items else ""
+        top_brand = str(brand_items[0].get("name") or "") if brand_items else ""
+        fortalezas: list[str] = []
+        debilidades: list[str] = []
+        for item in line_items:
+            line_name = str(item.get("name") or "")
+            branch_share = float(item.get("participacion_pct") or 0.0)
+            network_share = company_line_share.get(line_name, 0.0)
+            if branch_share >= network_share + 5:
+                fortalezas.append(line_name)
+            elif network_share >= 4 and branch_share <= network_share - 4:
+                debilidades.append(line_name)
+        if not fortalezas and top_line:
+            fortalezas.append(top_line)
+
+        notes = []
+        if pvp_profile == "ALTO":
+            notes.append("Sucursal de PVP promedio alto")
+        elif pvp_profile == "BAJO":
+            notes.append("Sucursal de rotacion y PVP promedio mas bajo")
+        else:
+            notes.append("Sucursal de PVP promedio medio")
+        if variety == "ALTA":
+            notes.append("Mayor variedad relativa de SKUs")
+        elif variety == "BAJA":
+            notes.append("Surtido mas concentrado")
+        if top_line:
+            notes.append(f"Fuerte en {top_line}")
+        if top_brand:
+            notes.append(f"Marca principal: {top_brand}")
+
         profiles.append({
-            "sucursal": branch.get("name"),
+            "sucursal": branch_name,
             "profile": profile,
             "pvp_promedio": avg,
-            "top_line_context": top_line,
+            "pvp_profile": pvp_profile,
+            "variety": variety,
+            "fortalezas": fortalezas[:3],
+            "debilidades": debilidades[:3],
+            "top_line": top_line,
+            "top_brand": top_brand,
+            "profile_notes": notes,
         })
     return profiles
 

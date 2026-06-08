@@ -43,6 +43,64 @@ Reglas:
 - `Venta Total Grupo Economico` se usa solo como validacion opcional de total consolidado.
 - No cargar vendedores, remitos, senas ni medios de pago desde esta fuente.
 
+## Adaptacion UI desde prototipo
+
+Se revisaron los prototipos `Retail Ops Hub` y `electrogv-ic-modulo` para tomar
+la experiencia de uso, no su modelo de datos.
+
+Ideas adoptadas:
+
+- Selector global de metrica: unidades, PVP o ambos.
+- Graficos interactivos con click para filtrar o comparar.
+- Heatmap `Sucursal x Linea`.
+- Perfil de sucursal con fortalezas, debilidades y notas automaticas.
+- Comparadores sugeridos de marcas cercanas por volumen.
+- Vista de presentacion segura para reuniones externas.
+- Tabs internas del modulo:
+  - Resumen.
+  - Marcas.
+  - Lineas.
+  - Sucursales.
+  - Productos.
+  - Comparador.
+  - Periodos.
+  - Oportunidades.
+  - Presentacion.
+
+Decision importante:
+
+- Esta capa no habla de tickets porque `Ventas Vs. Costos` no trae tickets,
+  remitos ni recibos.
+- La metrica operativa equivalente aca es `registros` o `SKUs`, segun el caso.
+- La informacion de tickets, senas, recibos y vendedores queda para la capa
+  operativa futura basada en planillas diarias.
+
+Implementacion real:
+
+- La UI consulta en paralelo los reportes de marcas, lineas y sucursales porque
+  cada endpoint aporta una seccion distinta del dashboard.
+- `brands/report` alimenta resumen, marcas, productos, comparador, periodos y
+  presentacion.
+- `lines/report` alimenta la vista de lineas y lideres por linea.
+- `branches/report` alimenta perfiles de sucursal y oportunidades internas.
+- Los reportes devuelven matrices cruzadas para graficos avanzados:
+  - `branch_line_matrix`.
+  - `branch_brand_matrix`.
+  - `brand_line_matrix`.
+  - `brand_branch_matrix`.
+  - `date_line_matrix`.
+  - `date_brand_matrix`.
+  - `date_branch_matrix`.
+- Los reportes tambien devuelven `product_presence` para detectar:
+  - productos vendidos en todas las sucursales;
+  - productos exclusivos de una sola sucursal;
+  - mix de cada producto por sucursal.
+- El comparador permite comparar hasta tres marcas en simultaneo.
+- La pestana de oportunidades combina:
+  - sucursal debil por linea;
+  - marca en caida o crecimiento contra periodo anterior;
+  - linea desbalanceada por volumen alto y PVP relativo bajo.
+
 ## Modelo de datos
 
 ### `sales_bi_commercial_batches`
@@ -104,6 +162,9 @@ Objetivo:
 - Mix por sucursal, linea y tipo de venta.
 - Top productos.
 - Comparaciones sugeridas entre marcas cercanas por volumen.
+- Evolucion diaria de la marca seleccionada.
+- Mix por sucursal y por linea.
+- Comparador triple entre marcas.
 
 Uso esperado:
 
@@ -121,6 +182,9 @@ Objetivo:
 - Marcas lideres por linea.
 - Sucursales fuertes o debiles por linea.
 - Oportunidades internas futuras.
+- Heatmap `Sucursal x Linea`.
+- Evolucion diaria de lineas principales.
+- Composicion stacked por sucursal.
 
 ### Sucursales
 
@@ -129,13 +193,53 @@ Ruta: `/ventas-bi/sucursales`
 Objetivo:
 
 - Perfil comercial de cada sucursal.
-- Ticket/PVP promedio por linea.
+- PVP promedio por linea o producto.
 - Mix de marcas y tipos.
 - Productos movidos.
 - Oportunidades internas: lineas con baja participacion contra el consolidado.
+- Evolucion diaria de la sucursal.
+- Radar contra promedio de red.
+- Perfil de PVP, variedad de surtido, fortalezas y debilidades.
 
 Ejemplo: Norcenter puede aparecer como sucursal de PVP promedio alto y baja
 participacion en ciertas lineas.
+
+### Productos
+
+Ruta interna: pestana `Productos`.
+
+Objetivo:
+
+- Buscar por SKU, descripcion, marca o linea.
+- Ordenar por PVP, unidades o PVP promedio.
+- Ver costo y margen solo si el usuario tiene permiso interno.
+- Detectar surtido comun: productos vendidos en todas las sucursales.
+- Detectar productos exclusivos: productos vendidos en una sola sucursal.
+
+### Periodos
+
+Ruta interna: pestana `Periodos`.
+
+Objetivo:
+
+- Comparar periodo actual contra periodo anterior equivalente.
+- Mostrar evolucion diaria superpuesta.
+- Comparar marca por marca.
+- Comparar sucursal por sucursal usando vendido, registros y PVP promedio.
+
+Nota: se usa `registros`, no `tickets`, porque `Ventas Vs. Costos` no trae
+remitos ni recibos.
+
+### Oportunidades
+
+Ruta interna: pestana `Oportunidades`.
+
+Objetivo:
+
+- Mostrar alertas internas priorizadas por severidad.
+- Explicar regla, metrica, observado, umbral, formula y accion sugerida.
+- Filtrar por `critica`, `alta`, `media` e `info`.
+- Mantener recomendaciones internas fuera de la vista de presentacion.
 
 ## Modo interno vs modo presentacion
 

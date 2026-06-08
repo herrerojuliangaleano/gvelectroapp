@@ -697,6 +697,12 @@ export interface SalesBICommercialMix extends SalesBICommercialMetric {
   name: string;
 }
 
+export interface SalesBICommercialMatrixRow {
+  name: string;
+  total: SalesBICommercialMetric;
+  items: SalesBICommercialMix[];
+}
+
 export interface SalesBICommercialDaily extends SalesBICommercialMetric {
   fecha: string;
 }
@@ -706,6 +712,15 @@ export interface SalesBICommercialProduct extends SalesBICommercialMetric {
   producto: string;
   marca: string;
   tipo_producto: string;
+}
+
+export interface SalesBICommercialProductPresence extends SalesBICommercialProduct {
+  branches: string[];
+  branch_count: number;
+  is_common: boolean;
+  is_exclusive: boolean;
+  exclusive_branch: string;
+  branch_metrics: SalesBICommercialMix[];
 }
 
 export interface SalesBICommercialReport {
@@ -727,7 +742,15 @@ export interface SalesBICommercialReport {
   line_mix: SalesBICommercialMix[];
   branch_mix: SalesBICommercialMix[];
   sale_type_mix: SalesBICommercialMix[];
+  branch_line_matrix: SalesBICommercialMatrixRow[];
+  branch_brand_matrix: SalesBICommercialMatrixRow[];
+  brand_line_matrix: SalesBICommercialMatrixRow[];
+  brand_branch_matrix: SalesBICommercialMatrixRow[];
+  date_line_matrix: SalesBICommercialMatrixRow[];
+  date_brand_matrix: SalesBICommercialMatrixRow[];
+  date_branch_matrix: SalesBICommercialMatrixRow[];
   top_products: SalesBICommercialProduct[];
+  product_presence: SalesBICommercialProductPresence[];
   unmatched_count: number;
   compare_candidates?: Array<{ brand: string; suggested_compare: string; reason: string }>;
   brands_by_line?: Array<{ line: string; leaders: SalesBICommercialMix[] }>;
@@ -739,7 +762,18 @@ export interface SalesBICommercialReport {
     gap_pct: number;
     reason: string;
   }>;
-  profiles?: Array<{ sucursal: string; profile: string; pvp_promedio: number; top_line_context: string }>;
+  profiles?: Array<{
+    sucursal: string;
+    profile: string;
+    pvp_promedio: number;
+    pvp_profile: 'ALTO' | 'MEDIO' | 'BAJO' | string;
+    variety: 'ALTA' | 'MEDIA' | 'BAJA' | string;
+    fortalezas: string[];
+    debilidades: string[];
+    top_line: string;
+    top_brand: string;
+    profile_notes: string[];
+  }>;
 }
 
 export interface SalesBICommercialAnalyzeSheet {
