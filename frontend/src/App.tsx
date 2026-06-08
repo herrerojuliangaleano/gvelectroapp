@@ -56,6 +56,8 @@ import { SalesBIImportPage } from './pages/SalesBIImportPage';
 import { SalesBIHistoryPage } from './pages/SalesBIHistoryPage';
 import { SalesBIDetailPage } from './pages/SalesBIDetailPage';
 import { SalesBISellersPage } from './pages/SalesBISellersPage';
+import { SalesBICommercialPage } from './pages/SalesBICommercialPage';
+import { SalesBICommercialImportPage } from './pages/SalesBICommercialImportPage';
 import { canUsePriceAnnouncements } from './priceAnnouncementsAccess';
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -174,6 +176,10 @@ export default function App() {
       <Route path="/solicitudes-venta-web/nueva" element={<Navigate to="/venta/nueva" replace />} />
       <Route path="/solicitudes-venta-web/:id" element={<ProtectedLayout permission="sales_web.view"><SalesWebDetailPage /></ProtectedLayout>} />
       <Route path="/ventas-bi" element={<ProtectedLayout permission="sales_bi.view"><SalesBIHistoryPage /></ProtectedLayout>} />
+      <Route path="/ventas-bi/marcas" element={<ProtectedLayout permission="sales_bi.view"><SalesBICommercialPage /></ProtectedLayout>} />
+      <Route path="/ventas-bi/lineas" element={<ProtectedLayout permission="sales_bi.view"><SalesBICommercialPage /></ProtectedLayout>} />
+      <Route path="/ventas-bi/sucursales" element={<ProtectedLayout permission="sales_bi.view"><SalesBICommercialPage /></ProtectedLayout>} />
+      <Route path="/ventas-bi/comercial/importar" element={<ProtectedLayout permission="sales_bi.import"><SalesBICommercialImportPage /></ProtectedLayout>} />
       <Route path="/ventas-bi/historial" element={<ProtectedLayout permission="sales_bi.view"><SalesBIHistoryPage /></ProtectedLayout>} />
       <Route path="/ventas-bi/vendedores" element={<ProtectedLayout permission="sales_bi.view"><SalesBISellersPage /></ProtectedLayout>} />
       <Route path="/ventas-bi/importar" element={<ProtectedLayout permission="sales_bi.import"><SalesBIImportPage /></ProtectedLayout>} />

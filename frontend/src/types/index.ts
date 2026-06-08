@@ -681,6 +681,156 @@ export interface SalesBISellersCompare {
   }>;
 }
 
+export interface SalesBICommercialMetric {
+  total_vendido: number;
+  unidades: number;
+  lineas: number;
+  productos: number;
+  pvp_promedio: number;
+  participacion_pct: number;
+  costo_total?: number;
+  diferencia?: number;
+  margen_porcentaje?: number;
+}
+
+export interface SalesBICommercialMix extends SalesBICommercialMetric {
+  name: string;
+}
+
+export interface SalesBICommercialDaily extends SalesBICommercialMetric {
+  fecha: string;
+}
+
+export interface SalesBICommercialProduct extends SalesBICommercialMetric {
+  sku: string;
+  producto: string;
+  marca: string;
+  tipo_producto: string;
+}
+
+export interface SalesBICommercialReport {
+  filters: Record<string, unknown> & {
+    fecha_desde: string;
+    fecha_hasta: string;
+  };
+  source: string;
+  coverage_note: string;
+  presentation: boolean;
+  sensitive: {
+    include_costs: boolean;
+    include_margin: boolean;
+  };
+  totals: SalesBICommercialMetric;
+  daily_series: SalesBICommercialDaily[];
+  ranking: SalesBICommercialMix[];
+  brand_mix: SalesBICommercialMix[];
+  line_mix: SalesBICommercialMix[];
+  branch_mix: SalesBICommercialMix[];
+  sale_type_mix: SalesBICommercialMix[];
+  top_products: SalesBICommercialProduct[];
+  unmatched_count: number;
+  compare_candidates?: Array<{ brand: string; suggested_compare: string; reason: string }>;
+  brands_by_line?: Array<{ line: string; leaders: SalesBICommercialMix[] }>;
+  opportunities?: Array<{
+    sucursal: string;
+    tipo_producto: string;
+    participacion_sucursal: number;
+    participacion_empresa: number;
+    gap_pct: number;
+    reason: string;
+  }>;
+  profiles?: Array<{ sucursal: string; profile: string; pvp_promedio: number; top_line_context: string }>;
+}
+
+export interface SalesBICommercialAnalyzeSheet {
+  sheet_name: string;
+  sucursal: string;
+  period_start: string;
+  period_end: string;
+  total_records: number;
+  total_units: number;
+  total_pvp: number;
+  total_costo: number;
+  total_diferencia: number;
+  matched_products: number;
+  corrected_products: number;
+  unmatched_products: number;
+  warnings: string[];
+  ok: boolean;
+  records_preview: Array<{
+    fecha: string;
+    sucursal: string;
+    tipo_venta: string;
+    marca: string;
+    tipo_producto: string;
+    sku: string;
+    descripcion: string;
+    cantidad: number;
+    pvp: number;
+    match_status: string;
+  }>;
+}
+
+export interface SalesBICommercialAnalyzeResponse {
+  source_kind: string;
+  source_name: string;
+  period_start: string;
+  period_end: string;
+  total_records: number;
+  total_units: number;
+  total_pvp: number;
+  total_costo: number;
+  total_diferencia: number;
+  matched_products: number;
+  corrected_products: number;
+  unmatched_products: number;
+  warnings: string[];
+  sheets: SalesBICommercialAnalyzeSheet[];
+  temp_file_key: string | null;
+}
+
+export interface SalesBICommercialOptions {
+  period_start: string;
+  period_end: string;
+  marcas: string[];
+  tipos: string[];
+  sucursales: string[];
+  empresas: SalesBIEmpresaOption[];
+  tipo_ventas: string[];
+}
+
+export interface SalesBICommercialBatch {
+  id: number;
+  source_kind: string;
+  fuente_nombre: string;
+  fuente_url: string;
+  status: string;
+  period_start: string;
+  period_end: string;
+  total_records: number;
+  total_units: number;
+  total_pvp: number;
+  total_costo: number;
+  total_diferencia: number;
+  created_at: string;
+  voided_at: string;
+  void_reason: string;
+  warnings: string[];
+}
+
+export interface SalesBICommercialUnmatchedProduct {
+  sku: string;
+  sku_normalized: string;
+  descripcion: string;
+  descripcion_normalized: string;
+  marca: string;
+  tipo_producto: string;
+  lineas: number;
+  unidades: number;
+  total_vendido: number;
+  sucursales: string[];
+}
+
 export interface BudgetCreatedLine {
   sku?: string | null;
   producto: string;

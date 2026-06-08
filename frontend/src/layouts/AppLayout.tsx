@@ -170,9 +170,13 @@ export function AppLayout({ children }: { children: ReactNode }) {
         { to: '/comercial/psi', icon: <TrendingUp size={16} />, label: 'PSI · Planificación', permission: 'psi.view' },
         { to: '/comercial/anuncios-precios', icon: <Megaphone size={16} />, label: 'Anuncios de precios', visible: canUsePriceAnnouncements(user) },
         { to: '/ventas-bi', icon: <BarChart2 size={16} />, label: 'Inteligencia comercial', children: [
+          { to: '/ventas-bi/marcas', icon: <BarChart2 size={14} />, label: 'Marcas', permission: 'sales_bi.view' },
+          { to: '/ventas-bi/lineas', icon: <TrendingUp size={14} />, label: 'Lineas', permission: 'sales_bi.view' },
+          { to: '/ventas-bi/sucursales', icon: <Building2 size={14} />, label: 'Sucursales', permission: 'sales_bi.view' },
           { to: '/ventas-bi/vendedores', icon: <Users size={14} />, label: 'Vendedores', permission: 'sales_bi.view' },
           { to: '/ventas-bi/historial', icon: <History size={14} />, label: 'Historial', permission: 'sales_bi.view' },
-          { to: '/ventas-bi/importar', icon: <FileSpreadsheet size={14} />, label: 'Importar planilla', permission: 'sales_bi.import' },
+          { to: '/ventas-bi/importar', icon: <FileSpreadsheet size={14} />, label: 'Importar planilla diaria', permission: 'sales_bi.import' },
+          { to: '/ventas-bi/comercial/importar', icon: <FileSpreadsheet size={14} />, label: 'Importar Ventas Vs Costos', permission: 'sales_bi.import' },
         ] },
       ] },
       { title: 'Gestión interna', items: [
@@ -239,7 +243,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
       ),
       // Reportes / BI
       ...(can('sales_bi.view')
-        ? [{ to: '/ventas-bi/historial', icon: <BarChart2 size={19} />, label: 'Reportes', permission: 'sales_bi.view' }]
+        ? [{ to: '/ventas-bi/marcas', icon: <BarChart2 size={19} />, label: 'Reportes', permission: 'sales_bi.view' }]
         : canSeeWarrantyDashboard(user)
           ? [{ to: '/warranties/dashboard', icon: <BarChart2 size={19} />, label: 'Reportes', visible: true }]
           : []

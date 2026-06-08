@@ -238,7 +238,11 @@ Rutas:
 
 - `/ventas-bi`
 - `/ventas-bi/historial`
+- `/ventas-bi/marcas`
+- `/ventas-bi/lineas`
+- `/ventas-bi/sucursales`
 - `/ventas-bi/importar`
+- `/ventas-bi/comercial/importar`
 - `/ventas-bi/importaciones/:importId`
 
 API: `/api/sales-bi/*`
@@ -270,6 +274,24 @@ analitica con registros, saldos, costos y margenes.
 - Importar ventas agrupando por remito: el sistema suma productos, suma medios
   de pago, reparte cobros cargados en una sola fila y calcula saldos/senas.
 - Interpretar `MONTO INGRESADO` de ventas online como transferencia real.
+- Importar `Ventas Vs. Costos` en una capa comercial separada para analizar
+  marcas, lineas/tipos y sucursales.
+
+### BI comercial de productos
+
+Rutas:
+
+- `/ventas-bi/marcas`
+- `/ventas-bi/lineas`
+- `/ventas-bi/sucursales`
+- `/ventas-bi/comercial/importar`
+
+Esta capa usa exclusivamente `Ventas Vs. Costos`. Sirve para ver que productos,
+marcas y lineas mueve cada sucursal. No incluye medios de pago, senas, recibos,
+remitos ni vendedores.
+
+El modo presentacion oculta costo, diferencia, margen y oportunidades internas,
+para poder usar el dashboard o los exports en reuniones con marcas.
 
 ### Informe de vendedores
 

@@ -42,6 +42,9 @@ Routers/capas ya portados a PostgreSQL en Fase 2.5:
 - `backend/app/routers/sales_web/`.
 - `backend/app/routers/payroll/`.
 - `backend/app/sales_bi.py` y `backend/app/routers/sales_bi.py`.
+- `backend/app/sales_bi_commercial.py` y
+  `backend/app/models/sales_bi_commercial.py` para `Ventas Vs. Costos`.
+  No mezclar esta fuente con `sales_imports` / `sales_records`.
 - `backend/app/product_catalog.py`, `backend/app/routers/products.py` y
   `backend/app/routers/price_cost_updates/`.
 - `backend/app/routers/remitos/`, via `backend/app/remitos_db.py` y

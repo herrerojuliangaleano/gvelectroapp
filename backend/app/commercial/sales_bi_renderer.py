@@ -296,3 +296,190 @@ def render_sellers_xlsx(report: dict[str, Any], *, compare: dict[str, Any] | Non
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
+
+
+def render_commercial_pdf(report: dict[str, Any], *, logo: str = "GV", title: str = "Informe comercial") -> bytes:
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),
+        rightMargin=12 * mm,
+        leftMargin=12 * mm,
+        topMargin=10 * mm,
+        bottomMargin=10 * mm,
+    )
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("CommercialH1", parent=styles["Heading1"], fontSize=22, leading=26, textColor=colors.white, spaceAfter=4)
+    small = ParagraphStyle("CommercialSmall", parent=styles["Normal"], fontSize=8, leading=10, textColor=colors.white)
+    section = ParagraphStyle("CommercialSection", parent=styles["Heading2"], fontSize=13, leading=16, textColor=NAVY, spaceBefore=8, spaceAfter=6)
+
+    logo_p = _logo_path(logo)
+    logo_flow = RLImage(str(logo_p), width=22 * mm, height=22 * mm, kind="proportional") if logo_p else Paragraph("", small)
+    header = Table(
+        [[
+            [
+                Paragraph(title, h1),
+                Paragraph(f"Fuente: Ventas Vs. Costos · Periodo: {_period(report)} · Generado {datetime.now().strftime('%d/%m/%Y %H:%M')}", small),
+            ],
+            logo_flow,
+        ]],
+        colWidths=[235 * mm, 28 * mm],
+        style=TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), NAVY),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 12),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+            ("TOPPADDING", (0, 0), (-1, -1), 12),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+        ]),
+    )
+
+    totals = report.get("totals", {}) or {}
+    kpis = [
+        ("Vendido", _money(totals.get("total_vendido"))),
+        ("Unidades", _num(totals.get("unidades"))),
+        ("Lineas", _num(totals.get("lineas"))),
+        ("Productos", _num(totals.get("productos"))),
+        ("PVP prom.", _money(totals.get("pvp_promedio"))),
+    ]
+    if "margen_porcentaje" in totals:
+        kpis.append(("Margen", f"{float(totals.get('margen_porcentaje') or 0):.1f}%"))
+    kpi_table = Table(
+        [[Paragraph(f"<b>{label}</b><br/><font size='14'>{value}</font>", styles["Normal"]) for label, value in kpis]],
+        colWidths=[260 / len(kpis) * mm] * len(kpis),
+        style=TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), SOFT),
+            ("TEXTCOLOR", (0, 0), (-1, -1), TEXT),
+            ("BOX", (0, 0), (-1, -1), 0.25, colors.HexColor("#D8E1F0")),
+            ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D8E1F0")),
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ]),
+    )
+
+    story: list[Any] = [header, Spacer(1, 8), kpi_table, Spacer(1, 8)]
+    story.append(Paragraph("Evolucion y mix", section))
+    story.append(Table(
+        [[
+            _line_chart(report.get("daily_series", []), width=250, height=120),
+            _bar_chart(report.get("ranking", report.get("brand_mix", [])), label_key="name", value_key="total_vendido", width=250, height=120, color=BLUE),
+            _bar_chart(report.get("branch_mix", []), label_key="name", value_key="total_vendido", width=250, height=120, color=GREEN),
+        ]],
+        colWidths=[88 * mm, 88 * mm, 88 * mm],
+    ))
+
+    rows = [["Nombre", "Vendido", "Unidades", "Lineas", "PVP prom.", "Part. %"]]
+    if report.get("sensitive", {}).get("include_margin"):
+        rows[0].append("Margen %")
+    for item in (report.get("ranking") or report.get("brand_mix") or [])[:14]:
+        row = [
+            item.get("name", ""),
+            _money(item.get("total_vendido")),
+            _num(item.get("unidades")),
+            _num(item.get("lineas")),
+            _money(item.get("pvp_promedio")),
+            f"{float(item.get('participacion_pct') or 0):.1f}%",
+        ]
+        if report.get("sensitive", {}).get("include_margin"):
+            row.append(f"{float(item.get('margen_porcentaje') or 0):.1f}%")
+        rows.append(row)
+    story.append(Paragraph("Ranking", section))
+    rank_widths = [70 * mm, 34 * mm, 22 * mm, 20 * mm, 30 * mm, 20 * mm]
+    if report.get("sensitive", {}).get("include_margin"):
+        rank_widths.append(20 * mm)
+    story.append(Table(rows, repeatRows=1, colWidths=rank_widths, style=TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D8E1F0")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, SOFT]),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+    ])))
+
+    products = report.get("top_products", [])[:12]
+    if products:
+        story.append(Paragraph("Top productos", section))
+        product_rows = [["SKU", "Producto", "Marca", "Linea", "Vendido", "Unid."]]
+        for product in products:
+            product_rows.append([
+                product.get("sku", ""),
+                str(product.get("producto", ""))[:56],
+                product.get("marca", ""),
+                product.get("tipo_producto", ""),
+                _money(product.get("total_vendido")),
+                _num(product.get("unidades")),
+            ])
+        story.append(Table(product_rows, repeatRows=1, colWidths=[28 * mm, 88 * mm, 30 * mm, 30 * mm, 28 * mm, 16 * mm], style=TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#D8E1F0")),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ])))
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
+def render_commercial_xlsx(report: dict[str, Any], *, logo: str = "GV", title: str = "Informe comercial") -> bytes:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Resumen"
+    ws["A1"] = title
+    ws["A1"].font = Font(size=18, bold=True, color="0F2449")
+    ws["A2"] = f"Fuente: Ventas Vs. Costos"
+    ws["A3"] = f"Periodo: {_period(report)}"
+    logo_p = _logo_path(logo)
+    if logo_p:
+        try:
+            img = XLImage(str(logo_p))
+            img.width = 64
+            img.height = 64
+            ws.add_image(img, "F1")
+        except Exception:
+            pass
+
+    totals = report.get("totals", {}) or {}
+    rows = [["Metrica", "Valor"]]
+    for key in ("total_vendido", "unidades", "lineas", "productos", "pvp_promedio", "costo_total", "diferencia", "margen_porcentaje"):
+        if key in totals:
+            rows.append([key, totals.get(key)])
+    _write_rows(ws, rows)
+
+    ws_rank = wb.create_sheet("Ranking")
+    headers = ["Nombre", "Vendido", "Unidades", "Lineas", "Productos", "PVP promedio", "Participacion %"]
+    if report.get("sensitive", {}).get("include_costs"):
+        headers.extend(["Costo total", "Diferencia"])
+    if report.get("sensitive", {}).get("include_margin"):
+        headers.append("Margen %")
+    rank_rows = [headers]
+    for item in (report.get("ranking") or report.get("brand_mix") or []):
+        row = [item.get("name"), item.get("total_vendido"), item.get("unidades"), item.get("lineas"), item.get("productos"), item.get("pvp_promedio"), item.get("participacion_pct")]
+        if report.get("sensitive", {}).get("include_costs"):
+            row.extend([item.get("costo_total"), item.get("diferencia")])
+        if report.get("sensitive", {}).get("include_margin"):
+            row.append(item.get("margen_porcentaje"))
+        rank_rows.append(row)
+    _write_rows(ws_rank, rank_rows)
+
+    ws_daily = wb.create_sheet("Evolucion")
+    _write_rows(ws_daily, [["Fecha", "Vendido", "Unidades", "Lineas"]] + [[
+        d.get("fecha"), d.get("total_vendido"), d.get("unidades"), d.get("lineas")
+    ] for d in report.get("daily_series", [])])
+
+    ws_products = wb.create_sheet("Top productos")
+    product_headers = ["SKU", "Producto", "Marca", "Linea", "Vendido", "Unidades", "Lineas", "PVP promedio"]
+    _write_rows(ws_products, [product_headers] + [[
+        p.get("sku"), p.get("producto"), p.get("marca"), p.get("tipo_producto"),
+        p.get("total_vendido"), p.get("unidades"), p.get("lineas"), p.get("pvp_promedio")
+    ] for p in report.get("top_products", [])])
+
+    if report.get("opportunities"):
+        ws_opp = wb.create_sheet("Oportunidades")
+        _write_rows(ws_opp, [["Sucursal", "Linea", "Part. sucursal", "Part. empresa", "Gap", "Motivo"]] + [[
+            o.get("sucursal"), o.get("tipo_producto"), o.get("participacion_sucursal"),
+            o.get("participacion_empresa"), o.get("gap_pct"), o.get("reason")
+        ] for o in report.get("opportunities", [])])
+
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()

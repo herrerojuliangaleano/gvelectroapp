@@ -163,6 +163,20 @@ Bearer token salvo endpoints publicos como `/api/health` y login.
 | GET | `/api/sales-bi/sellers/compare` | Comparacion periodo vs periodo y vendedor vs vendedor. |
 | POST | `/api/sales-bi/sellers/export-pdf` | Exporta informe de vendedores a PDF. |
 | POST | `/api/sales-bi/sellers/export-xlsx` | Exporta informe de vendedores a Excel. |
+| POST | `/api/sales-bi/commercial/analyze` | Analiza Excel `Ventas Vs. Costos` sin importar datos. |
+| POST | `/api/sales-bi/commercial/confirm` | Confirma un lote comercial de `Ventas Vs. Costos`. |
+| GET | `/api/sales-bi/commercial/batches` | Lista lotes comerciales importados. |
+| POST | `/api/sales-bi/commercial/batches/{batch_id}/void` | Anula un lote comercial. |
+| GET | `/api/sales-bi/commercial/options` | Opciones de filtros comerciales. |
+| GET | `/api/sales-bi/commercial/unmatched-products` | Productos comerciales sin match/correccion. |
+| POST | `/api/sales-bi/commercial/corrections` | Crea correccion reutilizable de SKU/marca/tipo/descripcion para la capa comercial. |
+| POST | `/api/sales-bi/commercial/rematch-products` | Recalcula matching comercial con correcciones vigentes. |
+| GET | `/api/sales-bi/brands/report` | Dashboard comercial por marcas. |
+| GET | `/api/sales-bi/brands/compare` | Comparacion comercial de marcas por periodo. |
+| GET | `/api/sales-bi/lines/report` | Dashboard comercial por lineas/tipos. |
+| GET | `/api/sales-bi/branches/report` | Dashboard comercial por sucursales. |
+| POST | `/api/sales-bi/commercial/export-pdf` | Exporta informe comercial a PDF. |
+| POST | `/api/sales-bi/commercial/export-xlsx` | Exporta informe comercial a Excel. |
 
 ## Productos
 

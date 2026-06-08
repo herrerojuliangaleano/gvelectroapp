@@ -16,6 +16,11 @@ import type {
   SalesBISellersReport,
   SalesBISellersCompare,
   SalesBISellersOptions,
+  SalesBICommercialAnalyzeResponse,
+  SalesBICommercialBatch,
+  SalesBICommercialOptions,
+  SalesBICommercialReport,
+  SalesBICommercialUnmatchedProduct,
   SalesBIUnmatchedProduct,
   SalesBIProductAlias,
   BackupInfo,
@@ -955,6 +960,93 @@ export async function exportSalesBISellersXlsx(payload: {
   titulo?: string;
 }): Promise<Blob> {
   return requestBlob('/api/sales-bi/sellers/export-xlsx', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function salesBICommercialAnalyzeFile(file: File): Promise<SalesBICommercialAnalyzeResponse> {
+  const form = new FormData();
+  form.append('file', file);
+  return request('/api/sales-bi/commercial/analyze', { method: 'POST', body: form });
+}
+
+export async function salesBICommercialConfirm(payload: {
+  temp_file_key: string;
+  fuente_nombre?: string;
+}): Promise<{ ok: boolean; batch_id: number; period_start: string; period_end: string; total_records: number; total_pvp: number }> {
+  return request('/api/sales-bi/commercial/confirm', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function fetchSalesBICommercialBatches(params: {
+  status?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<{ items: SalesBICommercialBatch[]; total: number }> {
+  return request(`/api/sales-bi/commercial/batches${buildQs(params)}`);
+}
+
+export async function voidSalesBICommercialBatch(id: number, reason = ''): Promise<{ ok: boolean }> {
+  return request(`/api/sales-bi/commercial/batches/${encodeURIComponent(String(id))}/void`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+
+export async function fetchSalesBICommercialOptions(): Promise<SalesBICommercialOptions> {
+  return request('/api/sales-bi/commercial/options');
+}
+
+type CommercialReportParams = {
+  fecha_desde?: string;
+  fecha_hasta?: string;
+  empresa?: string;
+  sucursal?: string;
+  sucursales?: string;
+  tipo_venta?: string;
+  marca?: string;
+  marcas?: string;
+  tipo_producto?: string;
+  tipos?: string;
+  presentation?: boolean;
+};
+
+export async function fetchSalesBICommercialReport(kind: 'brands' | 'lines' | 'branches', params: CommercialReportParams = {}): Promise<SalesBICommercialReport> {
+  const endpoint = kind === 'brands' ? '/api/sales-bi/brands/report' : kind === 'lines' ? '/api/sales-bi/lines/report' : '/api/sales-bi/branches/report';
+  return request(`${endpoint}${buildQs(params)}`);
+}
+
+export async function fetchSalesBICommercialUnmatched(params: { q?: string; limit?: number } = {}): Promise<{ items: SalesBICommercialUnmatchedProduct[] }> {
+  return request(`/api/sales-bi/commercial/unmatched-products${buildQs(params)}`);
+}
+
+export async function createSalesBICommercialCorrection(payload: {
+  match_sku?: string;
+  match_description?: string;
+  match_brand?: string;
+  match_type?: string;
+  corrected_sku?: string;
+  corrected_description?: string;
+  corrected_brand?: string;
+  corrected_type?: string;
+  product_id?: number | null;
+  note?: string;
+}): Promise<Record<string, unknown>> {
+  return request('/api/sales-bi/commercial/corrections', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function rematchSalesBICommercial(): Promise<{ ok: boolean; matched: number; corrected: number; unmatched: number; total: number }> {
+  return request('/api/sales-bi/commercial/rematch-products', { method: 'POST' });
+}
+
+export async function exportSalesBICommercialPdf(payload: CommercialReportParams & {
+  kind?: 'brands' | 'lines' | 'branches';
+  logo?: string;
+  titulo?: string;
+}): Promise<Blob> {
+  return requestBlob('/api/sales-bi/commercial/export-pdf', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function exportSalesBICommercialXlsx(payload: CommercialReportParams & {
+  kind?: 'brands' | 'lines' | 'branches';
+  logo?: string;
+  titulo?: string;
+}): Promise<Blob> {
+  return requestBlob('/api/sales-bi/commercial/export-xlsx', { method: 'POST', body: JSON.stringify(payload) });
 }
 
 

@@ -22,10 +22,11 @@ from . import remitos       # noqa: F401
 from . import sales_web     # noqa: F401
 from . import sales_bi      # noqa: F401
 from . import products      # noqa: F401
+from . import sales_bi_commercial  # noqa: F401
 from . import system        # noqa: F401
 from . import sales_psi     # noqa: F401  (módulo Comercial · PSI)
 
 __all__ = [
     "org", "auth", "employees", "warranties", "remitos",
-    "sales_web", "sales_bi", "products", "system", "sales_psi",
+    "sales_web", "sales_bi", "products", "sales_bi_commercial", "system", "sales_psi",
 ]

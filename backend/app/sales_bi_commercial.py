@@ -1,0 +1,1094 @@
+from __future__ import annotations
+
+from collections import defaultdict
+from datetime import date, timedelta
+from typing import Any
+
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy.orm import selectinload
+
+from .commercial.matching import build_product_indexes, normalize_descripcion, resolve_product
+from .db import db_session
+from .models.auth import User
+from .models.org import Branch, Company
+from .models.products import Product
+from .models.sales_bi_commercial import (
+    SalesBICommercialBatch,
+    SalesBICommercialCorrection,
+    SalesBICommercialRecord,
+)
+from .product_catalog import sku_key
+from .sales_bi import (
+    _decimal,
+    _fmt_date,
+    _fmt_dt,
+    _norm,
+    _num,
+    _parse_date,
+    _parse_date_value,
+    _parse_num,
+    find_branch,
+    read_excel,
+)
+
+
+COMMERCIAL_SOURCE_KIND = "ventas_vs_costos"
+
+SOURCE_SHEETS: dict[str, str] = {
+    "VENTAS GV TOTAL": "Caseros",
+    "VENTAS ABC CANNING": "Canning",
+    "VENTAS ABC NORTE": "Norcenter",
+    "VENTAS ABC SUR": "Lanus",
+}
+CONSOLIDATED_SHEET = "VENTA TOTAL GRUPO ECONOMICO"
+
+HEADER_ALIASES: dict[str, tuple[str, ...]] = {
+    "fecha": ("FECHA",),
+    "tipo_venta": ("TIPO DE VENTA", "TIPO VENTA"),
+    "marca": ("MARCA",),
+    "tipo": ("TIPO", "LINEA"),
+    "descripcion": ("DESCRIPCION", "DESCRIPCIÓN", "PRODUCTO"),
+    "sku": ("SKU", "CODIGO", "CÓDIGO"),
+    "cantidad": ("CANTIDAD", "CANT"),
+    "pvp": ("PVP", "VALOR", "PRECIO"),
+    "costo": ("COSTO",),
+    "diferencia": ("DIFERENCIA", "MARGEN"),
+}
+REQUIRED_HEADERS = ("fecha", "tipo_venta", "marca", "tipo", "descripcion", "sku", "cantidad", "pvp", "costo")
+
+
+def _normalize_sheet_name(name: str) -> str:
+    return _norm(name).replace("-", " ")
+
+
+def _normalize_sku(value: Any) -> str:
+    return sku_key(value)
+
+
+def _tipo_venta(value: Any) -> str:
+    text = _norm(value)
+    if "ON LINE" in text or "ONLINE" in text or text == "WEB":
+        return "online"
+    if "LOCAL" in text:
+        return "local"
+    return str(value or "").strip().lower() or "local"
+
+
+def _user_id_from_username(session, username: str) -> int | None:
+    uname = str(username or "").strip().lower()
+    if not uname:
+        return None
+    return session.scalar(select(User.id).where(User.username == uname))
+
+
+def _date_bounds(fecha_desde: str | None, fecha_hasta: str | None) -> tuple[date, date]:
+    fd = _parse_date_value(fecha_desde) if fecha_desde else None
+    fh = _parse_date_value(fecha_hasta) if fecha_hasta else None
+    if fd is None or fh is None:
+        with db_session() as session:
+            min_max = session.execute(
+                select(func.min(SalesBICommercialRecord.fecha), func.max(SalesBICommercialRecord.fecha))
+                .join(SalesBICommercialBatch, SalesBICommercialBatch.id == SalesBICommercialRecord.batch_id)
+                .where(SalesBICommercialBatch.status == "activo")
+            ).one()
+        today = date.today()
+        fd = fd or min_max[0] or (today - timedelta(days=29))
+        fh = fh or min_max[1] or today
+    if fh < fd:
+        fd, fh = fh, fd
+    return fd, fh
+
+
+def _find_header_row(rows: list[list]) -> tuple[int, dict[str, int]] | None:
+    alias_lookup: dict[str, str] = {}
+    for key, aliases in HEADER_ALIASES.items():
+        for alias in aliases:
+            alias_lookup[_norm(alias)] = key
+
+    for row_idx, row in enumerate(rows[:40]):
+        col_map: dict[str, int] = {}
+        for col_idx, cell in enumerate(row):
+            key = alias_lookup.get(_norm(cell))
+            if key and key not in col_map:
+                col_map[key] = col_idx
+        if all(key in col_map for key in REQUIRED_HEADERS):
+            return row_idx, col_map
+    return None
+
+
+def _cell(row: list, col_map: dict[str, int], key: str) -> Any:
+    idx = col_map.get(key)
+    if idx is None or idx >= len(row):
+        return None
+    return row[idx]
+
+
+def _load_match_context(session) -> tuple[dict[str, dict], list[SalesBICommercialCorrection]]:
+    products = session.scalars(select(Product).where(Product.is_active.is_(True))).all()
+    indexes = build_product_indexes(products)
+    corrections = session.scalars(select(SalesBICommercialCorrection)).all()
+    return indexes, list(corrections)
+
+
+def _find_correction(
+    corrections: list[SalesBICommercialCorrection],
+    *,
+    sku_norm: str,
+    desc_norm: str,
+    brand_norm: str,
+    type_norm: str,
+) -> SalesBICommercialCorrection | None:
+    for correction in corrections:
+        score = 0
+        required = 0
+        for attr, value in (
+            ("match_sku_norm", sku_norm),
+            ("match_desc_norm", desc_norm),
+            ("match_brand_norm", brand_norm),
+            ("match_type_norm", type_norm),
+        ):
+            expected = str(getattr(correction, attr) or "")
+            if expected:
+                required += 1
+                if expected == value:
+                    score += 1
+        if required and score == required:
+            return correction
+    return None
+
+
+def _apply_commercial_match(
+    rec: dict[str, Any],
+    indexes: dict[str, dict],
+    corrections: list[SalesBICommercialCorrection],
+) -> dict[str, Any]:
+    sku_norm = _normalize_sku(rec.get("sku_raw"))
+    desc_norm = normalize_descripcion(rec.get("descripcion_raw"))
+    brand_norm = _norm(rec.get("marca_raw"))
+    type_norm = _norm(rec.get("tipo_raw"))
+
+    product = None
+    correction = _find_correction(
+        corrections,
+        sku_norm=sku_norm,
+        desc_norm=desc_norm,
+        brand_norm=brand_norm,
+        type_norm=type_norm,
+    )
+    if correction and correction.product_id:
+        product = indexes.get("by_id", {}).get(int(correction.product_id))
+
+    if product is None:
+        product = resolve_product(sku_normalized=sku_norm, descripcion=rec.get("descripcion_raw"), indexes=indexes)
+
+    corrected_sku = str(correction.corrected_sku or "") if correction else ""
+    corrected_desc = str(correction.corrected_description or "") if correction else ""
+    corrected_brand = str(correction.corrected_brand or "") if correction else ""
+    corrected_type = str(correction.corrected_type or "") if correction else ""
+
+    sku = corrected_sku or rec.get("sku_raw") or (str(product.sku or "") if product else "")
+    descripcion = corrected_desc or rec.get("descripcion_raw") or (str(product.descripcion or "") if product else "")
+    marca = corrected_brand or rec.get("marca_raw") or (str(product.marca or "") if product else "")
+    tipo_producto = corrected_type or rec.get("tipo_raw") or (str(product.tipo or "") if product else "")
+
+    rec.update({
+        "sku": str(sku or "").strip(),
+        "descripcion": str(descripcion or "").strip(),
+        "marca": str(marca or "").strip() or "Sin marca",
+        "tipo_producto": str(tipo_producto or "").strip() or "Sin linea",
+        "sku_normalized": _normalize_sku(sku),
+        "descripcion_normalized": normalize_descripcion(descripcion),
+        "product_id": int(product.id) if product else None,
+        "correction_id": int(correction.id) if correction else None,
+        "match_status": "corrected" if correction else ("matched" if product else "unmatched"),
+    })
+    return rec
+
+
+def _record_totals(records: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "total_records": len(records),
+        "total_units": sum(int(r.get("cantidad") or 0) for r in records),
+        "total_pvp": round(sum(float(r.get("pvp") or 0) * int(r.get("cantidad") or 0) for r in records), 2),
+        "total_costo": round(sum(float(r.get("costo") or 0) * int(r.get("cantidad") or 0) for r in records), 2),
+        "total_diferencia": round(sum(float(r.get("diferencia") or 0) for r in records), 2),
+        "matched_products": sum(1 for r in records if r.get("match_status") == "matched"),
+        "corrected_products": sum(1 for r in records if r.get("match_status") == "corrected"),
+        "unmatched_products": sum(1 for r in records if r.get("match_status") == "unmatched"),
+    }
+
+
+def _parse_commercial_sheet(
+    name: str,
+    rows: list[list],
+    sucursal: str,
+    indexes: dict[str, dict],
+    corrections: list[SalesBICommercialCorrection],
+) -> dict[str, Any]:
+    warnings: list[str] = []
+    header = _find_header_row(rows)
+    if header is None:
+        return {
+            "sheet_name": name,
+            "sucursal": sucursal,
+            "period_start": "",
+            "period_end": "",
+            "records": [],
+            "warnings": ["No se encontro encabezado valido de Ventas Vs. Costos."],
+            "ok": False,
+            **_record_totals([]),
+        }
+    header_idx, col_map = header
+    records: list[dict[str, Any]] = []
+    branch_cache: dict[str, str | None] = {}
+
+    for row_idx, row in enumerate(rows[header_idx + 1 :], start=header_idx + 2):
+        raw_fecha = _cell(row, col_map, "fecha")
+        raw_desc = _cell(row, col_map, "descripcion")
+        raw_sku = _cell(row, col_map, "sku")
+        if not raw_fecha and not raw_desc and not raw_sku:
+            continue
+        fecha_text = _parse_date(raw_fecha)
+        fecha = _parse_date_value(fecha_text)
+        if fecha is None:
+            continue
+
+        cantidad = int(round(_parse_num(_cell(row, col_map, "cantidad")) or 1))
+        if cantidad <= 0:
+            cantidad = 1
+        pvp = _parse_num(_cell(row, col_map, "pvp"))
+        costo = _parse_num(_cell(row, col_map, "costo"))
+        diff_unit = _parse_num(_cell(row, col_map, "diferencia"))
+        if not diff_unit and (pvp or costo):
+            diff_unit = pvp - costo
+        diferencia = round(diff_unit * cantidad, 2)
+        total_pvp = pvp * cantidad
+        margen = round(diferencia / total_pvp * 100, 2) if total_pvp else 0.0
+        tipo_venta = _tipo_venta(_cell(row, col_map, "tipo_venta"))
+        branch_key = f"{sucursal}:{tipo_venta}"
+        if branch_key not in branch_cache:
+            branch = find_branch(sucursal, tipo_venta)
+            branch_cache[branch_key] = branch["id"] if branch else None
+
+        rec = {
+            "source_sheet": name,
+            "row_number": row_idx,
+            "fecha": fecha.isoformat(),
+            "sucursal": sucursal,
+            "branch_id": branch_cache[branch_key],
+            "tipo_venta": tipo_venta,
+            "marca_raw": str(_cell(row, col_map, "marca") or "").strip(),
+            "tipo_raw": str(_cell(row, col_map, "tipo") or "").strip(),
+            "descripcion_raw": str(raw_desc or "").strip(),
+            "sku_raw": str(raw_sku or "").strip(),
+            "cantidad": cantidad,
+            "pvp": round(pvp, 2),
+            "costo": round(costo, 2),
+            "diferencia": diferencia,
+            "margen_porcentaje": margen,
+        }
+        records.append(_apply_commercial_match(rec, indexes, corrections))
+
+    if not records:
+        warnings.append("La hoja no tiene lineas comerciales importables.")
+
+    dates = sorted(_parse_date_value(r["fecha"]) for r in records if _parse_date_value(r["fecha"]))
+    totals = _record_totals(records)
+    return {
+        "sheet_name": name,
+        "sucursal": sucursal,
+        "period_start": dates[0].isoformat() if dates else "",
+        "period_end": dates[-1].isoformat() if dates else "",
+        "records": records,
+        "warnings": warnings,
+        "ok": bool(records),
+        **totals,
+    }
+
+
+def analyze_ventas_vs_costos(sheets: dict[str, list[list]], source_name: str = "") -> dict[str, Any]:
+    with db_session() as session:
+        indexes, corrections = _load_match_context(session)
+        products = session.scalars(select(Product).where(Product.is_active.is_(True))).all()
+        indexes["by_id"] = {int(p.id): p for p in products}
+
+    parsed: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    ignored = []
+    for name, rows in sheets.items():
+        norm_name = _normalize_sheet_name(name)
+        if norm_name.startswith("BASE"):
+            ignored.append(name)
+            continue
+        if norm_name == CONSOLIDATED_SHEET:
+            continue
+        sucursal = SOURCE_SHEETS.get(norm_name)
+        if not sucursal:
+            ignored.append(name)
+            continue
+        parsed.append(_parse_commercial_sheet(name, rows, sucursal, indexes, corrections))
+
+    if ignored:
+        warnings.append("Hojas ignoradas: " + ", ".join(ignored[:12]) + ("..." if len(ignored) > 12 else ""))
+    if not parsed:
+        warnings.append("No se encontraron hojas validas: Ventas GV Total, Ventas ABC Canning, Ventas ABC-Norte, Ventas ABC-Sur.")
+
+    all_records = [record for sheet in parsed for record in sheet.get("records", [])]
+    totals = _record_totals(all_records)
+    dates = sorted(_parse_date_value(r["fecha"]) for r in all_records if _parse_date_value(r["fecha"]))
+
+    consolidated_rows = sheets.get(next((n for n in sheets if _normalize_sheet_name(n) == CONSOLIDATED_SHEET), ""), [])
+    consolidated_total = 0.0
+    if consolidated_rows:
+        header = _find_header_row(consolidated_rows)
+        if header:
+            header_idx, col_map = header
+            for row in consolidated_rows[header_idx + 1 :]:
+                if not _cell(row, col_map, "fecha"):
+                    continue
+                qty = int(round(_parse_num(_cell(row, col_map, "cantidad")) or 1))
+                consolidated_total += _parse_num(_cell(row, col_map, "pvp")) * max(1, qty)
+            if abs(consolidated_total - totals["total_pvp"]) > 1:
+                warnings.append(
+                    f"El consolidado Venta Total Grupo Economico difiere del total de hojas fuente: "
+                    f"{round(consolidated_total, 2)} vs {round(totals['total_pvp'], 2)}."
+                )
+
+    return {
+        "source_kind": COMMERCIAL_SOURCE_KIND,
+        "source_name": source_name,
+        "period_start": dates[0].isoformat() if dates else "",
+        "period_end": dates[-1].isoformat() if dates else "",
+        "sheets": parsed,
+        "warnings": warnings,
+        **totals,
+    }
+
+
+def _batch_to_dict(batch: SalesBICommercialBatch) -> dict[str, Any]:
+    return {
+        "id": int(batch.id),
+        "source_kind": str(batch.source_kind or COMMERCIAL_SOURCE_KIND),
+        "fuente_nombre": str(batch.fuente_nombre or ""),
+        "fuente_url": str(batch.fuente_url or ""),
+        "status": str(batch.status or "activo"),
+        "period_start": _fmt_date(batch.period_start),
+        "period_end": _fmt_date(batch.period_end),
+        "total_records": int(batch.total_records or 0),
+        "total_units": int(batch.total_units or 0),
+        "total_pvp": _num(batch.total_pvp),
+        "total_costo": _num(batch.total_costo),
+        "total_diferencia": _num(batch.total_diferencia),
+        "created_at": _fmt_dt(batch.created_at),
+        "voided_at": _fmt_dt(batch.voided_at),
+        "void_reason": str(batch.void_reason or ""),
+        "warnings": list(batch.warnings or []),
+    }
+
+
+def save_commercial_import(
+    analysis: dict[str, Any],
+    *,
+    fuente_nombre: str,
+    fuente_url: str = "",
+    username: str = "",
+) -> int:
+    all_records = [record for sheet in analysis.get("sheets", []) for record in sheet.get("records", [])]
+    totals = _record_totals(all_records)
+    with db_session() as session:
+        batch = SalesBICommercialBatch(
+            source_kind=COMMERCIAL_SOURCE_KIND,
+            fuente_nombre=fuente_nombre,
+            fuente_url=fuente_url,
+            status="activo",
+            period_start=_parse_date_value(analysis.get("period_start")),
+            period_end=_parse_date_value(analysis.get("period_end")),
+            total_records=int(totals["total_records"]),
+            total_units=int(totals["total_units"]),
+            total_pvp=_decimal(totals["total_pvp"]),
+            total_costo=_decimal(totals["total_costo"]),
+            total_diferencia=_decimal(totals["total_diferencia"]),
+            imported_by_user_id=_user_id_from_username(session, username),
+            warnings=list(analysis.get("warnings", [])),
+        )
+        session.add(batch)
+        session.flush()
+        for rec in all_records:
+            fecha = _parse_date_value(rec.get("fecha"))
+            if fecha is None:
+                continue
+            session.add(
+                SalesBICommercialRecord(
+                    batch=batch,
+                    source_sheet=str(rec.get("source_sheet") or ""),
+                    row_number=int(rec.get("row_number") or 0),
+                    fecha=fecha,
+                    sucursal=str(rec.get("sucursal") or ""),
+                    branch_id=rec.get("branch_id") or None,
+                    tipo_venta=str(rec.get("tipo_venta") or ""),
+                    marca_raw=str(rec.get("marca_raw") or ""),
+                    tipo_raw=str(rec.get("tipo_raw") or ""),
+                    descripcion_raw=str(rec.get("descripcion_raw") or ""),
+                    sku_raw=str(rec.get("sku_raw") or ""),
+                    marca=str(rec.get("marca") or ""),
+                    tipo_producto=str(rec.get("tipo_producto") or ""),
+                    descripcion=str(rec.get("descripcion") or ""),
+                    sku=str(rec.get("sku") or ""),
+                    sku_normalized=str(rec.get("sku_normalized") or ""),
+                    descripcion_normalized=str(rec.get("descripcion_normalized") or ""),
+                    product_id=rec.get("product_id") or None,
+                    correction_id=rec.get("correction_id") or None,
+                    match_status=str(rec.get("match_status") or "unmatched"),
+                    cantidad=int(rec.get("cantidad") or 1),
+                    pvp=_decimal(rec.get("pvp")),
+                    costo=_decimal(rec.get("costo")),
+                    diferencia=_decimal(rec.get("diferencia")),
+                    margen_porcentaje=_decimal(rec.get("margen_porcentaje")),
+                )
+            )
+        batch_id = int(batch.id)
+        session.commit()
+    return batch_id
+
+
+def list_commercial_batches(limit: int = 50, offset: int = 0, status: str | None = None) -> tuple[list[dict], int]:
+    filters: list[Any] = [SalesBICommercialBatch.source_kind == COMMERCIAL_SOURCE_KIND]
+    if status:
+        filters.append(SalesBICommercialBatch.status == status)
+    with db_session() as session:
+        total = int(session.scalar(select(func.count()).select_from(SalesBICommercialBatch).where(*filters)) or 0)
+        rows = session.scalars(
+            select(SalesBICommercialBatch)
+            .where(*filters)
+            .order_by(SalesBICommercialBatch.created_at.desc(), SalesBICommercialBatch.id.desc())
+            .limit(limit)
+            .offset(offset)
+        ).all()
+        return [_batch_to_dict(row) for row in rows], total
+
+
+def void_commercial_batch(batch_id: int, username: str, reason: str = "") -> bool:
+    from .models.base import utcnow
+
+    with db_session() as session:
+        batch = session.get(SalesBICommercialBatch, int(batch_id))
+        if not batch:
+            return False
+        batch.status = "anulado"
+        batch.voided_at = utcnow()
+        batch.voided_by_user_id = _user_id_from_username(session, username)
+        batch.void_reason = str(reason or "")
+        session.commit()
+        return True
+
+
+def _record_to_dict(record: SalesBICommercialRecord, *, include_costs: bool, include_margin: bool) -> dict[str, Any]:
+    data = {
+        "id": int(record.id),
+        "batch_id": int(record.batch_id),
+        "source_sheet": str(record.source_sheet or ""),
+        "row_number": int(record.row_number or 0),
+        "fecha": _fmt_date(record.fecha),
+        "sucursal": str(record.sucursal or ""),
+        "branch_id": str(record.branch_id) if record.branch_id else None,
+        "tipo_venta": str(record.tipo_venta or ""),
+        "marca": str(record.marca or ""),
+        "tipo_producto": str(record.tipo_producto or ""),
+        "descripcion": str(record.descripcion or ""),
+        "sku": str(record.sku or ""),
+        "sku_normalized": str(record.sku_normalized or ""),
+        "product_id": int(record.product_id) if record.product_id else None,
+        "correction_id": int(record.correction_id) if record.correction_id else None,
+        "match_status": str(record.match_status or "unmatched"),
+        "cantidad": int(record.cantidad or 0),
+        "pvp": _num(record.pvp),
+        "total_pvp": round(_num(record.pvp) * int(record.cantidad or 0), 2),
+    }
+    if include_costs:
+        data["costo"] = _num(record.costo)
+        data["total_costo"] = round(_num(record.costo) * int(record.cantidad or 0), 2)
+        data["diferencia"] = _num(record.diferencia)
+    if include_margin:
+        data["margen_porcentaje"] = _num(record.margen_porcentaje)
+    return data
+
+
+def _commercial_rows(
+    fecha_desde: str | None = None,
+    fecha_hasta: str | None = None,
+    *,
+    empresa: str | None = None,
+    sucursal: str | None = None,
+    sucursales: list[str] | str | None = None,
+    tipo_venta: str | None = None,
+    marca: str | None = None,
+    marcas: list[str] | str | None = None,
+    tipo_producto: str | None = None,
+    tipos: list[str] | str | None = None,
+) -> tuple[list[SalesBICommercialRecord], tuple[date, date]]:
+    fd, fh = _date_bounds(fecha_desde, fecha_hasta)
+    filters: list[Any] = [
+        SalesBICommercialBatch.status == "activo",
+        SalesBICommercialRecord.fecha >= fd,
+        SalesBICommercialRecord.fecha <= fh,
+    ]
+    sucursales_list = _parse_csv_list(sucursales)
+    marcas_list = _parse_csv_list(marcas)
+    tipos_list = _parse_csv_list(tipos)
+    if sucursal and not sucursales_list:
+        filters.append(SalesBICommercialRecord.sucursal == sucursal)
+    elif sucursales_list:
+        filters.append(SalesBICommercialRecord.sucursal.in_(sucursales_list))
+    if tipo_venta:
+        filters.append(SalesBICommercialRecord.tipo_venta == tipo_venta)
+    if marca and not marcas_list:
+        filters.append(SalesBICommercialRecord.marca == marca)
+    elif marcas_list:
+        filters.append(SalesBICommercialRecord.marca.in_(marcas_list))
+    if tipo_producto and not tipos_list:
+        filters.append(SalesBICommercialRecord.tipo_producto == tipo_producto)
+    elif tipos_list:
+        filters.append(SalesBICommercialRecord.tipo_producto.in_(tipos_list))
+    if empresa:
+        filters.append(
+            SalesBICommercialRecord.branch_id.in_(
+                select(Branch.id).where(Branch.company_id == empresa)
+            )
+        )
+
+    with db_session() as session:
+        records = session.scalars(
+            select(SalesBICommercialRecord)
+            .join(SalesBICommercialBatch, SalesBICommercialBatch.id == SalesBICommercialRecord.batch_id)
+            .where(*filters)
+            .order_by(SalesBICommercialRecord.fecha.asc(), SalesBICommercialRecord.id.asc())
+        ).all()
+    return list(records), (fd, fh)
+
+
+def _parse_csv_list(value: list[str] | str | None) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [v.strip() for v in value.split(",") if v.strip()]
+    return [str(v).strip() for v in value if str(v or "").strip()]
+
+
+def _metric_bucket() -> dict[str, Any]:
+    return {
+        "total_vendido": 0.0,
+        "unidades": 0,
+        "lineas": 0,
+        "productos": set(),
+        "diferencia": 0.0,
+        "costo_total": 0.0,
+    }
+
+
+def _add_metric(bucket: dict[str, Any], record: SalesBICommercialRecord) -> None:
+    cantidad = int(record.cantidad or 0)
+    total = _num(record.pvp) * cantidad
+    bucket["total_vendido"] += total
+    bucket["unidades"] += cantidad
+    bucket["lineas"] += 1
+    bucket["productos"].add(str(record.sku_normalized or record.descripcion_normalized or record.id))
+    bucket["diferencia"] += _num(record.diferencia)
+    bucket["costo_total"] += _num(record.costo) * cantidad
+
+
+def _finalize_metric(
+    bucket: dict[str, Any],
+    *,
+    include_costs: bool,
+    include_margin: bool,
+    total_reference: float | None = None,
+) -> dict[str, Any]:
+    total = float(bucket.get("total_vendido") or 0.0)
+    lineas = int(bucket.get("lineas") or 0)
+    out = {
+        "total_vendido": round(total, 2),
+        "unidades": int(bucket.get("unidades") or 0),
+        "lineas": lineas,
+        "productos": len(bucket.get("productos") or set()),
+        "pvp_promedio": round(total / lineas, 2) if lineas else 0.0,
+        "participacion_pct": round(total / total_reference * 100, 2) if total_reference else 0.0,
+    }
+    if include_costs:
+        out["costo_total"] = round(float(bucket.get("costo_total") or 0.0), 2)
+        out["diferencia"] = round(float(bucket.get("diferencia") or 0.0), 2)
+    if include_margin:
+        diferencia = float(bucket.get("diferencia") or 0.0)
+        out["margen_porcentaje"] = round(diferencia / total * 100, 2) if total else 0.0
+    return out
+
+
+def _ranked(source: dict[str, dict[str, Any]], *, include_costs: bool, include_margin: bool, total_reference: float, limit: int = 20) -> list[dict[str, Any]]:
+    items = [
+        {"name": key, **_finalize_metric(bucket, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference)}
+        for key, bucket in source.items()
+    ]
+    items.sort(key=lambda row: (float(row["total_vendido"]), int(row["unidades"])), reverse=True)
+    return items[:limit]
+
+
+def _common_report(
+    records: list[SalesBICommercialRecord],
+    bounds: tuple[date, date],
+    *,
+    include_costs: bool,
+    include_margin: bool,
+    presentation: bool,
+    filters: dict[str, Any],
+) -> dict[str, Any]:
+    overall = _metric_bucket()
+    daily: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    brands: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    lines: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    branches: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    tipo_venta: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    products: dict[tuple[str, str], dict[str, Any]] = {}
+    unmatched = 0
+
+    for record in records:
+        _add_metric(overall, record)
+        _add_metric(daily[_fmt_date(record.fecha)], record)
+        _add_metric(brands[str(record.marca or "Sin marca")], record)
+        _add_metric(lines[str(record.tipo_producto or "Sin linea")], record)
+        _add_metric(branches[str(record.sucursal or "Sin sucursal")], record)
+        _add_metric(tipo_venta[str(record.tipo_venta or "Sin tipo")], record)
+        key = (str(record.sku or ""), str(record.descripcion or ""))
+        if key not in products:
+            products[key] = {
+                "sku": key[0],
+                "producto": key[1],
+                "marca": str(record.marca or ""),
+                "tipo_producto": str(record.tipo_producto or ""),
+                **_metric_bucket(),
+            }
+        _add_metric(products[key], record)
+        if str(record.match_status or "unmatched") == "unmatched":
+            unmatched += 1
+
+    totals = _finalize_metric(overall, include_costs=include_costs, include_margin=include_margin)
+    total_reference = float(totals["total_vendido"] or 0.0)
+    top_products = [
+        {
+            "sku": value["sku"],
+            "producto": value["producto"],
+            "marca": value["marca"],
+            "tipo_producto": value["tipo_producto"],
+            **_finalize_metric(value, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference),
+        }
+        for value in products.values()
+    ]
+    top_products.sort(key=lambda row: (float(row["total_vendido"]), int(row["unidades"])), reverse=True)
+    return {
+        "filters": {
+            "fecha_desde": bounds[0].isoformat(),
+            "fecha_hasta": bounds[1].isoformat(),
+            **filters,
+        },
+        "source": "Ventas Vs. Costos",
+        "coverage_note": "No incluye medios de pago, senas, recibos, remitos ni vendedores.",
+        "presentation": bool(presentation),
+        "sensitive": {"include_costs": include_costs, "include_margin": include_margin},
+        "totals": totals,
+        "daily_series": [
+            {"fecha": key, **_finalize_metric(bucket, include_costs=include_costs, include_margin=include_margin)}
+            for key, bucket in sorted(daily.items())
+        ],
+        "brand_mix": _ranked(brands, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference),
+        "line_mix": _ranked(lines, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference),
+        "branch_mix": _ranked(branches, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference),
+        "sale_type_mix": _ranked(tipo_venta, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference),
+        "top_products": top_products[:25],
+        "unmatched_count": unmatched,
+    }
+
+
+def build_brands_report(
+    fecha_desde: str | None = None,
+    fecha_hasta: str | None = None,
+    *,
+    empresa: str | None = None,
+    sucursal: str | None = None,
+    sucursales: list[str] | str | None = None,
+    tipo_venta: str | None = None,
+    marca: str | None = None,
+    marcas: list[str] | str | None = None,
+    tipo_producto: str | None = None,
+    tipos: list[str] | str | None = None,
+    include_costs: bool = False,
+    include_margin: bool = False,
+    presentation: bool = False,
+) -> dict[str, Any]:
+    records, bounds = _commercial_rows(
+        fecha_desde, fecha_hasta,
+        empresa=empresa, sucursal=sucursal, sucursales=sucursales,
+        tipo_venta=tipo_venta, marca=marca, marcas=marcas,
+        tipo_producto=tipo_producto, tipos=tipos,
+    )
+    report = _common_report(
+        records,
+        bounds,
+        include_costs=include_costs,
+        include_margin=include_margin,
+        presentation=presentation,
+        filters={
+            "empresa": empresa or "",
+            "sucursal": sucursal or "",
+            "sucursales": _parse_csv_list(sucursales),
+            "tipo_venta": tipo_venta or "",
+            "marca": marca or "",
+            "marcas": _parse_csv_list(marcas),
+            "tipo_producto": tipo_producto or "",
+            "tipos": _parse_csv_list(tipos),
+        },
+    )
+    report["ranking"] = report["brand_mix"]
+    report["compare_candidates"] = _brand_compare_candidates(report["brand_mix"])
+    return report
+
+
+def build_brands_compare(
+    base_desde: str,
+    base_hasta: str,
+    compare_desde: str,
+    compare_hasta: str,
+    *,
+    marcas: list[str] | str | None = None,
+    include_costs: bool = False,
+    include_margin: bool = False,
+    presentation: bool = False,
+) -> dict[str, Any]:
+    base = build_brands_report(
+        base_desde, base_hasta, marcas=marcas,
+        include_costs=include_costs, include_margin=include_margin, presentation=presentation,
+    )
+    compare = build_brands_report(
+        compare_desde, compare_hasta, marcas=marcas,
+        include_costs=include_costs, include_margin=include_margin, presentation=presentation,
+    )
+    return {
+        "base": base,
+        "compare": compare,
+        "delta": _delta_metric(base["totals"], compare["totals"]),
+    }
+
+
+def build_lines_report(
+    fecha_desde: str | None = None,
+    fecha_hasta: str | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    report = build_brands_report(fecha_desde, fecha_hasta, **kwargs)
+    report["ranking"] = report["line_mix"]
+    report["brands_by_line"] = _brands_by_line(fecha_desde, fecha_hasta, **kwargs)
+    return report
+
+
+def build_branches_report(
+    fecha_desde: str | None = None,
+    fecha_hasta: str | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    report = build_brands_report(fecha_desde, fecha_hasta, **kwargs)
+    report["ranking"] = report["branch_mix"]
+    if not kwargs.get("presentation"):
+        report["opportunities"] = _branch_opportunities(fecha_desde, fecha_hasta, **kwargs)
+        report["profiles"] = _branch_profiles(report["branch_mix"], report["line_mix"])
+    else:
+        report["opportunities"] = []
+        report["profiles"] = []
+    return report
+
+
+def _delta_metric(base: dict[str, Any], compare: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key in ("total_vendido", "unidades", "lineas", "productos", "pvp_promedio", "diferencia", "margen_porcentaje"):
+        if key not in base and key not in compare:
+            continue
+        actual = float(base.get(key) or 0)
+        prev = float(compare.get(key) or 0)
+        delta = actual - prev
+        out[key] = {
+            "actual": round(actual, 2),
+            "comparado": round(prev, 2),
+            "delta": round(delta, 2),
+            "delta_pct": round(delta / prev * 100, 2) if prev else None,
+        }
+    return out
+
+
+def _brand_compare_candidates(brand_mix: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ranked = sorted(brand_mix, key=lambda row: float(row.get("total_vendido") or 0), reverse=True)
+    candidates = []
+    for idx, item in enumerate(ranked[:12]):
+        peer = ranked[idx + 1] if idx + 1 < len(ranked) else (ranked[idx - 1] if idx else None)
+        if peer:
+            candidates.append({
+                "brand": item["name"],
+                "suggested_compare": peer["name"],
+                "reason": "Volumen cercano dentro del ranking del periodo.",
+            })
+    return candidates
+
+
+def _brands_by_line(fecha_desde: str | None, fecha_hasta: str | None, **kwargs: Any) -> list[dict[str, Any]]:
+    records, _bounds = _commercial_rows(
+        fecha_desde, fecha_hasta,
+        empresa=kwargs.get("empresa"),
+        sucursal=kwargs.get("sucursal"),
+        sucursales=kwargs.get("sucursales"),
+        tipo_venta=kwargs.get("tipo_venta"),
+        marca=kwargs.get("marca"),
+        marcas=kwargs.get("marcas"),
+        tipo_producto=kwargs.get("tipo_producto"),
+        tipos=kwargs.get("tipos"),
+    )
+    include_costs = bool(kwargs.get("include_costs"))
+    include_margin = bool(kwargs.get("include_margin"))
+    line_brand: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
+    line_totals: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    for record in records:
+        line = str(record.tipo_producto or "Sin linea")
+        brand = str(record.marca or "Sin marca")
+        _add_metric(line_brand[line][brand], record)
+        _add_metric(line_totals[line], record)
+    out = []
+    for line, brands in line_brand.items():
+        total = _finalize_metric(line_totals[line], include_costs=include_costs, include_margin=include_margin)["total_vendido"]
+        out.append({
+            "line": line,
+            "leaders": _ranked(brands, include_costs=include_costs, include_margin=include_margin, total_reference=total, limit=5),
+        })
+    out.sort(key=lambda row: sum(float(i.get("total_vendido") or 0) for i in row["leaders"]), reverse=True)
+    return out[:12]
+
+
+def _branch_opportunities(fecha_desde: str | None, fecha_hasta: str | None, **kwargs: Any) -> list[dict[str, Any]]:
+    records, _bounds = _commercial_rows(
+        fecha_desde, fecha_hasta,
+        empresa=kwargs.get("empresa"),
+        tipo_venta=kwargs.get("tipo_venta"),
+        marca=kwargs.get("marca"),
+        marcas=kwargs.get("marcas"),
+        tipo_producto=kwargs.get("tipo_producto"),
+        tipos=kwargs.get("tipos"),
+    )
+    company_by_line: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    branch_by_line: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
+    branch_total: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    company_total = _metric_bucket()
+    for record in records:
+        line = str(record.tipo_producto or "Sin linea")
+        branch = str(record.sucursal or "Sin sucursal")
+        _add_metric(company_by_line[line], record)
+        _add_metric(branch_by_line[branch][line], record)
+        _add_metric(branch_total[branch], record)
+        _add_metric(company_total, record)
+    company_total_value = float(company_total["total_vendido"] or 0.0)
+    out = []
+    for branch, lines in branch_by_line.items():
+        branch_value = float(branch_total[branch]["total_vendido"] or 0.0)
+        if branch_value <= 0:
+            continue
+        for line, company_bucket in company_by_line.items():
+            company_line_value = float(company_bucket["total_vendido"] or 0.0)
+            branch_line_value = float(lines.get(line, {}).get("total_vendido") or 0.0)
+            company_share = company_line_value / company_total_value * 100 if company_total_value else 0
+            branch_share = branch_line_value / branch_value * 100 if branch_value else 0
+            gap = company_share - branch_share
+            if company_share >= 4 and gap >= 3:
+                out.append({
+                    "sucursal": branch,
+                    "tipo_producto": line,
+                    "participacion_sucursal": round(branch_share, 2),
+                    "participacion_empresa": round(company_share, 2),
+                    "gap_pct": round(gap, 2),
+                    "reason": "La linea pesa menos en esta sucursal que en el consolidado.",
+                })
+    out.sort(key=lambda row: row["gap_pct"], reverse=True)
+    return out[:12]
+
+
+def _branch_profiles(branch_mix: list[dict[str, Any]], line_mix: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    profiles = []
+    top_line = line_mix[0]["name"] if line_mix else ""
+    for branch in branch_mix:
+        avg = float(branch.get("pvp_promedio") or 0)
+        if avg >= 700000:
+            profile = "Ticket alto"
+        elif avg <= 250000:
+            profile = "Ticket bajo / rotacion"
+        else:
+            profile = "Ticket medio"
+        profiles.append({
+            "sucursal": branch.get("name"),
+            "profile": profile,
+            "pvp_promedio": avg,
+            "top_line_context": top_line,
+        })
+    return profiles
+
+
+def get_commercial_options() -> dict[str, Any]:
+    with db_session() as session:
+        rows = session.execute(
+            select(
+                func.min(SalesBICommercialRecord.fecha),
+                func.max(SalesBICommercialRecord.fecha),
+            )
+            .join(SalesBICommercialBatch, SalesBICommercialBatch.id == SalesBICommercialRecord.batch_id)
+            .where(SalesBICommercialBatch.status == "activo")
+        ).one()
+        marcas = session.scalars(
+            select(SalesBICommercialRecord.marca)
+            .join(SalesBICommercialBatch, SalesBICommercialBatch.id == SalesBICommercialRecord.batch_id)
+            .where(SalesBICommercialBatch.status == "activo", SalesBICommercialRecord.marca != "")
+            .distinct()
+            .order_by(SalesBICommercialRecord.marca)
+        ).all()
+        tipos = session.scalars(
+            select(SalesBICommercialRecord.tipo_producto)
+            .join(SalesBICommercialBatch, SalesBICommercialBatch.id == SalesBICommercialRecord.batch_id)
+            .where(SalesBICommercialBatch.status == "activo", SalesBICommercialRecord.tipo_producto != "")
+            .distinct()
+            .order_by(SalesBICommercialRecord.tipo_producto)
+        ).all()
+        sucursales = session.scalars(
+            select(SalesBICommercialRecord.sucursal)
+            .join(SalesBICommercialBatch, SalesBICommercialBatch.id == SalesBICommercialRecord.batch_id)
+            .where(SalesBICommercialBatch.status == "activo", SalesBICommercialRecord.sucursal != "")
+            .distinct()
+            .order_by(SalesBICommercialRecord.sucursal)
+        ).all()
+        empresas = session.scalars(select(Company).order_by(Company.name)).all()
+    return {
+        "period_start": _fmt_date(rows[0]),
+        "period_end": _fmt_date(rows[1]),
+        "marcas": [str(v) for v in marcas],
+        "tipos": [str(v) for v in tipos],
+        "sucursales": [str(v) for v in sucursales],
+        "empresas": [{"id": str(e.id), "name": str(e.name or e.id)} for e in empresas],
+        "tipo_ventas": ["local", "online"],
+    }
+
+
+def list_commercial_unmatched(q: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    filters: list[Any] = [SalesBICommercialBatch.status == "activo", SalesBICommercialRecord.match_status == "unmatched"]
+    if q:
+        text = f"%{q}%"
+        filters.append(or_(
+            SalesBICommercialRecord.sku.ilike(text),
+            SalesBICommercialRecord.descripcion.ilike(text),
+            SalesBICommercialRecord.marca.ilike(text),
+            SalesBICommercialRecord.tipo_producto.ilike(text),
+        ))
+    with db_session() as session:
+        rows = session.scalars(
+            select(SalesBICommercialRecord)
+            .join(SalesBICommercialBatch, SalesBICommercialBatch.id == SalesBICommercialRecord.batch_id)
+            .where(*filters)
+            .order_by(SalesBICommercialRecord.fecha.desc(), SalesBICommercialRecord.id.desc())
+            .limit(max(1, min(limit * 10, 2000)))
+        ).all()
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for record in rows:
+        key = (str(record.sku_normalized or ""), str(record.descripcion_normalized or ""))
+        item = grouped.setdefault(key, {
+            "sku": str(record.sku or ""),
+            "sku_normalized": str(record.sku_normalized or ""),
+            "descripcion": str(record.descripcion or ""),
+            "descripcion_normalized": str(record.descripcion_normalized or ""),
+            "marca": str(record.marca or ""),
+            "tipo_producto": str(record.tipo_producto or ""),
+            "lineas": 0,
+            "unidades": 0,
+            "total_vendido": 0.0,
+            "sucursales": set(),
+        })
+        item["lineas"] += 1
+        item["unidades"] += int(record.cantidad or 0)
+        item["total_vendido"] += _num(record.pvp) * int(record.cantidad or 0)
+        item["sucursales"].add(str(record.sucursal or ""))
+    out = []
+    for item in grouped.values():
+        item["sucursales"] = sorted(s for s in item["sucursales"] if s)
+        item["total_vendido"] = round(item["total_vendido"], 2)
+        out.append(item)
+    out.sort(key=lambda row: float(row["total_vendido"] or 0), reverse=True)
+    return out[:limit]
+
+
+def create_commercial_correction(payload: dict[str, Any], username: str) -> dict[str, Any]:
+    sku_raw = str(payload.get("match_sku") or payload.get("sku") or "").strip()
+    desc_raw = str(payload.get("match_description") or payload.get("descripcion") or "").strip()
+    brand_raw = str(payload.get("match_brand") or payload.get("marca") or "").strip()
+    type_raw = str(payload.get("match_type") or payload.get("tipo_producto") or "").strip()
+    if not any((sku_raw, desc_raw, brand_raw, type_raw)):
+        raise ValueError("La correccion necesita al menos un criterio de match.")
+    with db_session() as session:
+        correction = SalesBICommercialCorrection(
+            match_sku_norm=_normalize_sku(sku_raw),
+            match_desc_norm=normalize_descripcion(desc_raw),
+            match_brand_norm=_norm(brand_raw),
+            match_type_norm=_norm(type_raw),
+            corrected_sku=str(payload.get("corrected_sku") or "").strip(),
+            corrected_description=str(payload.get("corrected_description") or "").strip(),
+            corrected_brand=str(payload.get("corrected_brand") or "").strip(),
+            corrected_type=str(payload.get("corrected_type") or "").strip(),
+            product_id=payload.get("product_id") or None,
+            note=str(payload.get("note") or "").strip(),
+            created_by_user_id=_user_id_from_username(session, username),
+        )
+        session.add(correction)
+        session.flush()
+        out = {
+            "id": int(correction.id),
+            "match_sku_norm": correction.match_sku_norm,
+            "match_desc_norm": correction.match_desc_norm,
+            "match_brand_norm": correction.match_brand_norm,
+            "match_type_norm": correction.match_type_norm,
+            "corrected_sku": correction.corrected_sku,
+            "corrected_description": correction.corrected_description,
+            "corrected_brand": correction.corrected_brand,
+            "corrected_type": correction.corrected_type,
+            "product_id": int(correction.product_id) if correction.product_id else None,
+            "created_at": _fmt_dt(correction.created_at),
+        }
+        session.commit()
+    return out
+
+
+def rematch_commercial_records() -> dict[str, Any]:
+    with db_session() as session:
+        indexes, corrections = _load_match_context(session)
+        products = session.scalars(select(Product).where(Product.is_active.is_(True))).all()
+        indexes["by_id"] = {int(p.id): p for p in products}
+        records = session.scalars(
+            select(SalesBICommercialRecord)
+            .join(SalesBICommercialBatch, SalesBICommercialBatch.id == SalesBICommercialRecord.batch_id)
+            .where(SalesBICommercialBatch.status == "activo")
+        ).all()
+        counts = {"matched": 0, "corrected": 0, "unmatched": 0}
+        for record in records:
+            rec = {
+                "sku_raw": record.sku_raw,
+                "descripcion_raw": record.descripcion_raw,
+                "marca_raw": record.marca_raw,
+                "tipo_raw": record.tipo_raw,
+            }
+            rec = _apply_commercial_match(rec, indexes, corrections)
+            record.sku = rec["sku"]
+            record.descripcion = rec["descripcion"]
+            record.marca = rec["marca"]
+            record.tipo_producto = rec["tipo_producto"]
+            record.sku_normalized = rec["sku_normalized"]
+            record.descripcion_normalized = rec["descripcion_normalized"]
+            record.product_id = rec["product_id"]
+            record.correction_id = rec["correction_id"]
+            record.match_status = rec["match_status"]
+            counts[record.match_status] = counts.get(record.match_status, 0) + 1
+        session.commit()
+        return {"ok": True, **counts, "total": len(records)}
