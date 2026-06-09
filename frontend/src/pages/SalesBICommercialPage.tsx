@@ -358,15 +358,36 @@ function ViewMenu({
   );
 }
 
-function DailyArea({ report, mode }: { report: SalesBICommercialReport; mode: MetricMode }) {
+function DailyArea({
+  report,
+  mode,
+  previousReport,
+}: {
+  report: SalesBICommercialReport;
+  mode: MetricMode;
+  previousReport?: SalesBICommercialReport | null;
+}) {
   const showPvp = mode !== 'units';
   const showUnits = mode !== 'pvp';
   if (!hasDailyData(report, mode)) {
     return <EmptyChartState minHeight={280} description="No hay ventas registradas para el rango y filtros seleccionados." />;
   }
+  // Si el comparador esta activo y hay datos del periodo anterior, alineamos
+  // por indice (el rango es comparable en cantidad de dias). El frontend
+  // pinta esa serie como linea punteada gris para no competir con la actual.
+  const data = previousReport
+    ? report.daily_series.map((row, index) => {
+        const prev = previousReport.daily_series[index];
+        return {
+          ...row,
+          anterior_total_vendido: prev?.total_vendido ?? 0,
+          anterior_unidades: prev?.unidades ?? 0,
+        };
+      })
+    : report.daily_series;
   return (
     <ResponsiveContainer width="100%" height={280}>
-      <AreaChart data={report.daily_series} margin={{ top: 8, right: 18, left: 0, bottom: 8 }}>
+      <AreaChart data={data} margin={{ top: 8, right: 18, left: 0, bottom: 8 }}>
         <defs>
           <linearGradient id="commercialDailyPvp" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="var(--chart-blue)" stopOpacity={0.5} />
@@ -382,9 +403,42 @@ function DailyArea({ report, mode }: { report: SalesBICommercialReport; mode: Me
         <YAxis yAxisId="pvp" hide />
         <YAxis yAxisId="units" hide />
         <Tooltip
-          formatter={(value, name) => (name === 'unidades' ? `${num(Number(value))} u` : money(Number(value)))}
+          formatter={(value, name) => {
+            const isUnits = name === 'unidades' || name === 'Unid. anterior';
+            return isUnits ? `${num(Number(value))} u` : money(Number(value));
+          }}
           contentStyle={CHART_TOOLTIP_STYLE}
         />
+        {previousReport && showPvp && (
+          <Line
+            yAxisId="pvp"
+            type="monotone"
+            dataKey="anterior_total_vendido"
+            name="PVP anterior"
+            stroke="var(--chart-ghost)"
+            strokeWidth={2}
+            strokeDasharray="5 4"
+            dot={false}
+            isAnimationActive
+            animationDuration={CHART_ANIM.duration}
+            animationEasing={CHART_ANIM.easing}
+          />
+        )}
+        {previousReport && showUnits && (
+          <Line
+            yAxisId="units"
+            type="monotone"
+            dataKey="anterior_unidades"
+            name="Unid. anterior"
+            stroke="var(--chart-ghost)"
+            strokeWidth={2}
+            strokeDasharray="3 4"
+            dot={false}
+            isAnimationActive
+            animationDuration={CHART_ANIM.duration}
+            animationEasing={CHART_ANIM.easing}
+          />
+        )}
         {showPvp && (
           <Area
             yAxisId="pvp"
@@ -1289,7 +1343,7 @@ function OverviewDashboard({
 
       <div className="grid gap-4 xl:grid-cols-[1.35fr_0.85fr]">
         <ChartCard title="Evolucion diaria" subtitle={`${brandsReport.filters.fecha_desde} al ${brandsReport.filters.fecha_hasta} · ${metricLabel(mode)}`}>
-          <DailyArea report={brandsReport} mode={mode} />
+          <DailyArea report={brandsReport} mode={mode} previousReport={previousReport} />
         </ChartCard>
         <ChartCard title="Ranking de marcas" subtitle="Click para abrir perfil">
           <RankingBars
@@ -1762,10 +1816,75 @@ function CompareDashboard({
       </div>
 
       <ChartCard title="Conclusion automatica" subtitle="Resumen comparativo para lectura rapida">
-        <p className="text-sm leading-6 text-[color:var(--text-2)]">
-          <span className="font-black text-white">{globalWinner.brand.name}</span> lidera {winCounts[globalWinnerIndex]} de {rows.length} metricas.
-          La comparacion usa solo la fuente Ventas Vs. Costos y no mezcla medios de pago, senas ni vendedores.
-        </p>
+        {(() => {
+          // Calcula la metrica donde el ganador global mas se diferencia
+          // del runner-up. Y la metrica donde el runner-up gana al ganador
+          // global (si la hay), para dar contexto matizado.
+          const winnerIdx = globalWinnerIndex;
+          const runnerCandidates = selected
+            .map((_, i) => i)
+            .filter((i) => i !== winnerIdx)
+            .sort((a, b) => winCounts[b] - winCounts[a]);
+          const runnerIdx = runnerCandidates[0];
+          const winner = selected[winnerIdx];
+          const runner = runnerIdx !== undefined ? selected[runnerIdx] : null;
+
+          // Mayor brecha del ganador vs runner-up (en % relativo)
+          type Gap = { label: string; pct: number; format: (n: number) => string; winnerVal: number };
+          const gaps: Gap[] = rows.map((row) => {
+            const w = row.values[winnerIdx] || 0;
+            const r = runnerIdx !== undefined ? (row.values[runnerIdx] || 0) : 0;
+            const pct = r ? ((w - r) / Math.abs(r)) * 100 : 0;
+            return { label: row.label, pct, format: row.format, winnerVal: w };
+          });
+          const winnerBiggest = gaps
+            .filter((g) => g.pct > 0)
+            .sort((a, b) => b.pct - a.pct)[0];
+          const runnerStrongest = runnerIdx !== undefined
+            ? gaps.filter((g) => g.pct < 0).sort((a, b) => a.pct - b.pct)[0]
+            : null;
+
+          const sentences: string[] = [];
+          sentences.push(
+            `${winner.brand.name} supera a ${runner?.brand.name ?? 'los demas'} en ${winCounts[winnerIdx]} de ${rows.length} metricas.`,
+          );
+          if (winnerBiggest) {
+            sentences.push(
+              `Mayor diferencia en ${winnerBiggest.label.toLowerCase()} (+${winnerBiggest.pct.toFixed(1)}%).`,
+            );
+          }
+          if (runnerStrongest && runner) {
+            sentences.push(
+              `${runner.brand.name} mantiene ventaja en ${runnerStrongest.label.toLowerCase()}, lo que sugiere un posicionamiento distinto.`,
+            );
+          }
+
+          return (
+            <p className="text-sm leading-6 text-[color:var(--text-2)]">
+              {sentences.map((s, i) => {
+                // resalta los nombres de marca dentro del texto
+                const highlighted = s
+                  .replace(winner.brand.name, `__W__${winner.brand.name}__`)
+                  .replace(runner?.brand.name || ' ', `__R__${runner?.brand.name || ''}__`);
+                const parts = highlighted.split(/(__[WR]__[^_]+__)/g);
+                return (
+                  <span key={i}>
+                    {parts.map((part, j) => {
+                      if (part.startsWith('__W__')) {
+                        return <span key={j} className="font-black" style={{ color: 'var(--chart-blue)' }}>{part.slice(5, -2)}</span>;
+                      }
+                      if (part.startsWith('__R__')) {
+                        return <span key={j} className="font-black" style={{ color: 'var(--chart-violet)' }}>{part.slice(5, -2)}</span>;
+                      }
+                      return part;
+                    })}
+                    {i < sentences.length - 1 && ' '}
+                  </span>
+                );
+              })}
+            </p>
+          );
+        })()}
       </ChartCard>
     </div>
   );
@@ -2752,7 +2871,7 @@ export function SalesBICommercialPage() {
             <>
               <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
                 <ChartCard title="Evolucion diaria" subtitle={`${brandsReport.filters.fecha_desde} al ${brandsReport.filters.fecha_hasta} · ${metricLabel(metricMode)}`}>
-                  <DailyArea report={brandsReport} mode={metricMode} />
+                  <DailyArea report={brandsReport} mode={metricMode} previousReport={previousReport} />
                 </ChartCard>
                 <ChartCard title="Ranking de marcas" subtitle={metricLabel(metricMode)}>
                   <RankingBars data={brandsReport.brand_mix} color="var(--chart-blue)" mode={metricMode} onSelect={setSelectedBrand} />
