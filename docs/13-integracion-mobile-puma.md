@@ -7,9 +7,9 @@
 > **Audiencia**: Victor (CEO ElectroGV), equipo tecnico de Puma Software,
 > consultores externos. Asume vocabulario tecnico medio-alto.
 >
-> **Fecha**: 2026-06-09 · **Version doc**: 0.1 — borrador inicial,
-> esperando confirmacion de la 6ta pantalla del flujo Puma (cobranza /
-> impresion final) para cerrarse.
+> **Fecha**: 2026-06-09 · **Version doc**: 0.2 — flujo Puma completo
+> (6 pantallas / 12 ventanas documentadas). Pendiente review con
+> equipo Puma + otra IA antes de v1.0.
 
 ---
 
@@ -59,6 +59,18 @@ reunion es un **hibrido** (§3.3):
 4. Quien paga el desarrollo de la API en Puma si no existe (§7).
 5. SLA de respuesta y disponibilidad esperada del ERP.
 6. Plan de contingencia cuando Puma esta caido.
+7. **Como se devuelve el CAE de AFIP** (sincrono / asincrono /
+   webhook) — esto define la arquitectura de la pantalla 4 mobile.
+
+### Hallazgo critico de la 6ta pantalla
+
+La ultima pantalla de Puma (`Confirmar medios de pagos. Factura`)
+**genera la factura electronica con CAE de AFIP**
+(`0904-00001302-B`). Esto es un acto fiscal con consecuencias
+legales — **no se puede emular escribiendo a Postgres**. Cualquier
+plan que contemple bypass de Puma para crear ventas reales esta
+fuera de scope. La app movil debe **delegar la emision a Puma** y
+solo persistir el numero + CAE + PDF que Puma devuelve. Ver §1.1.bis.
 
 ---
 
@@ -77,11 +89,54 @@ capturas del 2026-06-06 / 2026-06-09:
 | 3 | Forma de pago + plan     | Prefactura (la misma) | Plan de credito (`CANCELAR PARA RETIRAR`, cuotas, fecha 1° cuota) | Sub-formulario embebido — visualmente cargado |
 | 4 | Datos finales            | Prefactura + **Datos Finales** | Anticipo, Efectivo, Cheques, Saldo a favor, Vendedor (cod. `0011`), Percepciones | Otra ventana modal, repite cliente abajo |
 | 5 | Emitir orden de entrega  | **Emitir Orden de Entrega** + **Confirmar Orden de Entrega** | Deposito de salida, tipo reparto (Envio/Retira), fecha, turno, domicilio, persona que retira (DNI + tel) | 2 ventanas + decision logistica al final del flujo |
-| 6 | _(pendiente — falta foto)_ | — | Probable: impresion + cierre de caja / recibo | — |
+| 6 | Confirmar medios de pago + emitir Factura | **Confirmar medios de pagos. Factura** | **Numero AFIP `0904-00001302-B`** (FC), MONTO TOTAL, fecha emision, **desglose granular de pago** (Saldo a favor / Efectivo / Tarjeta / Cheque / Depositos-Transf. / Monedas Extranjeras / Retenciones / Otras monedas), Entrega + Vuelto, "Sin aplicar", **Bloquear ENTREGA DE MERCADERIA** (checkbox), observaciones del comprobante, botones Guardar / Verificar / Cancelar / Cerrar | Es la **emision fiscal real** — genera comprobante AFIP. No es solo impresion: aca se cierra el acto contable. |
 
-**Total observado**: 5 pantallas confirmadas, 9 ventanas. Victor
-reporta el flujo completo como **6 pantallas, 12 ventanas** — falta
-documentar el paso final (impresion / cierre).
+**Total**: 6 pantallas confirmadas, 11 ventanas modales documentadas
+(el flujo de Victor menciona 12 — la 12va probablemente es el
+dialogo de impresion del controlador fiscal que sale despues de
+Guardar en el paso 6).
+
+### 1.1.bis Consecuencias tecnicas del paso 6 (critico)
+
+La pantalla 6 NO es cosmetica. Es el momento donde:
+
+1. **Se genera el numero de comprobante AFIP** (`0904-00001302-B` =
+   punto de venta `0904`, numero `00001302`, tipo `B`). Esto
+   implica una llamada al WSFE de AFIP (web service) que devuelve
+   un **CAE** (Codigo de Autorizacion Electronica) con fecha de
+   vencimiento. **Sin CAE valido, la factura no existe legalmente**.
+2. **Se persiste el desglose de medios de pago**. No es 1 campo —
+   son 8 campos paralelos (Saldo a favor, Efectivo, Tarjeta,
+   Cheque, Deposito/Transf., Monedas Extranjeras, Retenciones,
+   Otras monedas). Cada uno suma al MONTO TOTAL; el "Vuelto" se
+   calcula contra "Entrega".
+3. **Se actualizan cuentas corrientes**: si parte se paga con
+   "Saldo a favor", se descuenta; si queda "Sin aplicar", queda
+   como credito futuro del cliente.
+4. **Se acopla con el paso 5**: el checkbox "Bloquear ENTREGA DE
+   MERCADERIA" determina si la mercaderia sale del deposito o
+   queda retenida (mercaderia facturada pero no entregada — caso
+   "entrega diferida" en ese mismo formulario).
+5. **Se activa el controlador fiscal**: imprime el ticket / factura
+   B en la impresora fiscal. Esto es hardware-dependiente.
+
+**Implicancia para la integracion**: cualquier estrategia que
+contemple **escribir directo en el Postgres de Puma para crear
+ventas** tiene que replicar:
+   - Llamada a AFIP WSFE
+   - Validacion del CAE
+   - 8 INSERTs de medios de pago
+   - Actualizacion de cuenta corriente
+   - Coordinacion con el controlador fiscal (driver windows-only
+     en muchos casos)
+   - Generacion del PDF/ticket
+   - Persistencia del numero de comprobante en N tablas auxiliares
+
+Si la app intenta hacer esto sin la API de Puma, **esta
+re-implementando un facturador electronico desde cero**, lo que
+excede largamente el scope de "app movil para vender". Esto mata
+definitivamente la **Opcion A** (escritura directa) para el caso
+de uso "emitir factura final".
 
 ### 1.2 Entidades de negocio que Puma maneja (y la app necesita)
 
@@ -98,9 +153,13 @@ documentar el paso final (impresion / cierre).
 | Anticipo / sena     | registrar parcial                                    | P0 |
 | Recibo a cuenta     | registrar pagos previos del cliente                  | P1 |
 | Orden de entrega    | crear, indicar tipo (envio/retira), turno, persona que retira | P0 |
+| **Comprobante AFIP** | **emitir factura B/A/C con CAE (WSFE) — la pantalla 6 lo hace** | **P0** |
+| **Medios de pago granular** | **desglose 8 columnas: efectivo, tarjeta, cheque, transf., monedas extranjeras, retenciones, otras monedas, saldo a favor** | **P0** |
+| **Vuelto / cambio** | **calcular contra "Entrega" del cliente; si falta, "Sin aplicar"** | **P0** |
+| **Bloqueo de entrega** | **flag "Bloquear ENTREGA DE MERCADERIA" — facturada pero no sale del deposito (entrega diferida)** | **P0** |
 | Garantia extendida  | opcional sobre articulo                              | P1 |
 | Cargos extras       | instalacion, armado, fletes                          | P2 |
-| AFIP / facturacion  | resolucion fiscal del cliente                        | P1 |
+| AFIP / consulta fiscal | resolucion de datos del cliente desde DNI/CUIT     | P1 |
 
 ### 1.3 Dolores operativos detectados
 
@@ -173,6 +232,9 @@ con Puma:
 | Orden de entrega       | **no existe** (esta como campos en sales_web) | Orden de entrega | Puma | Falta entidad propia        |
 | Cuenta corriente cliente | **no existe**                 | Cuenta corriente     | Puma                              | **CRITICO** para mostrar saldo |
 | Recibo a cuenta        | **no existe**                   | Recibo               | Puma                              | P1                          |
+| **Factura AFIP / CAE** | **no existe**                  | **Comprobante FC B/A/C** | **Puma + AFIP WSFE** | **CRITICO** — la app no debe emitir CAE directo |
+| **Medios de pago detallados** | **no existe** (solo `pago_tipo` string) | **8 columnas en pantalla 6** | Puma | **CRITICO** — tabla nueva `payment_breakdowns` |
+| **Bloqueo entrega mercaderia** | **no existe**             | **flag "Bloquear..." en pant. 6** | Puma | Modelar como `delivery_blocked` boolean |
 | Garantia extendida     | `warranties.*` (otra cosa: garantias _post_-venta) | Garantia extendida en venta | Puma | P1 — son cosas distintas    |
 
 ### 2.4 Modulo `sales_web` — la base existente
@@ -211,8 +273,17 @@ real lo automatizaria.
 | Sync con Puma (escritura)              | Alto              | L (20 d)  |
 | Manejo de offline / cola               | Alto              | M (10 d)  |
 | Auditoria de cambios bidireccional    | Medio             | M (8 d)   |
+| Tabla `payment_breakdowns` (desglose 8 medios) | Alto      | S (3 d)   |
+| Persistencia del CAE / numero comprobante      | Alto      | S (3 d)   |
+| Flag `delivery_blocked` en venta               | Bajo      | XS (1 d)  |
+| Calculo de vuelto en UI mobile                 | Bajo      | XS (1 d)  |
 
 Total estimado bruto: ~4-5 meses dev a 1 persona. Con scope reducido a P0: ~3 meses.
+
+> **Nota critica**: la emision de factura con CAE de AFIP **NO se
+> implementa del lado app**. Es 100% responsabilidad de Puma. La app
+> solo registra el numero devuelto. Cualquier flujo que requiera
+> "emitir factura sin Puma" esta fuera de scope.
 
 ---
 
@@ -262,10 +333,22 @@ SELECT/INSERT/UPDATE sobre sus tablas. Es lo que Puma propuso.
    tipeado en produccion borra 10k clientes. Sin red de seguridad.
 - ❌ **Vendor lock invertido**. La app queda casada al schema de
    Puma; cambiar de ERP en el futuro requiere reescribir todo.
+- ❌ **AFIP / CAE imposible de replicar**. Para emitir factura
+   valida hay que llamar al WSFE de AFIP, obtener CAE, validarlo,
+   y persistir el numero. **Eso lo hace hoy Puma**. Si la app
+   escribe directo a Postgres, queda una venta con numero
+   `0904-00001302-B` que **no fue autorizada por AFIP** → factura
+   apocrifa, problema legal grave. Para evitarlo, tendriamos que
+   re-implementar el cliente WSFE del lado app — duplicacion de un
+   componente certificado.
+- ❌ **Controlador fiscal**. La impresion fiscal es hardware-
+   dependiente con drivers windows-only. La app movil no puede
+   driver-ear una Epson TM-T20III por USB.
 
 **Veredicto**: **NO recomendado**. Es atractivo por velocidad pero
 acumula deuda tecnica y riesgo legal/contable que no se ve hasta
-que ya es tarde.
+que ya es tarde. **La pantalla 6 (emision de factura con CAE)
+sola descarta esta opcion** para el flujo de venta final.
 
 ### 3.2 Opcion B — API REST entre sistemas
 
@@ -425,10 +508,62 @@ Que necesitamos escribir y como:
 | Anular prefactura          | Si       | `POST /api/v1/orders/:id/cancel`     | `numero_solicitud + revision` |
 | Registrar pago / anticipo  | Si       | `POST /api/v1/orders/:id/payments`   | `payment_id` propio  |
 | Emitir orden de entrega    | Si       | `POST /api/v1/orders/:id/delivery`   | `delivery_id` propio |
+| **Confirmar pago y emitir factura** | **Si (critico)** | **`POST /api/v1/orders/:id/invoice`** | **`numero_solicitud`** |
+| **Anular factura emitida (nota credito)** | Si | `POST /api/v1/invoices/:numero/credit-note` | `nota_credito_id` propio |
 | Alta de cliente            | Si       | `POST /api/v1/customers`             | DNI/CUIT             |
 | Update cliente             | No       | `PATCH /api/v1/customers/:id`        | revision             |
 | Recibo a cuenta            | Si       | `POST /api/v1/customers/:id/payments` | `payment_id` propio |
 | Resolver AFIP              | No       | `POST /api/v1/afip/lookup`           | DNI/CUIT             |
+
+#### Payload del endpoint critico `POST /api/v1/orders/:id/invoice`
+
+Este endpoint es la API-version de la pantalla 6 de Puma. Lo que la
+app le manda al ERP cuando el cliente termina de pagar:
+
+```json
+{
+  "external_id": "WEB-2026-0001",
+  "fecha_emision": "2026-06-09",
+  "delivery_blocked": false,
+  "payment_breakdown": {
+    "saldo_a_favor": "0.00",
+    "efectivo": "840000.00",
+    "tarjeta": "0.00",
+    "cheque": "0.00",
+    "deposito_transf": "0.00",
+    "monedas_extranjeras": "0.00",
+    "retenciones": "0.00",
+    "otras_monedas": "0.00"
+  },
+  "entrega": "840000.00",
+  "vuelto": "0.00",
+  "sin_aplicar": "0.00",
+  "observaciones": ""
+}
+```
+
+Y Puma responde con:
+
+```json
+{
+  "ok": true,
+  "external_id": "WEB-2026-0001",
+  "invoice": {
+    "punto_venta": "0904",
+    "numero": "00001302",
+    "tipo": "B",
+    "numero_completo": "0904-00001302-B",
+    "cae": "75123456789012",
+    "cae_vencimiento": "2026-06-19",
+    "fecha_emision": "2026-06-09T15:32:11-03:00",
+    "monto_total": "840000.00",
+    "pdf_url": "https://puma.../invoices/0904-00001302-B.pdf"
+  }
+}
+```
+
+La app persiste `numero_completo`, `cae`, `cae_vencimiento` y
+`pdf_url` en `sales_web_requests` (campos nuevos a agregar).
 
 > Los nombres son una propuesta. Ya estan plasmados con detalle en
 > doc 06 §"API propuesta que deberia exponer el ERP" (payloads JSON
@@ -447,7 +582,7 @@ Reduccion del flujo de Puma al minimo viable:
 | **1. Articulos**    | Pantallas 2 + 3 (buscar + plan)        | Scan de codigo de barras + autocomplete; plan precargado |
 | **2. Cliente**      | Pantalla 1 + parte 4                   | Search instantaneo + DNI por foto del DNI (OCR opcional) |
 | **3. Pago + entrega** | Pantallas 3 (forma de pago) + 4 (anticipo) + 5 (orden entrega) | Una sola pantalla con 3 secciones colapsables |
-| **4. Confirmar**    | Pantalla 6 (impresion / cierre)        | Cliente firma en celular; comprobante PDF al email/WhatsApp + opcion imprimir en sucursal |
+| **4. Confirmar + facturar** | Pantalla 6 (medios de pago + factura AFIP) | Cliente firma en celular; al confirmar, app pide a Puma emitir factura via API; Puma devuelve CAE; comprobante PDF al email/WhatsApp + opcion imprimir en sucursal |
 
 ### 5.2 Patrones moviles a aplicar
 
@@ -611,21 +746,37 @@ Lleva esta lista preparada. Marca las respuestas en vivo.
 21. ¿Hay logs / observabilidad que podamos consultar para
     debuggear?
 
-### Sobre legal / contable
+### Sobre legal / contable / AFIP
 
 22. ¿Quien firma responsabilidad si una venta queda inconsistente
     por la integracion?
 23. ¿Esta resguardado el cumplimiento fiscal (AFIP / libros) si la
     app escribe?
 24. ¿Hay un NDA o contrato de integracion que firmar?
+25. **¿Como manejan hoy la emision de CAE (WSFE de AFIP)?** ¿Es
+    sincrono al guardar la pantalla 6 o asincrono?
+26. **¿Pueden devolver via API el numero de comprobante + CAE +
+    fecha de vencimiento + URL del PDF?** (es lo que la app
+    necesita persistir).
+27. **¿Que pasa si AFIP esta caido al momento de facturar?**
+    ¿Puma guarda en cola? ¿Da CAE provisorio? ¿Rechaza la venta?
+28. **¿Soportan emision de Factura A / B / C / M / E desde la API
+    o solo B?** (afecta clientes responsables inscriptos / exterior).
+29. **¿La impresion fiscal (controlador) es necesaria o se puede
+    omitir en venta mobile?** ¿La factura electronica reemplaza al
+    ticket fiscal en caja para venta no presencial?
+30. **¿Bloqueo de entrega de mercaderia se modela como flag en la
+    venta o como entidad separada?** Necesito el contrato.
 
 ### Sobre dinero
 
-25. ¿Cobran por desarrollar la API? Cuanto.
-26. ¿Cobran soporte mensual de la integracion?
-27. ¿Cobran por la replica logica?
-28. ¿Hay licencias adicionales si conectamos N dispositivos
+31. ¿Cobran por desarrollar la API? Cuanto.
+32. ¿Cobran soporte mensual de la integracion?
+33. ¿Cobran por la replica logica?
+34. ¿Hay licencias adicionales si conectamos N dispositivos
     moviles?
+35. ¿AFIP / facturacion electronica tiene costo por comprobante o
+    esta incluido?
 
 ---
 
@@ -643,6 +794,11 @@ Lleva esta lista preparada. Marca las respuestas en vivo.
 | Cliente firma en celular pero la venta no se crea   | Baja         | Alto    | Estado "firmado-pendiente" con reintentos automaticos + log |
 | Internet inestable en Caseros                       | Media        | Alto    | Modo offline Fase 5 (IndexedDB + cola) |
 | Equipos Android viejos en sucursal                  | Alta         | Bajo    | Mantener versiones soportadas en Capacitor; provisioning de tablets |
+| **AFIP caido al momento de facturar**               | Media        | Alto    | Estado `pendiente_cae` en la venta + cola de reintentos + UI clara para el vendedor ("Factura sin emitir, reintentando") |
+| **Latencia de AFIP > 5s degrada UX**                | Alta         | Medio   | Spinner con tip ("AFIP tarda en pico horario"); emision asincrona con notificacion push |
+| **Mismatch entre desglose app y monto total Puma**  | Baja         | Alto    | Validar suma de medios = MONTO TOTAL en frontend antes de enviar; verificacion server-side |
+| **Cliente firma pero CAE falla y queda apocrifa**   | Baja         | Critico | NO entregar mercaderia hasta que la API confirme CAE valido; si falla, anular en Puma y rehacer |
+| **Vendedor confunde "Entrega diferida" con "Retira en local"** | Media | Medio | UX explicita: 2 toggles separados; tooltip + ejemplos |
 
 ---
 
@@ -661,6 +817,13 @@ Lleva esta lista preparada. Marca las respuestas en vivo.
 | Garantia extendida     | (no confundir con `warranties`) | warranties en app = post-venta |
 | Tipo reparto: Envio / Retira | `entrega_tipo`: Envio / Retira en local | OK |
 | Caja Recaudadora       | (no modelado)        | P2 |
+| FC B (`0904-00001302-B`) | Factura electronica tipo B | Generada por Puma + AFIP WSFE — la app la persiste, no la emite |
+| CAE                    | Codigo Autorizacion Electronica (AFIP) | Devuelto por WSFE; vence (~10 dias); sin CAE = factura invalida |
+| Punto de venta (0904)  | PV asignado por AFIP a la sucursal/caja | Probablemente 1 PV por sucursal |
+| Sin aplicar            | Pago entregado que no se aplico a esta factura | Queda como saldo a favor del cliente |
+| Entrega / Vuelto       | Lo que entrega el cliente / lo que se le devuelve | Solo aplica a efectivo |
+| Bloquear ENTREGA DE MERCADERIA | Flag: mercaderia facturada pero retenida en deposito | Caso "entrega diferida" |
+| Entrega diferida       | Operacion donde la mercaderia se entrega despues de la factura | Checkbox en pantalla 6 |
 
 ### B. Referencias internas
 
@@ -701,15 +864,19 @@ documento entero **mas** estos puntos como pregunta especifica:
 
 ## 10. Proximos pasos (concretos, semana del 9/6)
 
-- [ ] Cerrar la 6ta pantalla del flujo Puma (foto del paso de
-      impresion / cierre) → completar §1.1.
+- [x] Cerrar la 6ta pantalla del flujo Puma (pantalla "Confirmar
+      medios de pagos. Factura" — emision con CAE AFIP). **Hecho
+      en v0.2**.
 - [ ] Compartir este doc al equipo Puma 48h antes de la reunion para
-      que vengan con respuestas a §7.
+      que vengan con respuestas a §7 (especialmente preguntas 25-30
+      sobre AFIP/CAE).
 - [ ] Imprimir matriz §3.5 a la reunion (es el ancla de la
       decision).
 - [ ] Definir piloto: 2 vendedores en Caseros, 4 SKUs, 2 semanas.
 - [ ] Estimar costo Fase 1 (replica + lectura) para presentar a
       gerencia.
+- [ ] Pasar este doc a otra IA con las 8 preguntas del Anexo C para
+      recibir critica antes de v1.0.
 
 ---
 
