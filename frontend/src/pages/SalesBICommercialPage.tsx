@@ -738,11 +738,13 @@ function LinesDetail({
   selectedLine,
   setSelectedLine,
   mode,
+  previousReport,
 }: {
   report: SalesBICommercialReport;
   selectedLine: string;
   setSelectedLine: (line: string) => void;
   mode: MetricMode;
+  previousReport?: SalesBICommercialReport | null;
 }) {
   const line = rowByName(report.line_mix, selectedLine);
   // El backend (`/lines/report`) NO siempre devuelve las matrices cruzadas
@@ -817,7 +819,7 @@ function LinesDetail({
         </ChartCard>
       </div>
 
-      <Heatmap report={report} mode={mode} setSelectedLine={setSelectedLine} />
+      <Heatmap report={report} mode={mode} setSelectedLine={setSelectedLine} previousReport={previousReport} />
 
       <ChartCard title="Evolucion por linea" subtitle="Tendencia diaria de las lineas principales">
         {lineTrendHasData ? (
@@ -1022,13 +1024,18 @@ function Heatmap({
   report,
   mode,
   setSelectedLine,
+  previousReport,
 }: {
   report: SalesBICommercialReport;
   mode: MetricMode;
   setSelectedLine?: (line: string) => void;
+  /** Si esta presente, cada celda muestra delta % vs misma celda del rango
+   *  comparado debajo del $ amount (mockup del gerente). */
+  previousReport?: SalesBICommercialReport | null;
 }) {
   const lines = (report.line_mix || []).slice(0, 10);
   const matrixRows = report.branch_line_matrix || [];
+  const previousMatrix = previousReport?.branch_line_matrix || [];
   const max = Math.max(
     1,
     ...matrixRows.flatMap((row) => row.items.map((item) => metricValue(item, mode))),
@@ -1042,7 +1049,12 @@ function Heatmap({
     );
   }
   return (
-    <ChartCard title="Heatmap sucursal x linea" subtitle={`${metricLabel(mode)} · color por intensidad · clic para enfocar linea`}>
+    <ChartCard
+      title="Heatmap sucursal x linea"
+      subtitle={previousReport
+        ? `${metricLabel(mode)} · color por intensidad · % chico = variacion vs periodo anterior · clic para filtrar`
+        : `${metricLabel(mode)} · color por intensidad · clic para enfocar linea`}
+    >
       <div className="overflow-x-auto">
         <table className="min-w-[760px] w-full text-xs">
           <thead>
@@ -1055,33 +1067,51 @@ function Heatmap({
             </tr>
           </thead>
           <tbody>
-            {matrixRows.map((row) => (
-              <tr key={row.name} className="border-t border-white/5">
-                <td className="px-2 py-2 font-black text-white">{row.name}</td>
-                {lines.map((line, index) => {
-                  const item = matrixItem(row, line.name);
-                  const value = item ? metricValue(item, mode) : 0;
-                  const intensity = value / max;
-                  return (
-                    <td key={line.name} className="px-2 py-2 text-right font-mono tabular-nums">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedLine?.(line.name)}
-                        className="block w-full rounded-lg px-2 py-1 text-right transition hover:ring-2 hover:ring-blue-400"
-                        style={{
-                          background: `color-mix(in oklch, ${colorFor(index)} ${Math.round(16 + intensity * 62)}%, transparent)`,
-                          color: intensity > 0.55 ? '#fff' : '#cbd5e1',
-                        }}
-                      >
-                        <div>{format(value)}</div>
-                        <div className="text-[10px] opacity-80">{item ? `${item.participacion_pct.toFixed(1)}%` : '-'}</div>
-                      </button>
-                    </td>
-                  );
-                })}
-                <td className="px-2 py-2 text-right font-mono font-black text-[color:var(--chart-positive)]">{format(metricValue(row.total, mode))}</td>
-              </tr>
-            ))}
+            {matrixRows.map((row) => {
+              const prevRow = matrixByName(previousMatrix, row.name);
+              return (
+                <tr key={row.name} className="border-t border-white/5">
+                  <td className="px-2 py-2 font-black text-white">{row.name}</td>
+                  {lines.map((line, index) => {
+                    const item = matrixItem(row, line.name);
+                    const value = item ? metricValue(item, mode) : 0;
+                    const intensity = value / max;
+                    // Variacion vs misma celda del periodo comparado, si lo hay.
+                    const prevItem = prevRow ? matrixItem(prevRow, line.name) : null;
+                    const prevValue = prevItem ? metricValue(prevItem, mode) : 0;
+                    const delta = previousReport && prevValue > 0
+                      ? ((value - prevValue) / prevValue) * 100
+                      : null;
+                    return (
+                      <td key={line.name} className="px-2 py-2 text-right font-mono tabular-nums">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedLine?.(line.name)}
+                          className="block w-full rounded-lg px-2 py-1 text-right transition hover:ring-2 hover:ring-blue-400"
+                          style={{
+                            background: `color-mix(in oklch, ${colorFor(index)} ${Math.round(16 + intensity * 62)}%, transparent)`,
+                            color: intensity > 0.55 ? '#fff' : '#cbd5e1',
+                          }}
+                        >
+                          <div>{format(value)}</div>
+                          {delta !== null ? (
+                            <div className={cn(
+                              'text-[10px] font-black',
+                              delta >= 0 ? 'text-emerald-200' : 'text-rose-200',
+                            )}>
+                              {delta >= 0 ? '+' : ''}{delta.toFixed(1)}%
+                            </div>
+                          ) : (
+                            <div className="text-[10px] opacity-80">{item ? `${item.participacion_pct.toFixed(1)}%` : '-'}</div>
+                          )}
+                        </button>
+                      </td>
+                    );
+                  })}
+                  <td className="px-2 py-2 text-right font-mono font-black text-[color:var(--chart-positive)]">{format(metricValue(row.total, mode))}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -2945,7 +2975,7 @@ export function SalesBICommercialPage() {
           )}
 
           {activeTab === 'lines' && linesReport && (
-            <LinesDetail report={linesReport} selectedLine={selectedLine} setSelectedLine={setSelectedLine} mode={metricMode} />
+            <LinesDetail report={linesReport} selectedLine={selectedLine} setSelectedLine={setSelectedLine} mode={metricMode} previousReport={previousReport} />
           )}
 
           {activeTab === 'branches' && branchesReport && (
