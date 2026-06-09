@@ -645,13 +645,17 @@ function LinesDetail({
   mode: MetricMode;
 }) {
   const line = rowByName(report.line_mix, selectedLine);
-  const branchRows = report.branch_line_matrix
+  // El backend (`/lines/report`) NO siempre devuelve las matrices cruzadas
+  // — en producción están faltando por completo. Sin el `|| []` defensivo
+  // un .map sobre undefined explota y como la app no tiene ErrorBoundary,
+  // se cae toda la pantalla.
+  const branchRows = (report.branch_line_matrix || [])
     .map((row) => matrixItem(row, line?.name || ''))
     .filter(Boolean) as SalesBICommercialMix[];
   const leaders = report.brands_by_line?.find((row) => row.line === line?.name)?.leaders || [];
-  const lineNames = report.line_mix.slice(0, 6).map((row) => row.name);
+  const lineNames = (report.line_mix || []).slice(0, 6).map((row) => row.name);
   const lineTrend = matrixSeriesRows(report.date_line_matrix, lineNames, mode);
-  const branchComposition = report.branch_line_matrix.map((row) => {
+  const branchComposition = (report.branch_line_matrix || []).map((row) => {
     const out: Record<string, string | number> = { name: row.name };
     lineNames.forEach((lineName) => {
       const item = matrixItem(row, lineName);
@@ -908,10 +912,11 @@ function Heatmap({
   mode: MetricMode;
   setSelectedLine?: (line: string) => void;
 }) {
-  const lines = report.line_mix.slice(0, 10);
+  const lines = (report.line_mix || []).slice(0, 10);
+  const matrixRows = report.branch_line_matrix || [];
   const max = Math.max(
     1,
-    ...report.branch_line_matrix.flatMap((row) => row.items.map((item) => metricValue(item, mode))),
+    ...matrixRows.flatMap((row) => row.items.map((item) => metricValue(item, mode))),
   );
   const format = metricFormatter(mode);
   return (
@@ -928,7 +933,7 @@ function Heatmap({
             </tr>
           </thead>
           <tbody>
-            {report.branch_line_matrix.map((row) => (
+            {matrixRows.map((row) => (
               <tr key={row.name} className="border-t border-white/5">
                 <td className="px-2 py-2 font-black text-white">{row.name}</td>
                 {lines.map((line, index) => {
@@ -1300,8 +1305,10 @@ function BrandBranchMatrix({
   onBrand: (brand: string) => void;
   onBranch: (branch: string) => void;
 }) {
-  const branches = report.branch_mix.slice(0, 8);
-  const brands = report.brand_branch_matrix.slice(0, 12);
+  const branches = (report.branch_mix || []).slice(0, 8);
+  // brand_branch_matrix puede no venir del backend (mismo caso que
+  // branch_line_matrix). Sin `|| []` la matriz crashea el overview.
+  const brands = (report.brand_branch_matrix || []).slice(0, 12);
   const max = Math.max(
     1,
     ...brands.flatMap((brand) => brand.items.map((item) => metricValue(item, mode))),

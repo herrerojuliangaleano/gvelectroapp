@@ -58,6 +58,7 @@ import { SalesBIDetailPage } from './pages/SalesBIDetailPage';
 import { SalesBISellersPage } from './pages/SalesBISellersPage';
 import { SalesBICommercialPage } from './pages/SalesBICommercialPage';
 import { SalesBICommercialImportPage } from './pages/SalesBICommercialImportPage';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { canUsePriceAnnouncements } from './priceAnnouncementsAccess';
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -176,12 +177,17 @@ export default function App() {
       <Route path="/solicitudes-venta-web/nueva" element={<Navigate to="/venta/nueva" replace />} />
       <Route path="/solicitudes-venta-web/:id" element={<ProtectedLayout permission="sales_web.view"><SalesWebDetailPage /></ProtectedLayout>} />
       <Route path="/ventas-bi" element={<ProtectedLayout permission="sales_bi.view"><SalesBIHistoryPage /></ProtectedLayout>} />
-      <Route path="/ventas-bi/marcas" element={<ProtectedLayout permission="sales_bi.view"><SalesBICommercialPage /></ProtectedLayout>} />
-      <Route path="/ventas-bi/lineas" element={<ProtectedLayout permission="sales_bi.view"><SalesBICommercialPage /></ProtectedLayout>} />
-      <Route path="/ventas-bi/sucursales" element={<ProtectedLayout permission="sales_bi.view"><SalesBICommercialPage /></ProtectedLayout>} />
+      {/* Las 3 rutas del dashboard comercial van envueltas en ErrorBoundary
+          porque el dashboard accede a matrices del backend que pueden no
+          estar (`branch_line_matrix`, `brand_branch_matrix`, etc.). Sin esto
+          un .map sobre undefined desmonta la app entera y queda pantalla
+          blanca. */}
+      <Route path="/ventas-bi/marcas" element={<ProtectedLayout permission="sales_bi.view"><ErrorBoundary><SalesBICommercialPage /></ErrorBoundary></ProtectedLayout>} />
+      <Route path="/ventas-bi/lineas" element={<ProtectedLayout permission="sales_bi.view"><ErrorBoundary><SalesBICommercialPage /></ErrorBoundary></ProtectedLayout>} />
+      <Route path="/ventas-bi/sucursales" element={<ProtectedLayout permission="sales_bi.view"><ErrorBoundary><SalesBICommercialPage /></ErrorBoundary></ProtectedLayout>} />
       <Route path="/ventas-bi/comercial/importar" element={<ProtectedLayout permission="sales_bi.import"><SalesBICommercialImportPage /></ProtectedLayout>} />
       <Route path="/ventas-bi/historial" element={<ProtectedLayout permission="sales_bi.view"><SalesBIHistoryPage /></ProtectedLayout>} />
-      <Route path="/ventas-bi/vendedores" element={<ProtectedLayout permission="sales_bi.view"><SalesBISellersPage /></ProtectedLayout>} />
+      <Route path="/ventas-bi/vendedores" element={<ProtectedLayout permission="sales_bi.view"><ErrorBoundary><SalesBISellersPage /></ErrorBoundary></ProtectedLayout>} />
       <Route path="/ventas-bi/importar" element={<ProtectedLayout permission="sales_bi.import"><SalesBIImportPage /></ProtectedLayout>} />
       <Route path="/ventas-bi/importaciones/:importId" element={<ProtectedLayout permission="sales_bi.view"><SalesBIDetailPage /></ProtectedLayout>} />
       <Route path="/notificaciones" element={<ProtectedLayout permission="notifications.view"><NotificationsPage /></ProtectedLayout>} />

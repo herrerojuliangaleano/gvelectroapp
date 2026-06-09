@@ -326,3 +326,54 @@ Si trabajas en esta fase:
   - Lanus: `Ventas ABC-Sur`.
 - Total detectado: 5.657 lineas, 5.917 unidades, PVP total 3.461.833.000.
 - `BASE_*` y hojas auxiliares quedaron fuera del importador.
+
+## Defensa frontend: matrices opcionales + ErrorBoundary
+
+Bug clasico detectado en junio/2026: si el backend desplegado en prod
+es una version vieja que no devuelve las matrices cruzadas
+(`branch_line_matrix`, `branch_brand_matrix`, etc.), el frontend hacia
+`report.branch_line_matrix.map(...)` directo y el TypeError causaba que
+React desmontara el arbol entero. La app no tenia ErrorBoundary asi
+que el usuario veia **pantalla en blanco completa** y la unica forma de
+recuperar era refrescar.
+
+Las pestanas que crasheaban:
+
+- `Resumen` (`OverviewDashboard`): `report.brand_branch_matrix` undefined.
+- `Lineas` (`LinesDetail`): `report.branch_line_matrix` undefined.
+- `Heatmap sucursal x linea` (dentro de Lineas): mismo.
+- "Ver detalle" en oportunidades que apuntaran a `Lineas`: cascada
+  del mismo crash.
+
+Las pestanas que no crasheaban (porque usaban los helpers
+`matrixByName` / `matrixSeriesRows` que ya tenian `|| []` adentro):
+
+- `Marcas` (`BrandDetail`).
+- `Sucursales` (`BranchDetail`).
+- `Comparador`.
+- `Periodos`.
+- `Presentacion`.
+
+Soluciones:
+
+1. **Frontend defensivo**: cada acceso directo a `report.<matrix>.map/.slice/.flatMap`
+   ahora va envuelto en `(report.<matrix> || [])`. Las funciones
+   afectadas: `LinesDetail`, `Heatmap`, `BrandBranchMatrix`.
+2. **ErrorBoundary** en `frontend/src/components/ErrorBoundary.tsx`:
+   wrapper de clase que captura crashes y muestra mensaje + boton de
+   reintentar en vez de desmontar todo. Envuelve las 3 rutas del
+   dashboard comercial y la ruta del dashboard de vendedores en
+   `App.tsx`. En cualquier futuro `TypeError` similar el usuario va a
+   ver un mensaje claro, no pantalla negra.
+3. **Backend**: `sales_bi_commercial.py` ya devuelve todas las
+   matrices (`branch_line_matrix`, `branch_brand_matrix`,
+   `brand_line_matrix`, `brand_branch_matrix`, `date_line_matrix`,
+   `date_brand_matrix`, `date_branch_matrix`) — pero el deploy de prod
+   puede estar atrasado. Mientras no se redespliegue, el frontend
+   defensivo evita el crash mostrando las secciones afectadas vacias
+   en lugar de tirar todo abajo.
+
+Regla a futuro: cualquier acceso a un campo de tipo
+`SalesBICommercialMatrixRow[]` debe ser via `matrixByName()` o
+`matrixSeriesRows()`, o envuelto en `|| []`. Nunca llamar `.map` /
+`.slice` / `.flatMap` directo sobre `report.<matrix>`.
