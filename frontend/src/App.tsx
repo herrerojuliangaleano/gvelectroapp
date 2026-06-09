@@ -183,6 +183,8 @@ export default function App() {
           un .map sobre undefined desmonta la app entera y queda pantalla
           blanca. */}
       <Route path="/ventas-bi/marcas" element={<ProtectedLayout permission="sales_bi.view"><ErrorBoundary><SalesBICommercialPage /></ErrorBoundary></ProtectedLayout>} />
+      {/* `categorias` es el nombre nuevo (5 buckets), `lineas` queda como alias para back-compat de bookmarks. */}
+      <Route path="/ventas-bi/categorias" element={<ProtectedLayout permission="sales_bi.view"><ErrorBoundary><SalesBICommercialPage /></ErrorBoundary></ProtectedLayout>} />
       <Route path="/ventas-bi/lineas" element={<ProtectedLayout permission="sales_bi.view"><ErrorBoundary><SalesBICommercialPage /></ErrorBoundary></ProtectedLayout>} />
       <Route path="/ventas-bi/sucursales" element={<ProtectedLayout permission="sales_bi.view"><ErrorBoundary><SalesBICommercialPage /></ErrorBoundary></ProtectedLayout>} />
       <Route path="/ventas-bi/comercial/importar" element={<ProtectedLayout permission="sales_bi.import"><SalesBICommercialImportPage /></ProtectedLayout>} />

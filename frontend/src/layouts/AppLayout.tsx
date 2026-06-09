@@ -171,7 +171,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         { to: '/comercial/anuncios-precios', icon: <Megaphone size={16} />, label: 'Anuncios de precios', visible: canUsePriceAnnouncements(user) },
         { to: '/ventas-bi', icon: <BarChart2 size={16} />, label: 'Inteligencia comercial', children: [
           { to: '/ventas-bi/marcas', icon: <BarChart2 size={14} />, label: 'Marcas', permission: 'sales_bi.view' },
-          { to: '/ventas-bi/lineas', icon: <TrendingUp size={14} />, label: 'Lineas', permission: 'sales_bi.view' },
+          { to: '/ventas-bi/lineas', icon: <TrendingUp size={14} />, label: 'Categorias', permission: 'sales_bi.view' },
           { to: '/ventas-bi/sucursales', icon: <Building2 size={14} />, label: 'Sucursales', permission: 'sales_bi.view' },
           { to: '/ventas-bi/vendedores', icon: <Users size={14} />, label: 'Vendedores', permission: 'sales_bi.view' },
           { to: '/ventas-bi/historial', icon: <History size={14} />, label: 'Historial', permission: 'sales_bi.view' },

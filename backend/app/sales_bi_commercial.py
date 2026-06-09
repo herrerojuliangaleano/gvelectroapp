@@ -853,6 +853,18 @@ def _common_report(
             include_costs=include_costs,
             include_margin=include_margin,
         ),
+        # Drill-down: por cada sucursal, los TIPOS granulares (HELADERA,
+        # LAVARROPAS, MICROONDAS, ...) ordenados por venta. Mas detallado
+        # que el branch_line_matrix (que usa las 5 categorias) y necesario
+        # para el bloque "Lineas mas vendidas" del tab Sucursales.
+        "branch_tipo_matrix": _cross_matrix(
+            records,
+            row_dimension="branch",
+            col_dimension="tipo",
+            include_costs=include_costs,
+            include_margin=include_margin,
+            col_limit=30,
+        ),
         "branch_brand_matrix": _cross_matrix(
             records,
             row_dimension="branch",

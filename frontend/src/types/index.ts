@@ -749,6 +749,10 @@ export interface SalesBICommercialReport {
   branch_mix: SalesBICommercialMix[];
   sale_type_mix: SalesBICommercialMix[];
   branch_line_matrix: SalesBICommercialMatrixRow[];
+  /** Drill-down opcional: sucursal × tipo_producto granular (heladera,
+   *  lavarropas, ...). Usado para mostrar "Lineas mas vendidas" dentro
+   *  del perfil de cada sucursal. Puede no estar en respuestas viejas. */
+  branch_tipo_matrix?: SalesBICommercialMatrixRow[];
   branch_brand_matrix: SalesBICommercialMatrixRow[];
   brand_line_matrix: SalesBICommercialMatrixRow[];
   brand_branch_matrix: SalesBICommercialMatrixRow[];

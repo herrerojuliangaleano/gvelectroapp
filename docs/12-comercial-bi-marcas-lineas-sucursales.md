@@ -229,7 +229,28 @@ hacer `from .sales_bi import _classify`.
 
 `tipo_producto` (granular: HELADERA, LAVARROPAS, MICROONDAS, ...)
 **sigue guardado** para drill-down. El frontend lo expone como
-secundario debajo de la categoria cuando el usuario hace click.
+"Lineas mas vendidas" dentro del perfil de cada sucursal (tab
+Sucursales) usando la matriz `branch_tipo_matrix`.
+
+#### Nomenclatura UI (importante para no confundirse)
+
+A partir de junio/2026 el dashboard usa estos terminos:
+
+| Termino UI    | Que es en el codigo                                          |
+|---------------|--------------------------------------------------------------|
+| **Categoria** | Las 6 buckets (LINEA BLANCA, COCINA, ...) — columna `categoria`. Es lo que antes llamabamos "linea". |
+| **Linea**     | El `tipo_producto` granular (HELADERA, LAVARROPAS, MICROONDAS, ...). Es lo que en el rubro se llama "linea de producto". |
+| **SKU**       | El modelo puntual. Columna `sku`.                             |
+
+Razon del cambio: en jerga retail "linea blanca" es una categoria, y
+"linea de heladeras" es una familia de tipos. El nombre "linea" para
+los 5 buckets era ambiguo — ahora "categoria" deja claro que es el
+nivel mas alto.
+
+Ruta UI: `/ventas-bi/categorias` (con alias `/ventas-bi/lineas` para
+back-compat de bookmarks viejos). Internamente la `CommercialKind`
+se sigue llamando `'lines'` por compat con codigo previo — no
+renombrar para no romper la API y el resto del modulo.
 
 Backfill de registros ya importados (despues de la migracion
 `20260609_0001`):
@@ -243,11 +264,12 @@ docker exec electrogv-backend-prod python -c \
 
 #### Salida del endpoint `*/report`
 
-| Campo           | Que devuelve                                              |
-|-----------------|-----------------------------------------------------------|
-| `line_mix`      | Mix por las 6 categorias (dimension "linea" del dashboard) |
-| `tipo_mix`      | Mix por `tipo_producto` granular (drill-down)             |
-| `*_line_matrix` | Matrices cruzadas con categoria como una de las dimensiones |
+| Campo                 | Que devuelve                                                  |
+|-----------------------|---------------------------------------------------------------|
+| `line_mix`            | Mix por las 6 categorias (dimension "categoria" del dashboard) |
+| `tipo_mix`            | Mix global por `tipo_producto` granular                       |
+| `*_line_matrix`       | Matrices cruzadas keyed por categoria                         |
+| `branch_tipo_matrix`  | Sucursal × tipo granular (heladera, lavarropas, ...) — drill-down |
 
 `brand_line_matrix`, `branch_line_matrix`, `date_line_matrix` quedaron
 todas **keyed por categoria**, no por tipo granular. Con esto se

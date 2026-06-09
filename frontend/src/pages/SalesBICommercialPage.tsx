@@ -54,7 +54,7 @@ interface OpportunityCardModel {
 
 const KIND_META: Record<CommercialKind, { label: string; title: string; icon: ReactNode; color: string }> = {
   brands: { label: 'Marcas', title: 'BI comercial por marcas', icon: <Tags size={15} />, color: 'var(--chart-blue)' },
-  lines: { label: 'Lineas', title: 'BI comercial por lineas', icon: <Layers3 size={15} />, color: 'var(--chart-violet)' },
+  lines: { label: 'Categorias', title: 'BI comercial por categorias', icon: <Layers3 size={15} />, color: 'var(--chart-violet)' },
   branches: { label: 'Sucursales', title: 'Perfil comercial de sucursales', icon: <Building2 size={15} />, color: 'var(--chart-teal)' },
 };
 
@@ -72,7 +72,10 @@ const PALETTE = [
 const inputClass = 'h-11 w-full rounded-xl border border-white/15 bg-slate-950/40 px-3 text-sm font-medium text-white outline-none transition focus:border-[color:var(--chart-blue)]';
 
 function kindFromPath(pathname: string): CommercialKind {
-  if (pathname.includes('/lineas')) return 'lines';
+  // `/lineas` queda como alias historico. `/categorias` es el nombre nuevo
+  // — internamente la kind se llama 'lines' por compat con el resto del
+  // codigo y los reportes del backend, no es necesario renombrar.
+  if (pathname.includes('/categorias') || pathname.includes('/lineas')) return 'lines';
   if (pathname.includes('/sucursales')) return 'branches';
   return 'brands';
 }
@@ -708,7 +711,7 @@ function BrandDetail({
         <ChartCard title="Mix por sucursal" subtitle={`Donde se vende ${brand.name}`}>
           <RankingBars data={brandBranches?.items || []} color="var(--chart-blue)" mode={mode} />
         </ChartCard>
-        <ChartCard title="Mix por linea comercial" subtitle="Categorias donde aporta">
+        <ChartCard title="Mix por categoria" subtitle="Categorias donde aporta">
           <RankingBars data={brandLines?.items || []} color="var(--chart-amber)" mode={mode} />
         </ChartCard>
       </div>
@@ -821,7 +824,7 @@ function LinesDetail({
       </section>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <ChartCard title="Mix por linea" subtitle={`Participacion sobre el total · ${metricLabel(mode)}`}>
+        <ChartCard title="Mix por categoria" subtitle={`Participacion sobre el total · ${metricLabel(mode)}`}>
           <ShareBars rows={report.line_mix} mode={mode} onSelect={setSelectedLine} />
         </ChartCard>
         <ChartCard title="Ranking de lineas" subtitle="Busqueda visual por peso comercial" className="lg:col-span-2">
@@ -840,7 +843,7 @@ function LinesDetail({
 
       <Heatmap report={report} mode={mode} setSelectedLine={setSelectedLine} previousReport={previousReport} />
 
-      <ChartCard title="Evolucion por linea" subtitle="Tendencia diaria de las lineas principales">
+      <ChartCard title="Evolucion por categoria" subtitle="Tendencia diaria de las categorias principales">
         {lineTrendHasData ? (
           <ResponsiveContainer width="100%" height={320}>
             <LineChart data={lineTrend} margin={{ top: 8, right: 18, left: 0, bottom: 8 }}>
@@ -907,6 +910,10 @@ function BranchDetail({
   const branch = rowByName(report.branch_mix, selectedBranch);
   const lineMatrix = matrixByName(report.branch_line_matrix, branch?.name || '');
   const brandMatrix = matrixByName(report.branch_brand_matrix, branch?.name || '');
+  // Tipos granulares (heladera, lavarropas, ...) dentro de la sucursal —
+  // drill-down "Líneas más vendidas" debajo del mix por categoría. La
+  // matrix puede no estar en respuestas viejas del backend; fallback a [].
+  const tipoMatrix = matrixByName(report.branch_tipo_matrix || [], branch?.name || '');
   const profile = report.profiles?.find((row) => row.sucursal === branch?.name);
   const branchTrend = matrixSeriesRows(report.date_branch_matrix, branch ? [branch.name] : [], mode);
   const branchProducts = productPresenceRows(report)
@@ -985,7 +992,7 @@ function BranchDetail({
             <div className="space-y-2">
               <ProfileTag label="Perfil PVP" value={profile.pvp_profile} />
               <ProfileTag label="Variedad de surtido" value={profile.variety} />
-              <ProfileTag label="Linea principal" value={profile.top_line || '-'} />
+              <ProfileTag label="Categoria principal" value={profile.top_line || '-'} />
               <ProfileTag label="Marca principal" value={profile.top_brand || '-'} />
             </div>
           </div>
@@ -993,7 +1000,7 @@ function BranchDetail({
       )}
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <ChartCard title="Mix por linea comercial" subtitle={`Composicion de ${branch.name}`}>
+        <ChartCard title="Mix por categoria" subtitle={`Categorias de ${branch.name}`}>
           <RankingBars data={lineMatrix?.items || []} color="var(--chart-blue)" mode={mode} />
         </ChartCard>
         <ChartCard title="Mix por marca" subtitle={`Top marcas en ${branch.name}`}>
@@ -1001,12 +1008,29 @@ function BranchDetail({
         </ChartCard>
       </div>
 
+      {/* Drill-down de tipo_producto granular dentro de la sucursal — esto
+          es lo que en jerga del rubro se llama "lineas de producto" (a
+          diferencia de "categoria" que son los 5 buckets amplios). */}
+      <ChartCard
+        title="Lineas mas vendidas"
+        subtitle={`Tipos de producto que mas mueve ${branch.name} (heladera, lavarropas, microondas, ...)`}
+      >
+        {tipoMatrix?.items && tipoMatrix.items.length > 0 ? (
+          <RankingBars data={tipoMatrix.items} color="var(--chart-amber)" mode={mode} />
+        ) : (
+          <EmptyChartState
+            minHeight={260}
+            description="No hay drill-down de tipo_producto disponible. Verifica que el backend este al dia con la matriz branch_tipo."
+          />
+        )}
+      </ChartCard>
+
       <div className="grid gap-4 lg:grid-cols-2">
-        <ChartCard title={`${branch.name} vs promedio de red`} subtitle="Share por linea: sucursal contra consolidado">
+        <ChartCard title={`${branch.name} vs promedio de red`} subtitle="Share por categoria: sucursal contra consolidado">
           {benchmarkHasData ? (
             <BranchLineBenchmark branchName={branch.name} rows={benchmarkData} />
           ) : (
-            <EmptyChartState minHeight={300} description="No hay mix por linea suficiente para comparar esta sucursal con la red." />
+            <EmptyChartState minHeight={300} description="No hay mix por categoria suficiente para comparar esta sucursal con la red." />
           )}
         </ChartCard>
         <ChartCard title="Comparacion con otras sucursales" subtitle={metricLabel(mode)}>
@@ -1235,7 +1259,7 @@ function TopProductsTable({
               <th className="px-3 py-3 text-left">SKU</th>
               <th className="px-3 py-3 text-left">Producto</th>
               <th className="px-3 py-3 text-left">Marca</th>
-              <th className="px-3 py-3 text-left">Linea</th>
+              <th className="px-3 py-3 text-left">Categoria</th>
               <th className="px-3 py-3 text-right">Unid.</th>
               <th className="px-3 py-3 text-right">Vendido</th>
               {showCosts && <th className="px-3 py-3 text-right">Costo</th>}
@@ -1271,7 +1295,7 @@ function TopProductsTable({
 
 function Opportunities({ report }: { report: SalesBICommercialReport }) {
   return (
-    <ChartCard title="Oportunidades internas" subtitle="Lineas que pesan menos en una sucursal contra el consolidado">
+    <ChartCard title="Oportunidades internas" subtitle="Categorias que pesan menos en una sucursal contra el consolidado">
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {report.opportunities!.slice(0, 9).map((item) => (
           <div key={`${item.sucursal}-${item.tipo_producto}`} className="rounded-2xl border border-amber-500/25 bg-amber-500/10 p-4">
@@ -1436,7 +1460,7 @@ function OverviewDashboard({
           }}
         />
         <MixList
-          title="Mix por linea"
+          title="Mix por categoria"
           rows={brandsReport.line_mix}
           mode={mode}
           onSelect={(name) => {
@@ -2851,7 +2875,7 @@ export function SalesBICommercialPage() {
   const tabs = [
     { value: 'overview', label: 'Resumen', shortLabel: 'Resumen', icon: <BarChart3 size={14} /> },
     { value: 'brands', label: 'Marcas', shortLabel: 'Marcas', icon: <Tags size={14} /> },
-    { value: 'lines', label: 'Lineas', shortLabel: 'Lineas', icon: <Layers3 size={14} /> },
+    { value: 'lines', label: 'Categorias', shortLabel: 'Categ.', icon: <Layers3 size={14} /> },
     { value: 'branches', label: 'Sucursales', shortLabel: 'Suc.', icon: <Building2 size={14} /> },
     { value: 'products', label: 'Productos', shortLabel: 'Prod.', icon: <Package size={14} /> },
     { value: 'compare', label: 'Comparador', shortLabel: 'Comp.', icon: <Trophy size={14} /> },
@@ -2869,7 +2893,7 @@ export function SalesBICommercialPage() {
     const tab = value as CommercialTab;
     setActiveTab(tab);
     if (tab === 'brands') navigate('/ventas-bi/marcas');
-    if (tab === 'lines') navigate('/ventas-bi/lineas');
+    if (tab === 'lines') navigate('/ventas-bi/categorias');
     if (tab === 'branches') navigate('/ventas-bi/sucursales');
   }
 
