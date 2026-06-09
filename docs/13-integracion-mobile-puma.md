@@ -7,9 +7,12 @@
 > **Audiencia**: Victor (CEO ElectroGV), equipo tecnico de Puma Software,
 > consultores externos. Asume vocabulario tecnico medio-alto.
 >
-> **Fecha**: 2026-06-09 · **Version doc**: 0.2 — flujo Puma completo
-> (6 pantallas / 12 ventanas documentadas). Pendiente review con
-> equipo Puma + otra IA antes de v1.0.
+> **Fecha**: 2026-06-09 · **Version doc**: 0.3 — corregida la
+> interpretacion de la pantalla 6: las 6 pantallas generan una
+> **prefactura guardada en Caja Recaudadora** (sin CAE), y la
+> **emision real** (que llama a AFIP) es **un paso separado**
+> en otra pantalla del modulo Caja. Esto simplifica la integracion
+> mobile y reordena el roadmap.
 
 ---
 
@@ -62,15 +65,37 @@ reunion es un **hibrido** (§3.3):
 7. **Como se devuelve el CAE de AFIP** (sincrono / asincrono /
    webhook) — esto define la arquitectura de la pantalla 4 mobile.
 
-### Hallazgo critico de la 6ta pantalla
+### Hallazgo crítico — separacion Prefactura vs Factura emitida
 
-La ultima pantalla de Puma (`Confirmar medios de pagos. Factura`)
-**genera la factura electronica con CAE de AFIP**
-(`0904-00001302-B`). Esto es un acto fiscal con consecuencias
-legales — **no se puede emular escribiendo a Postgres**. Cualquier
-plan que contemple bypass de Puma para crear ventas reales esta
-fuera de scope. La app movil debe **delegar la emision a Puma** y
-solo persistir el numero + CAE + PDF que Puma devuelve. Ver §1.1.bis.
+Las 6 pantallas del flujo Puma generan una **prefactura**, no una
+factura final con CAE. La prefactura queda **guardada en el modulo
+"Caja Recaudadora"** con todos los datos: cliente, items, plan,
+medios de pago elegidos, observaciones. **NO se llama a AFIP en
+este momento**.
+
+La **emision real** (que dispara WSFE AFIP y genera el CAE) es
+**otra pantalla aparte** dentro de Caja Recaudadora, donde el
+operador toma una prefactura pendiente y le da "Emitir".
+
+Implicancias para la integracion mobile:
+
+- **La app movil puede generar prefacturas perfectamente**
+  sin tocar AFIP. Eso era el cuello de botella conceptual y se cae.
+- **La emision queda en Puma** (al menos en Fase 2/3). El cajero
+  toma prefacturas creadas en mobile y las emite desde su PC.
+- **Fase 2 (mobile-first) se vuelve mucho mas barata**: no hay que
+  integrar WSFE, no hay que manejar CAE, no hay impresoras fiscales
+  en mobile.
+- **Fase 3 (escritura por API)** puede separar dos endpoints:
+  `POST /prefacturas` (sin AFIP) y `POST /prefacturas/:id/emit`
+  (con AFIP, lo dispara cuando lo decida el negocio).
+- **La Opcion A (escritura directa) recobra parcial viabilidad
+  SOLO para crear prefacturas** — el argumento del CAE no aplica si
+  no estamos emitiendo. Pero sigue teniendo los otros 8 contras de
+  §3.1.
+
+Ver §1.1 (paso 6 = prefactura) y §1.1.bis (paso 7 = emision real
+separada).
 
 ---
 
@@ -89,54 +114,102 @@ capturas del 2026-06-06 / 2026-06-09:
 | 3 | Forma de pago + plan     | Prefactura (la misma) | Plan de credito (`CANCELAR PARA RETIRAR`, cuotas, fecha 1° cuota) | Sub-formulario embebido — visualmente cargado |
 | 4 | Datos finales            | Prefactura + **Datos Finales** | Anticipo, Efectivo, Cheques, Saldo a favor, Vendedor (cod. `0011`), Percepciones | Otra ventana modal, repite cliente abajo |
 | 5 | Emitir orden de entrega  | **Emitir Orden de Entrega** + **Confirmar Orden de Entrega** | Deposito de salida, tipo reparto (Envio/Retira), fecha, turno, domicilio, persona que retira (DNI + tel) | 2 ventanas + decision logistica al final del flujo |
-| 6 | Confirmar medios de pago + emitir Factura | **Confirmar medios de pagos. Factura** | **Numero AFIP `0904-00001302-B`** (FC), MONTO TOTAL, fecha emision, **desglose granular de pago** (Saldo a favor / Efectivo / Tarjeta / Cheque / Depositos-Transf. / Monedas Extranjeras / Retenciones / Otras monedas), Entrega + Vuelto, "Sin aplicar", **Bloquear ENTREGA DE MERCADERIA** (checkbox), observaciones del comprobante, botones Guardar / Verificar / Cancelar / Cerrar | Es la **emision fiscal real** — genera comprobante AFIP. No es solo impresion: aca se cierra el acto contable. |
+| 6 | Confirmar medios de pago (cierre de **prefactura**) | **Confirmar medios de pagos. Factura** | Numero de comprobante reservado (`0904-00001302-B` — _planificado_, todavia sin CAE), MONTO TOTAL, fecha de emision planeada, **desglose granular de pago** (Saldo a favor / Efectivo / Tarjeta / Cheque / Depositos-Transf. / Monedas Extranjeras / Retenciones / Otras monedas), Entrega + Vuelto, "Sin aplicar", **Bloquear ENTREGA DE MERCADERIA** (checkbox), observaciones del comprobante, botones Guardar / Verificar / Cancelar / Cerrar | **El "Guardar" persiste la prefactura en Caja Recaudadora — NO llama a AFIP todavia.** Es el cierre de la operacion comercial; la emision fiscal viene despues. |
 
-**Total**: 6 pantallas confirmadas, 11 ventanas modales documentadas
-(el flujo de Victor menciona 12 — la 12va probablemente es el
-dialogo de impresion del controlador fiscal que sale despues de
-Guardar en el paso 6).
+> **Aclaracion clave**: el titulo de la ventana superior dice
+> _"Prefacturas y Presupuestos NORMAL"_. Todo este flujo (1-6) opera
+> sobre **prefacturas o presupuestos** — el operador elige al final
+> del paso 3 con los botones `[Prefactura]` o `[Presupuesto]` (lo
+> que define si genera saldo deudor real o solo cotizacion). El
+> CAE NO se emite en este paso 6, aunque el numero de comprobante
+> aparezca.
 
-### 1.1.bis Consecuencias tecnicas del paso 6 (critico)
+#### 1.1.b Pantalla 7 — Emision real (paso separado, otra ventana)
 
-La pantalla 6 NO es cosmetica. Es el momento donde:
+| # | Pantalla / paso          | Modulo Puma          | Que pasa                               |
+|---|--------------------------|----------------------|----------------------------------------|
+| 7 | **Emitir factura** desde la prefactura guardada | Caja Recaudadora → "Emitir" sobre una prefactura pendiente | El operador (cajero/admin) selecciona una prefactura del listado de pendientes y la emite. Aca es donde **Puma llama a AFIP WSFE**, obtiene el **CAE + fecha vencimiento**, persiste el numero definitivo, dispara el controlador fiscal y genera el PDF. |
 
-1. **Se genera el numero de comprobante AFIP** (`0904-00001302-B` =
-   punto de venta `0904`, numero `00001302`, tipo `B`). Esto
-   implica una llamada al WSFE de AFIP (web service) que devuelve
-   un **CAE** (Codigo de Autorizacion Electronica) con fecha de
-   vencimiento. **Sin CAE valido, la factura no existe legalmente**.
-2. **Se persiste el desglose de medios de pago**. No es 1 campo —
-   son 8 campos paralelos (Saldo a favor, Efectivo, Tarjeta,
-   Cheque, Deposito/Transf., Monedas Extranjeras, Retenciones,
-   Otras monedas). Cada uno suma al MONTO TOTAL; el "Vuelto" se
-   calcula contra "Entrega".
-3. **Se actualizan cuentas corrientes**: si parte se paga con
-   "Saldo a favor", se descuenta; si queda "Sin aplicar", queda
-   como credito futuro del cliente.
-4. **Se acopla con el paso 5**: el checkbox "Bloquear ENTREGA DE
-   MERCADERIA" determina si la mercaderia sale del deposito o
-   queda retenida (mercaderia facturada pero no entregada — caso
-   "entrega diferida" en ese mismo formulario).
-5. **Se activa el controlador fiscal**: imprime el ticket / factura
-   B en la impresora fiscal. Esto es hardware-dependiente.
+Esta pantalla **no se vio en las capturas** porque Victor mostro
+el flujo de creacion de prefactura. La emision es una operacion
+**posterior, asincrona y desacoplada** del vendedor de mostrador.
 
-**Implicancia para la integracion**: cualquier estrategia que
-contemple **escribir directo en el Postgres de Puma para crear
-ventas** tiene que replicar:
-   - Llamada a AFIP WSFE
-   - Validacion del CAE
-   - 8 INSERTs de medios de pago
-   - Actualizacion de cuenta corriente
-   - Coordinacion con el controlador fiscal (driver windows-only
-     en muchos casos)
-   - Generacion del PDF/ticket
-   - Persistencia del numero de comprobante en N tablas auxiliares
+**Quien la ejecuta**: normalmente un cajero / administrador, no el
+vendedor.
 
-Si la app intenta hacer esto sin la API de Puma, **esta
-re-implementando un facturador electronico desde cero**, lo que
-excede largamente el scope de "app movil para vender". Esto mata
-definitivamente la **Opcion A** (escritura directa) para el caso
-de uso "emitir factura final".
+**Cuando**: cuando el cliente paga (o se decide formalmente generar
+la factura). En algunos esquemas se emite inmediatamente; en otros
+queda en cola hasta fin del dia.
+
+**Total flujo**: **6 pantallas para armar la prefactura + 1
+pantalla aparte para emitirla** = 7 pantallas funcionales, ~12
+ventanas modales en total contando los dialogos auxiliares.
+
+### 1.1.bis Consecuencias tecnicas: prefactura vs emision
+
+#### En la pantalla 6 (Guardar prefactura) SI pasa:
+
+1. **Se persiste la prefactura completa**: cabecera + items +
+   plan de credito + medios de pago + observaciones.
+2. **Se persiste el desglose granular de pago**: 8 columnas
+   paralelas (Saldo a favor, Efectivo, Tarjeta, Cheque,
+   Deposito/Transf., Monedas Extranjeras, Retenciones, Otras
+   monedas) que suman al MONTO TOTAL. El "Vuelto" se calcula
+   contra "Entrega".
+3. **Se reserva un numero de comprobante** (`0904-00001302-B`) o
+   se planifica — depende del modelo Puma: puede ser un numero
+   tentativo o vacio hasta emitir.
+4. **Se setea el flag "Bloquear ENTREGA DE MERCADERIA"** (caso
+   entrega diferida).
+5. **La prefactura entra en estado pendiente_de_emision** y
+   aparece en el listado del modulo Caja Recaudadora.
+
+#### En la pantalla 7 (Emitir desde Caja) recien pasa:
+
+1. **Llamada al WSFE de AFIP** (web service de facturacion
+   electronica).
+2. **Validacion + obtencion del CAE** (Codigo de Autorizacion
+   Electronica) con fecha de vencimiento (~10 dias).
+3. **Persistencia del numero definitivo de comprobante** (puede
+   confirmarse el reservado o cambiar).
+4. **Actualizacion de cuenta corriente del cliente**: si pago
+   con "Saldo a favor", se descuenta; si queda "Sin aplicar",
+   queda como credito.
+5. **Disparo del controlador fiscal** (driver Windows-only) →
+   imprime ticket / factura B.
+6. **Generacion del PDF** firmado.
+7. **Asiento contable + libro IVA + actualizacion stock** (si no
+   se hizo al crear la prefactura).
+
+#### Implicancia para la integracion mobile
+
+Esto **cambia mucho** la arquitectura propuesta:
+
+- La app movil **puede generar prefacturas sin tocar AFIP**.
+  Es exactamente el mismo modelo que ya tiene Puma — la app es
+  un cliente alternativo del flujo "Prefacturas y Presupuestos".
+- La **emision real** (que es lo riesgoso desde el punto de
+  vista legal/fiscal) **sigue siendo de Puma**. La app movil
+  ni se mete.
+- En Fase 2 (borrador), la prefactura se puede vivir en la app
+  y un cajero la transcribe a Puma — operativamente similar a
+  lo que hace hoy `sales_web`.
+- En Fase 3 (escritura API), la app puede `POST /prefacturas` a
+  Puma directamente. La emision se sigue haciendo desde Puma o
+  desde un endpoint `/emit` separado.
+- **La Opcion A (escritura directa a Postgres) ya no es
+  imposible** — si la app SOLO escribe prefacturas (no factura
+  emitida), el argumento legal/AFIP no aplica. **Pero los otros
+  8 contras siguen vigentes** (schema lock, validaciones de
+  negocio, etc. — ver §3.1).
+
+#### Beneficio adicional inesperado
+
+Este desacople **abre la puerta a un modelo organizacional
+limpio**: el vendedor (mobile) arma; el cajero (Puma desktop)
+emite y cobra. Esa division de tareas ya existe en muchas
+sucursales como practica informal — formalizarla en software
+es ordenar lo que ya pasa.
 
 ### 1.2 Entidades de negocio que Puma maneja (y la app necesita)
 
@@ -148,15 +221,15 @@ de uso "emitir factura final".
 | Vendedor            | cod. vendedor para asignar la venta                 | P0 |
 | Sucursal / deposito | catalogo de depositos por sucursal                  | P0 |
 | Plan de credito     | listado de planes vigentes + parametros (cuotas, anticipo) | P0 |
-| Prefactura / venta  | crear, listar, anular, marcar como pagada           | P0 |
+| **Prefactura** | crear, listar, anular, modificar **(sin CAE, sin AFIP)** — es el output de las 6 pantallas | **P0** |
+| **Factura emitida (con CAE)** | leer numero + CAE + PDF — la app **no emite**, solo consulta | **P0** (lectura) |
 | Forma de pago       | catalogo (efectivo, cheques, tarjetas, combinadas)  | P0 |
 | Anticipo / sena     | registrar parcial                                    | P0 |
 | Recibo a cuenta     | registrar pagos previos del cliente                  | P1 |
 | Orden de entrega    | crear, indicar tipo (envio/retira), turno, persona que retira | P0 |
-| **Comprobante AFIP** | **emitir factura B/A/C con CAE (WSFE) — la pantalla 6 lo hace** | **P0** |
-| **Medios de pago granular** | **desglose 8 columnas: efectivo, tarjeta, cheque, transf., monedas extranjeras, retenciones, otras monedas, saldo a favor** | **P0** |
+| **Medios de pago granular** | **desglose 8 columnas: efectivo, tarjeta, cheque, transf., monedas extranjeras, retenciones, otras monedas, saldo a favor** | **P0** (parte de la prefactura) |
 | **Vuelto / cambio** | **calcular contra "Entrega" del cliente; si falta, "Sin aplicar"** | **P0** |
-| **Bloqueo de entrega** | **flag "Bloquear ENTREGA DE MERCADERIA" — facturada pero no sale del deposito (entrega diferida)** | **P0** |
+| **Bloqueo de entrega** | **flag "Bloquear ENTREGA DE MERCADERIA" — entrega diferida** | **P0** |
 | Garantia extendida  | opcional sobre articulo                              | P1 |
 | Cargos extras       | instalacion, armado, fletes                          | P2 |
 | AFIP / consulta fiscal | resolucion de datos del cliente desde DNI/CUIT     | P1 |
@@ -333,22 +406,22 @@ SELECT/INSERT/UPDATE sobre sus tablas. Es lo que Puma propuso.
    tipeado en produccion borra 10k clientes. Sin red de seguridad.
 - ❌ **Vendor lock invertido**. La app queda casada al schema de
    Puma; cambiar de ERP en el futuro requiere reescribir todo.
-- ❌ **AFIP / CAE imposible de replicar**. Para emitir factura
-   valida hay que llamar al WSFE de AFIP, obtener CAE, validarlo,
-   y persistir el numero. **Eso lo hace hoy Puma**. Si la app
-   escribe directo a Postgres, queda una venta con numero
-   `0904-00001302-B` que **no fue autorizada por AFIP** → factura
-   apocrifa, problema legal grave. Para evitarlo, tendriamos que
-   re-implementar el cliente WSFE del lado app — duplicacion de un
-   componente certificado.
-- ❌ **Controlador fiscal**. La impresion fiscal es hardware-
-   dependiente con drivers windows-only. La app movil no puede
-   driver-ear una Epson TM-T20III por USB.
+- ⚠️ **AFIP / CAE** (matizado tras v0.3): si la app **solo crea
+   prefacturas** y deja la emision en manos de Puma, este punto
+   **no aplica**. Pero si en algun punto se pretende que la app
+   tambien emita facturas via escritura directa, ahi si reaparece
+   el problema: hay que llamar al WSFE de AFIP, obtener CAE,
+   validarlo, persistir el numero, disparar el controlador fiscal.
+   Eso lo hace hoy Puma. Replicarlo desde la app es re-implementar
+   un facturador electronico certificado.
 
-**Veredicto**: **NO recomendado**. Es atractivo por velocidad pero
-acumula deuda tecnica y riesgo legal/contable que no se ve hasta
-que ya es tarde. **La pantalla 6 (emision de factura con CAE)
-sola descarta esta opcion** para el flujo de venta final.
+**Veredicto**: **NO recomendado para escritura full**. Sigue
+acumulando deuda tecnica y riesgo a mediano plazo (schema lock,
+validaciones, etc.) aunque la app solo escriba prefacturas. Si el
+equipo de Puma INSISTE en esta opcion, la podemos aceptar **solo
+para la creacion de prefacturas** (no emision) en Fase 2/3 como
+puente — pero con plan explicito de migrar a Opcion C cuando sea
+posible.
 
 ### 3.2 Opcion B — API REST entre sistemas
 
@@ -504,27 +577,56 @@ Que necesitamos escribir y como:
 
 | Operacion                  | Critica? | Endpoint propuesto Puma              | Idempotency-Key      |
 |----------------------------|----------|--------------------------------------|----------------------|
-| Crear prefactura/venta     | Si       | `POST /api/v1/orders`                | `numero_solicitud`   |
-| Anular prefactura          | Si       | `POST /api/v1/orders/:id/cancel`     | `numero_solicitud + revision` |
-| Registrar pago / anticipo  | Si       | `POST /api/v1/orders/:id/payments`   | `payment_id` propio  |
-| Emitir orden de entrega    | Si       | `POST /api/v1/orders/:id/delivery`   | `delivery_id` propio |
-| **Confirmar pago y emitir factura** | **Si (critico)** | **`POST /api/v1/orders/:id/invoice`** | **`numero_solicitud`** |
+| **Crear prefactura** (sin AFIP) | Si  | **`POST /api/v1/prefacturas`**       | `numero_solicitud`   |
+| Modificar prefactura       | Si       | `PATCH /api/v1/prefacturas/:id`      | `numero_solicitud + revision` |
+| Anular prefactura          | Si       | `POST /api/v1/prefacturas/:id/cancel` | `numero_solicitud + revision` |
+| Registrar anticipo / sena  | Si       | `POST /api/v1/prefacturas/:id/payments` | `payment_id` propio |
+| Emitir orden de entrega    | Si       | `POST /api/v1/prefacturas/:id/delivery` | `delivery_id` propio |
+| **Emitir factura desde prefactura** (con AFIP) | **Si (critico)** | **`POST /api/v1/prefacturas/:id/emit`** | **`numero_solicitud`** |
 | **Anular factura emitida (nota credito)** | Si | `POST /api/v1/invoices/:numero/credit-note` | `nota_credito_id` propio |
 | Alta de cliente            | Si       | `POST /api/v1/customers`             | DNI/CUIT             |
 | Update cliente             | No       | `PATCH /api/v1/customers/:id`        | revision             |
 | Recibo a cuenta            | Si       | `POST /api/v1/customers/:id/payments` | `payment_id` propio |
 | Resolver AFIP              | No       | `POST /api/v1/afip/lookup`           | DNI/CUIT             |
 
-#### Payload del endpoint critico `POST /api/v1/orders/:id/invoice`
+> **Cambio clave en v0.3**: las operaciones de venta se separaron en
+> **dos endpoints distintos**: `/prefacturas` (sin AFIP) y
+> `/prefacturas/:id/emit` (con AFIP). Esto refleja el modelo real
+> de Puma y permite que la app movil opere solo el primero,
+> dejando el segundo a la operatoria de Caja.
 
-Este endpoint es la API-version de la pantalla 6 de Puma. Lo que la
-app le manda al ERP cuando el cliente termina de pagar:
+#### Payload `POST /api/v1/prefacturas` (lo que la app mobile crea)
 
 ```json
 {
   "external_id": "WEB-2026-0001",
-  "fecha_emision": "2026-06-09",
-  "delivery_blocked": false,
+  "tipo": "prefactura",
+  "branch_id": "norcenter",
+  "vendedor_codigo": "0011",
+  "cliente": {
+    "codigo_puma": "00036",
+    "documento": "95499336",
+    "nombre": "GALEANO HERRERA, VICTOR JULIAN",
+    "domicilio": "CURAPALIGUE 1891",
+    "localidad": "CAPITAL FEDERAL",
+    "cp": "1406"
+  },
+  "items": [
+    {
+      "sku": "001192",
+      "descripcion": "TV KANJI 65\" QLED 4K SMART WHALE.OS",
+      "deposito_origen": "4.NORCENTER",
+      "cantidad": 1,
+      "precio_unitario": "840000.00",
+      "garantia_extendida_id": null
+    }
+  ],
+  "plan_credito": {
+    "codigo": "CANCELAR_PARA_RETIRAR",
+    "cuotas": 1,
+    "anticipo": "0.00",
+    "primera_cuota_fecha": "2026-06-19"
+  },
   "payment_breakdown": {
     "saldo_a_favor": "0.00",
     "efectivo": "840000.00",
@@ -538,11 +640,50 @@ app le manda al ERP cuando el cliente termina de pagar:
   "entrega": "840000.00",
   "vuelto": "0.00",
   "sin_aplicar": "0.00",
+  "delivery": {
+    "tipo": "retira_cliente",
+    "fecha": "2026-06-09",
+    "turno": "manana",
+    "blocked": false,
+    "domicilio_entrega": null,
+    "persona_retira": null
+  },
   "observaciones": ""
 }
 ```
 
-Y Puma responde con:
+Response esperada:
+
+```json
+{
+  "ok": true,
+  "external_id": "WEB-2026-0001",
+  "prefactura": {
+    "id_puma": "PF-2026-256-9",
+    "numero_reservado": "0904-00001302-B",
+    "estado": "pendiente_de_emision",
+    "monto_total": "840000.00",
+    "creada_en": "2026-06-09T15:32:11-03:00"
+  }
+}
+```
+
+#### Payload `POST /api/v1/prefacturas/:id/emit` (cuando Caja emite)
+
+Este endpoint puede ser llamado **desde la app movil** (si se decide
+asi) o **desde Puma desktop** (modelo actual). Lo que cambia
+respecto al payload de prefactura es que **no manda datos** — solo
+el ID — porque la prefactura ya tiene todo. Puma toma esos datos y
+los manda a AFIP.
+
+```json
+{
+  "external_id": "WEB-2026-0001",
+  "emit_now": true
+}
+```
+
+Response:
 
 ```json
 {
@@ -563,7 +704,8 @@ Y Puma responde con:
 ```
 
 La app persiste `numero_completo`, `cae`, `cae_vencimiento` y
-`pdf_url` en `sales_web_requests` (campos nuevos a agregar).
+`pdf_url` en una tabla nueva `puma_invoices` con FK a
+`sales_web_requests`.
 
 > Los nombres son una propuesta. Ya estan plasmados con detalle en
 > doc 06 §"API propuesta que deberia exponer el ERP" (payloads JSON
@@ -582,7 +724,8 @@ Reduccion del flujo de Puma al minimo viable:
 | **1. Articulos**    | Pantallas 2 + 3 (buscar + plan)        | Scan de codigo de barras + autocomplete; plan precargado |
 | **2. Cliente**      | Pantalla 1 + parte 4                   | Search instantaneo + DNI por foto del DNI (OCR opcional) |
 | **3. Pago + entrega** | Pantallas 3 (forma de pago) + 4 (anticipo) + 5 (orden entrega) | Una sola pantalla con 3 secciones colapsables |
-| **4. Confirmar + facturar** | Pantalla 6 (medios de pago + factura AFIP) | Cliente firma en celular; al confirmar, app pide a Puma emitir factura via API; Puma devuelve CAE; comprobante PDF al email/WhatsApp + opcion imprimir en sucursal |
+| **4. Cerrar prefactura** | Pantalla 6 (medios de pago detallados) | Cliente confirma desglose y firma en celular. App envia `POST /prefacturas` → Puma persiste pendiente_de_emision. **No se llama AFIP en este paso**. El vendedor termina aca; el cajero emite despues. |
+| _(post-flujo, opcional movil)_ | Pantalla 7 (Emitir desde Caja) | Cajero / admin selecciona la prefactura en su PC y le da "Emitir". Aca recien va a AFIP. **La app puede mostrar al vendedor cuando se emitio, pero no necesariamente la opera.** |
 
 ### 5.2 Patrones moviles a aplicar
 
@@ -660,29 +803,50 @@ Reduccion del flujo de Puma al minimo viable:
 **Hito Fase 1**: vendedor puede consultar stock y cliente desde
 mobile, **sin crear venta**. Validamos UX y velocidad real.
 
-### Fase 2 — Borrador (4 semanas)
+### Fase 2 — Prefactura mobile sin API (4 semanas)
 
 - ⬜ Extender `sales_web_requests` con campos de plan de credito,
-  anticipo detallado, orden de entrega.
+  anticipo detallado, orden de entrega, **desglose de pago 8
+  columnas**, **flag delivery_blocked**.
 - ⬜ Pantalla "Nueva venta" 4 pasos en mobile.
 - ⬜ Scanner de codigo de barras.
 - ⬜ Firma del cliente en pantalla.
-- ⬜ Generar PDF de borrador / proforma.
-- ⬜ Sigue siendo manual del lado Puma: el cajero lee el borrador y
-  carga la venta real en Puma (Opcion D temporal).
+- ⬜ Generar PDF de prefactura (formato Puma-compatible).
+- ⬜ Sigue siendo manual del lado Puma: el cajero abre la prefactura
+  en mobile (o ve el PDF), la transcribe en su PC en la pantalla
+  "Prefacturas y Presupuestos" de Puma, y emite cuando corresponde.
 
-**Hito Fase 2**: vendedor opera 100% en mobile, cajero solo confirma
-en Puma. Caseros gana velocidad **sin** integracion de escritura.
+**Hito Fase 2**: vendedor opera 100% en mobile creando prefacturas.
+Cajero las pasa a Puma. **Caseros gana velocidad en la creacion sin
+integracion API**. La emision con AFIP queda intacta en Puma.
 
-### Fase 3 — Escritura via API (6-8 semanas, requiere API de Puma)
+### Fase 3 — Escritura de prefacturas via API (6 semanas)
 
-- ⬜ Puma expone `POST /api/v1/orders` y endpoints relacionados.
+- ⬜ Puma expone `POST /api/v1/prefacturas` y endpoints relacionados.
+- ⬜ La app envia prefacturas directamente a Puma (sin transcripcion
+  manual del cajero).
 - ⬜ Integracion bidireccional con `Idempotency-Key`.
 - ⬜ Cola de reintentos para escrituras fallidas.
-- ⬜ Webhook de Puma → app cuando una orden cambia de estado
-  (pagada, anulada).
+- ⬜ Webhook de Puma → app cuando una prefactura se emite
+  (notificacion + PDF + CAE para mostrar al vendedor).
 
-**Hito Fase 3**: venta nace y vive en Puma sin intervencion manual.
+**Hito Fase 3**: la prefactura nace en mobile, llega a Puma sin
+intervencion manual, y queda en Caja Recaudadora lista para emitir.
+La emision sigue en manos del cajero pero el flujo administrativo
+ya no requiere doble carga.
+
+### Fase 3.5 — Emision desde mobile (opcional, 2-3 semanas)
+
+- ⬜ Botón "Emitir" en mobile que dispara
+  `POST /prefacturas/:id/emit`.
+- ⬜ UX para el caso AFIP caido (estado pendiente_cae + reintentos).
+- ⬜ Mostrar CAE + numero definitivo + link al PDF en la pantalla
+  de detalle.
+
+**Hito Fase 3.5**: el vendedor puede facturar al cliente parado en
+mostrador, sin pasar por la caja. **Decision de negocio**: si esto
+es deseado o si conviene mantener la separacion vendedor/cajero
+para control interno.
 
 ### Fase 4 — Cobranza y recibos (4 semanas)
 
@@ -746,36 +910,56 @@ Lleva esta lista preparada. Marca las respuestas en vivo.
 21. ¿Hay logs / observabilidad que podamos consultar para
     debuggear?
 
-### Sobre legal / contable / AFIP
+### Sobre el modelo Prefactura / Caja Recaudadora
 
-22. ¿Quien firma responsabilidad si una venta queda inconsistente
-    por la integracion?
-23. ¿Esta resguardado el cumplimiento fiscal (AFIP / libros) si la
-    app escribe?
-24. ¿Hay un NDA o contrato de integracion que firmar?
-25. **¿Como manejan hoy la emision de CAE (WSFE de AFIP)?** ¿Es
-    sincrono al guardar la pantalla 6 o asincrono?
-26. **¿Pueden devolver via API el numero de comprobante + CAE +
-    fecha de vencimiento + URL del PDF?** (es lo que la app
-    necesita persistir).
-27. **¿Que pasa si AFIP esta caido al momento de facturar?**
-    ¿Puma guarda en cola? ¿Da CAE provisorio? ¿Rechaza la venta?
-28. **¿Soportan emision de Factura A / B / C / M / E desde la API
-    o solo B?** (afecta clientes responsables inscriptos / exterior).
-29. **¿La impresion fiscal (controlador) es necesaria o se puede
-    omitir en venta mobile?** ¿La factura electronica reemplaza al
-    ticket fiscal en caja para venta no presencial?
-30. **¿Bloqueo de entrega de mercaderia se modela como flag en la
-    venta o como entidad separada?** Necesito el contrato.
+22. ¿La prefactura tiene un **numero de comprobante reservado**
+    desde su creacion o se asigna solo al emitir?
+23. ¿Que estados maneja una prefactura?
+    (pendiente_de_emision / emitida / anulada / vencida / otros?).
+24. ¿Hay **timeout** o vencimiento de una prefactura no emitida?
+    ¿Que pasa si queda 30 dias sin emitir?
+25. ¿Como se vincula tecnicamente la prefactura con la factura
+    emitida en su schema?
+26. ¿La prefactura puede modificarse despues de creada y antes de
+    emitirse?
+27. ¿Quien tiene permiso para emitir? ¿Es por rol / por sucursal /
+    por turno?
+28. ¿Se puede emitir una prefactura desde otra sucursal de la que
+    se creo? (caso: vendedor crea en Norcenter, cajero centralizado
+    emite).
+
+### Sobre AFIP / emision (cuando lleguemos a Fase 3.5)
+
+29. ¿Como manejan hoy la emision de CAE (WSFE de AFIP)? ¿Es
+    sincrona al "Emitir" en Caja o asincrona?
+30. ¿Pueden devolver via API el numero de comprobante + CAE +
+    fecha de vencimiento + URL del PDF?
+31. ¿Que pasa si AFIP esta caido al momento de emitir? ¿Cola? ¿Da
+    CAE provisorio? ¿Rechaza?
+32. ¿Soportan emision de Factura A / B / C / M / E desde la API o
+    solo B?
+33. ¿La impresion fiscal (controlador hardware) es necesaria o se
+    puede omitir en venta mobile? ¿La factura electronica reemplaza
+    al ticket fiscal en venta no presencial?
+
+### Sobre legal / contable
+
+34. ¿Quien firma responsabilidad si una prefactura queda
+    inconsistente por la integracion?
+35. ¿Esta resguardado el cumplimiento fiscal si la app escribe
+    prefacturas directamente (no facturas emitidas)?
+36. ¿Hay un NDA o contrato de integracion que firmar?
+37. ¿Bloqueo de entrega de mercaderia se modela como flag en la
+    prefactura o como entidad separada (orden de entrega vinculada)?
 
 ### Sobre dinero
 
-31. ¿Cobran por desarrollar la API? Cuanto.
-32. ¿Cobran soporte mensual de la integracion?
-33. ¿Cobran por la replica logica?
-34. ¿Hay licencias adicionales si conectamos N dispositivos
+38. ¿Cobran por desarrollar la API? Cuanto.
+39. ¿Cobran soporte mensual de la integracion?
+40. ¿Cobran por la replica logica?
+41. ¿Hay licencias adicionales si conectamos N dispositivos
     moviles?
-35. ¿AFIP / facturacion electronica tiene costo por comprobante o
+42. ¿AFIP / facturacion electronica tiene costo por comprobante o
     esta incluido?
 
 ---
@@ -808,7 +992,10 @@ Lleva esta lista preparada. Marca las respuestas en vivo.
 
 | Termino Puma           | Termino app          | Notas |
 |------------------------|----------------------|-------|
-| Prefactura             | Solicitud / Pedido   | En la app es `sales_web_request` |
+| **Prefactura**         | Solicitud / Pedido (a futuro: `prefactura`) | Output de las 6 pantallas del flujo de venta. Tiene cabecera + items + plan + medios de pago, pero **NO tiene CAE todavia**. Queda guardada en Caja Recaudadora pendiente de emision. |
+| **Factura emitida**    | _(nueva tabla `puma_invoices` a crear)_ | Output de la pantalla 7 (Emitir). Tiene numero definitivo, CAE, fecha emision, PDF. Solo se persiste como espejo de Puma. |
+| **Presupuesto**        | (no modelado en app)  | Variante de la prefactura — solo cotizacion, no genera obligacion. Decision en el paso 3 del flujo: boton `[Prefactura]` vs `[Presupuesto]`. |
+| **Caja Recaudadora**   | _(modulo a crear, post Fase 3)_ | Modulo de Puma donde viven las prefacturas pendientes y se emiten. La app movil **no entra aca por ahora** — sigue siendo terreno del cajero. |
 | Articulo               | Producto             | `products.sku` |
 | Codigo cliente (00036) | DNI / `customer_id`  | Falta entidad cliente en app |
 | Deposito (4.NORCENTER) | Sucursal / branch    | Hay que mapear ID Puma ↔ app |
@@ -817,8 +1004,9 @@ Lleva esta lista preparada. Marca las respuestas en vivo.
 | Garantia extendida     | (no confundir con `warranties`) | warranties en app = post-venta |
 | Tipo reparto: Envio / Retira | `entrega_tipo`: Envio / Retira en local | OK |
 | Caja Recaudadora       | (no modelado)        | P2 |
-| FC B (`0904-00001302-B`) | Factura electronica tipo B | Generada por Puma + AFIP WSFE — la app la persiste, no la emite |
-| CAE                    | Codigo Autorizacion Electronica (AFIP) | Devuelto por WSFE; vence (~10 dias); sin CAE = factura invalida |
+| FC B (`0904-00001302-B`) | Factura electronica tipo B | Generada por Puma + AFIP WSFE en la **pantalla 7 (Emitir desde Caja)**, no en la pantalla 6. La app la persiste como lectura, no la emite. |
+| CAE                    | Codigo Autorizacion Electronica (AFIP) | Devuelto por WSFE cuando Puma "emite". Vence (~10 dias). Sin CAE = factura invalida. |
+| **Numero reservado**   | numero tentativo asignado a la prefactura | Aparece en la pantalla 6 como `0904-00001302-B (FC)` antes de emitir. Puede confirmarse o cambiarse en la emision. |
 | Punto de venta (0904)  | PV asignado por AFIP a la sucursal/caja | Probablemente 1 PV por sucursal |
 | Sin aplicar            | Pago entregado que no se aplico a esta factura | Queda como saldo a favor del cliente |
 | Entrega / Vuelto       | Lo que entrega el cliente / lo que se le devuelve | Solo aplica a efectivo |
@@ -864,12 +1052,14 @@ documento entero **mas** estos puntos como pregunta especifica:
 
 ## 10. Proximos pasos (concretos, semana del 9/6)
 
-- [x] Cerrar la 6ta pantalla del flujo Puma (pantalla "Confirmar
-      medios de pagos. Factura" — emision con CAE AFIP). **Hecho
-      en v0.2**.
+- [x] Cerrar la 6ta pantalla del flujo Puma → **v0.2**.
+- [x] Corregir interpretacion: la pantalla 6 cierra prefactura, NO
+      emite factura. La emision es paso 7 separado en Caja
+      Recaudadora → **v0.3** (este doc).
 - [ ] Compartir este doc al equipo Puma 48h antes de la reunion para
-      que vengan con respuestas a §7 (especialmente preguntas 25-30
-      sobre AFIP/CAE).
+      que vengan con respuestas a §7 (especialmente preguntas 22-28
+      sobre modelo de prefactura, y 29-33 sobre AFIP cuando llegue
+      Fase 3.5).
 - [ ] Imprimir matriz §3.5 a la reunion (es el ancla de la
       decision).
 - [ ] Definir piloto: 2 vendedores en Caseros, 4 SKUs, 2 semanas.
