@@ -217,6 +217,28 @@ export function ChartCard({
 // ────────────────────────────────────────────────────────────────────────────
 // KpiCard — valor grande + delta badge + sparkline overlay (actual vs anterior)
 // ────────────────────────────────────────────────────────────────────────────
+export function EmptyChartState({
+  title = 'Sin datos para graficar',
+  description = 'Ajusta los filtros o importa informacion para este periodo.',
+  minHeight = 220,
+}: {
+  title?: string;
+  description?: string;
+  minHeight?: number;
+}) {
+  return (
+    <div
+      className="flex items-center justify-center rounded-2xl border border-dashed border-white/10 bg-slate-950/30 p-5 text-center"
+      style={{ minHeight }}
+    >
+      <div className="max-w-sm">
+        <div className="text-sm font-black text-[color:var(--text)]">{title}</div>
+        <p className="mt-1 text-xs leading-5 text-[color:var(--text-3)]">{description}</p>
+      </div>
+    </div>
+  );
+}
+
 type KpiAccent = 'blue' | 'teal' | 'amber' | 'violet' | 'positive' | 'negative';
 
 const ACCENT_TO_COLOR: Record<KpiAccent, string> = {

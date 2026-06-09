@@ -612,12 +612,13 @@ def _finalize_metric(
 ) -> dict[str, Any]:
     total = float(bucket.get("total_vendido") or 0.0)
     lineas = int(bucket.get("lineas") or 0)
+    unidades = int(bucket.get("unidades") or 0)
     out = {
         "total_vendido": round(total, 2),
-        "unidades": int(bucket.get("unidades") or 0),
+        "unidades": unidades,
         "lineas": lineas,
         "productos": len(bucket.get("productos") or set()),
-        "pvp_promedio": round(total / lineas, 2) if lineas else 0.0,
+        "pvp_promedio": round(total / unidades, 2) if unidades else 0.0,
         "participacion_pct": round(total / total_reference * 100, 2) if total_reference else 0.0,
     }
     if include_costs:

@@ -7,8 +7,8 @@ import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart,
-  PolarAngleAxis, PolarGrid, Radar, RadarChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import {
   can,
@@ -26,7 +26,7 @@ import type {
   SalesBICommercialReport,
 } from '../types';
 import {
-  CHART_ANIM, CHART_TOOLTIP_STYLE, ChartCard, KpiCard, Tabs, cn, money, num,
+  CHART_ANIM, CHART_TOOLTIP_STYLE, ChartCard, EmptyChartState, KpiCard, Tabs, cn, money, num,
 } from '../components/SalesBIWidgets';
 
 type CommercialKind = 'brands' | 'lines' | 'branches';
@@ -118,7 +118,29 @@ function metricFormatter(mode: MetricMode) {
 function metricLabel(mode: MetricMode) {
   if (mode === 'units') return 'Unidades';
   if (mode === 'pvp') return 'PVP vendido';
-  return 'PVP + unidades';
+  return 'PVP y unidades';
+}
+
+function metricDisplay(row: Pick<SalesBICommercialMix, 'total_vendido' | 'unidades'>, mode: MetricMode) {
+  if (mode === 'units') return `${num(row.unidades)} u`;
+  if (mode === 'pvp') return money(row.total_vendido);
+  return `${money(row.total_vendido)} · ${num(row.unidades)} u`;
+}
+
+function hasMetricRows(rows: Array<Pick<SalesBICommercialMix, 'total_vendido' | 'unidades'>>, mode: MetricMode) {
+  return rows.some((row) => {
+    if (mode === 'units') return Number(row.unidades || 0) > 0;
+    if (mode === 'pvp') return Number(row.total_vendido || 0) > 0;
+    return Number(row.total_vendido || 0) > 0 || Number(row.unidades || 0) > 0;
+  });
+}
+
+function hasDailyData(report: SalesBICommercialReport, mode: MetricMode) {
+  return hasMetricRows(report.daily_series, mode);
+}
+
+function hasSeriesData(rows: Array<Record<string, string | number>>, keys: string[]) {
+  return rows.some((row) => keys.some((key) => Number(row[key] || 0) > 0));
 }
 
 function shareSubtitle(row?: SalesBICommercialMix) {
@@ -339,6 +361,9 @@ function ViewMenu({
 function DailyArea({ report, mode }: { report: SalesBICommercialReport; mode: MetricMode }) {
   const showPvp = mode !== 'units';
   const showUnits = mode !== 'pvp';
+  if (!hasDailyData(report, mode)) {
+    return <EmptyChartState minHeight={280} description="No hay ventas registradas para el rango y filtros seleccionados." />;
+  }
   return (
     <ResponsiveContainer width="100%" height={280}>
       <AreaChart data={report.daily_series} margin={{ top: 8, right: 18, left: 0, bottom: 8 }}>
@@ -405,6 +430,9 @@ function RankingBars({
   onSelect?: (name: string) => void;
 }) {
   const rows = data.slice(0, 10).map((row) => ({ ...row, metric_value: metricValue(row, mode) }));
+  if (!hasMetricRows(rows, mode)) {
+    return <EmptyChartState minHeight={300} description="No hay valores suficientes para armar el ranking con estos filtros." />;
+  }
   const format = metricFormatter(mode);
   const handleSelect = (data: unknown) => {
     const payload = data as { name?: string; payload?: SalesBICommercialMix };
@@ -438,43 +466,56 @@ function RankingBars({
   );
 }
 
-function DonutMix({
+function ShareBars({
   rows,
   mode,
   onSelect,
+  limit = 8,
 }: {
   rows: SalesBICommercialMix[];
   mode: MetricMode;
   onSelect?: (name: string) => void;
+  limit?: number;
 }) {
-  const data = rows.slice(0, 8).map((row) => ({ ...row, metric_value: metricValue(row, mode) }));
-  const handleSelect = (row: unknown) => {
-    const payload = row as { name?: string; payload?: SalesBICommercialMix };
-    const name = payload.payload?.name || payload.name;
-    if (name) onSelect?.(name);
-  };
+  const data = rows.slice(0, limit);
+  const max = Math.max(1, ...data.map((row) => metricValue(row, mode)));
+  const total = Math.max(1, data.reduce((acc, row) => acc + metricValue(row, mode), 0));
+  if (!hasMetricRows(data, mode)) {
+    return <EmptyChartState minHeight={280} description="No hay participacion disponible para este mix." />;
+  }
   return (
-    <ResponsiveContainer width="100%" height={280}>
-      <PieChart>
-        <Pie
-          data={data}
-          dataKey="metric_value"
-          nameKey="name"
-          innerRadius={60}
-          outerRadius={96}
-          paddingAngle={2}
-          cursor={onSelect ? 'pointer' : 'default'}
-          onClick={handleSelect}
-        >
-          {data.map((_, index) => <Cell key={index} fill={colorFor(index)} />)}
-        </Pie>
-        <Tooltip
-          formatter={(value) => metricFormatter(mode)(Number(value))}
-          contentStyle={CHART_TOOLTIP_STYLE}
-        />
-        <Legend wrapperStyle={{ fontSize: 10 }} />
-      </PieChart>
-    </ResponsiveContainer>
+    <div className="space-y-3">
+      {data.map((row, index) => {
+        const value = metricValue(row, mode);
+        const share = (value / total) * 100;
+        const width = Math.max(5, (value / max) * 100);
+        return (
+          <button
+            key={row.name}
+            type="button"
+            onClick={() => onSelect?.(row.name)}
+            className="grid w-full gap-2 rounded-xl bg-white/[0.035] px-3 py-3 text-left transition hover:bg-white/[0.07] sm:grid-cols-[160px_1fr_auto] sm:items-center"
+          >
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: colorFor(index) }} />
+                <span className="truncate text-sm font-black text-white">{row.name}</span>
+              </div>
+              <div className="mt-1 text-[11px] text-[color:var(--text-3)]">{share.toFixed(1)}% del mix visible</div>
+            </div>
+            <div className="min-w-0">
+              <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                <div
+                  className="h-full rounded-full transition-[width] duration-700 ease-out"
+                  style={{ width: `${width}%`, background: colorFor(index) }}
+                />
+              </div>
+            </div>
+            <div className="text-right text-sm font-black text-[color:var(--text)]">{metricDisplay(row, mode)}</div>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -490,7 +531,6 @@ function MixList({
   onSelect?: (name: string) => void;
 }) {
   const max = Math.max(1, ...rows.map((row) => metricValue(row, mode)));
-  const format = metricFormatter(mode);
   return (
     <section className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)]/60 p-4">
       <div className="mb-3 text-[11px] font-black uppercase tracking-[0.18em] text-[color:var(--text-3)]">{title}</div>
@@ -511,7 +551,7 @@ function MixList({
                 </div>
                 <div className="mt-1 text-xs text-[color:var(--text-3)]">{shareSubtitle(row)}</div>
               </div>
-              <div className="text-right text-sm font-black text-[color:var(--text)]">{format(value)}</div>
+              <div className="text-right text-sm font-black text-[color:var(--text)]">{metricDisplay(row, mode)}</div>
             </button>
           );
         })}
@@ -527,11 +567,11 @@ function SummaryKpis({ report }: { report: SalesBICommercialReport }) {
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
       <KpiCard label="Vendido" value={report.totals.total_vendido} format={money} accent="blue" />
       <KpiCard label="Unidades" value={report.totals.unidades} format={num} accent="teal" />
-      <KpiCard label="Registros" value={report.totals.lineas} format={num} accent="violet" />
+      <KpiCard label="Lineas" value={report.totals.lineas} format={num} accent="violet" />
       <KpiCard label="SKUs" value={report.totals.productos} format={num} accent="amber" />
-      <KpiCard label="PVP promedio" value={report.totals.pvp_promedio} format={money} accent="positive" />
+      <KpiCard label="PVP prom. unidad" value={report.totals.pvp_promedio} format={money} accent="positive" />
       {showMargin ? (
-        <KpiCard label="Margen bruto" value={report.totals.margen_porcentaje || 0} format={(value) => `${value.toFixed(1)}%`} accent="negative" />
+        <KpiCard label="Margen %" value={report.totals.margen_porcentaje || 0} format={(value) => `${value.toFixed(1)}%`} accent="negative" />
       ) : (
         <KpiCard label="Sin vincular" value={report.unmatched_count} format={num} accent="negative" />
       )}
@@ -556,6 +596,7 @@ function BrandDetail({
   const brandTrend = matrixSeriesRows(report.date_brand_matrix, brand ? [brand.name] : [], mode);
   const brandProducts = report.top_products.filter((product) => product.marca === brand?.name).slice(0, 10);
   if (!brand) return null;
+  const brandTrendHasData = hasSeriesData(brandTrend, [brand.name]);
 
   return (
     <div className="space-y-4">
@@ -605,21 +646,25 @@ function BrandDetail({
       </div>
 
       <ChartCard title={`Evolucion de ${brand.name}`} subtitle="Tendencia diaria dentro del periodo">
-        <ResponsiveContainer width="100%" height={300}>
-          <AreaChart data={brandTrend} margin={{ top: 8, right: 18, left: 0, bottom: 8 }}>
-            <defs>
-              <linearGradient id="brandTrendFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="var(--chart-blue)" stopOpacity={0.38} />
-                <stop offset="100%" stopColor="var(--chart-blue)" stopOpacity={0.02} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148,163,184,0.14)" />
-            <XAxis dataKey="name" tick={{ fill: '#B8C5DA', fontSize: 10 }} />
-            <YAxis hide />
-            <Tooltip formatter={(value) => metricFormatter(mode)(Number(value))} contentStyle={CHART_TOOLTIP_STYLE} />
-            <Area type="monotone" dataKey={brand.name} stroke="var(--chart-blue)" strokeWidth={2.5} fill="url(#brandTrendFill)" />
-          </AreaChart>
-        </ResponsiveContainer>
+        {brandTrendHasData ? (
+          <ResponsiveContainer width="100%" height={300}>
+            <AreaChart data={brandTrend} margin={{ top: 8, right: 18, left: 0, bottom: 8 }}>
+              <defs>
+                <linearGradient id="brandTrendFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--chart-blue)" stopOpacity={0.38} />
+                  <stop offset="100%" stopColor="var(--chart-blue)" stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148,163,184,0.14)" />
+              <XAxis dataKey="name" tick={{ fill: '#B8C5DA', fontSize: 10 }} />
+              <YAxis hide />
+              <Tooltip formatter={(value) => metricFormatter(mode)(Number(value))} contentStyle={CHART_TOOLTIP_STYLE} />
+              <Area type="monotone" dataKey={brand.name} stroke="var(--chart-blue)" strokeWidth={2.5} fill="url(#brandTrendFill)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : (
+          <EmptyChartState minHeight={300} description="No hay evolucion diaria para esta marca en el rango seleccionado." />
+        )}
       </ChartCard>
 
       <TopProductsTable
@@ -666,6 +711,8 @@ function LinesDetail({
     });
     return out;
   });
+  const lineTrendHasData = hasSeriesData(lineTrend, lineNames);
+  const branchCompositionHasData = hasSeriesData(branchComposition, lineNames);
   if (!line) return null;
 
   return (
@@ -690,16 +737,16 @@ function LinesDetail({
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           <KpiCard label="Vendido" value={line.total_vendido} format={money} accent="blue" />
           <KpiCard label="Unidades" value={line.unidades} format={num} accent="teal" />
-          <KpiCard label="Registros" value={line.lineas} format={num} accent="violet" />
+          <KpiCard label="Lineas" value={line.lineas} format={num} accent="violet" />
           <KpiCard label="SKUs" value={line.productos} format={num} accent="amber" />
-          <KpiCard label="PVP promedio" value={line.pvp_promedio} format={money} accent="positive" />
+          <KpiCard label="PVP prom. unidad" value={line.pvp_promedio} format={money} accent="positive" />
           <KpiCard label="Participacion" value={line.participacion_pct} format={(value) => `${value.toFixed(1)}%`} accent="violet" />
         </div>
       </section>
 
       <div className="grid gap-4 lg:grid-cols-3">
         <ChartCard title="Mix por linea" subtitle={`Participacion sobre el total · ${metricLabel(mode)}`}>
-          <DonutMix rows={report.line_mix} mode={mode} onSelect={setSelectedLine} />
+          <ShareBars rows={report.line_mix} mode={mode} onSelect={setSelectedLine} />
         </ChartCard>
         <ChartCard title="Ranking de lineas" subtitle="Busqueda visual por peso comercial" className="lg:col-span-2">
           <RankingBars data={report.line_mix} color="var(--chart-violet)" mode={mode} onSelect={setSelectedLine} />
@@ -718,33 +765,41 @@ function LinesDetail({
       <Heatmap report={report} mode={mode} setSelectedLine={setSelectedLine} />
 
       <ChartCard title="Evolucion por linea" subtitle="Tendencia diaria de las lineas principales">
-        <ResponsiveContainer width="100%" height={320}>
-          <LineChart data={lineTrend} margin={{ top: 8, right: 18, left: 0, bottom: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148,163,184,0.14)" />
-            <XAxis dataKey="name" tick={{ fill: '#B8C5DA', fontSize: 10 }} />
-            <YAxis hide />
-            <Tooltip formatter={(value) => metricFormatter(mode)(Number(value))} contentStyle={CHART_TOOLTIP_STYLE} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
-            {lineNames.map((name, index) => (
-              <Line key={name} type="monotone" dataKey={name} stroke={colorFor(index)} strokeWidth={2.2} dot={false} />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
+        {lineTrendHasData ? (
+          <ResponsiveContainer width="100%" height={320}>
+            <LineChart data={lineTrend} margin={{ top: 8, right: 18, left: 0, bottom: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148,163,184,0.14)" />
+              <XAxis dataKey="name" tick={{ fill: '#B8C5DA', fontSize: 10 }} />
+              <YAxis hide />
+              <Tooltip formatter={(value) => metricFormatter(mode)(Number(value))} contentStyle={CHART_TOOLTIP_STYLE} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              {lineNames.map((name, index) => (
+                <Line key={name} type="monotone" dataKey={name} stroke={colorFor(index)} strokeWidth={2.2} dot={false} />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <EmptyChartState minHeight={320} description="No hay evolucion diaria suficiente para las lineas seleccionadas." />
+        )}
       </ChartCard>
 
       <ChartCard title="Composicion por sucursal" subtitle="Stacked: como se forma el total de cada sucursal">
-        <ResponsiveContainer width="100%" height={320}>
-          <BarChart data={branchComposition} margin={{ top: 8, right: 18, left: 0, bottom: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148,163,184,0.14)" />
-            <XAxis dataKey="name" tick={{ fill: '#B8C5DA', fontSize: 10 }} />
-            <YAxis hide />
-            <Tooltip formatter={(value) => metricFormatter(mode)(Number(value))} contentStyle={CHART_TOOLTIP_STYLE} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
-            {lineNames.map((name, index) => (
-              <Bar key={name} dataKey={name} stackId="lineas" fill={colorFor(index)} radius={index === lineNames.length - 1 ? [6, 6, 0, 0] : [0, 0, 0, 0]} />
-            ))}
-          </BarChart>
-        </ResponsiveContainer>
+        {branchCompositionHasData ? (
+          <ResponsiveContainer width="100%" height={320}>
+            <BarChart data={branchComposition} margin={{ top: 8, right: 18, left: 0, bottom: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148,163,184,0.14)" />
+              <XAxis dataKey="name" tick={{ fill: '#B8C5DA', fontSize: 10 }} />
+              <YAxis hide />
+              <Tooltip formatter={(value) => metricFormatter(mode)(Number(value))} contentStyle={CHART_TOOLTIP_STYLE} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              {lineNames.map((name, index) => (
+                <Bar key={name} dataKey={name} stackId="lineas" fill={colorFor(index)} radius={index === lineNames.length - 1 ? [6, 6, 0, 0] : [0, 0, 0, 0]} />
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
+        ) : (
+          <EmptyChartState minHeight={320} description="No hay composicion por sucursal para mostrar con estos filtros." />
+        )}
       </ChartCard>
     </div>
   );
@@ -770,7 +825,7 @@ function BranchDetail({
     .filter((product) => product.branches.includes(branch?.name || ''))
     .sort((a, b) => b.total_vendido - a.total_vendido)
     .slice(0, 10);
-  const radarData = report.line_mix.map((line) => {
+  const benchmarkData = report.line_mix.map((line) => {
     const item = matrixItem(lineMatrix, line.name);
     return {
       name: line.name,
@@ -779,6 +834,8 @@ function BranchDetail({
     };
   });
   if (!branch) return null;
+  const branchTrendHasData = hasSeriesData(branchTrend, [branch.name]);
+  const benchmarkHasData = benchmarkData.some((row) => row.sucursal > 0 || row.red > 0);
 
   return (
     <div className="space-y-4">
@@ -805,9 +862,9 @@ function BranchDetail({
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
         <KpiCard label="Vendido" value={branch.total_vendido} format={money} accent="blue" />
         <KpiCard label="Unidades" value={branch.unidades} format={num} accent="teal" />
-        <KpiCard label="Registros" value={branch.lineas} format={num} accent="violet" />
+        <KpiCard label="Lineas" value={branch.lineas} format={num} accent="violet" />
         <KpiCard label="SKUs" value={branch.productos} format={num} accent="amber" />
-        <KpiCard label="PVP promedio" value={branch.pvp_promedio} format={money} accent="positive" />
+        <KpiCard label="PVP prom. unidad" value={branch.pvp_promedio} format={money} accent="positive" />
         <KpiCard label="Participacion red" value={branch.participacion_pct} format={(value) => `${value.toFixed(1)}%`} accent="violet" />
       </div>
 
@@ -858,15 +915,11 @@ function BranchDetail({
 
       <div className="grid gap-4 lg:grid-cols-2">
         <ChartCard title={`${branch.name} vs promedio de red`} subtitle="Share por linea: sucursal contra consolidado">
-          <ResponsiveContainer width="100%" height={300}>
-            <RadarChart data={radarData}>
-              <PolarGrid stroke="rgba(148,163,184,0.22)" />
-              <PolarAngleAxis dataKey="name" tick={{ fill: '#B8C5DA', fontSize: 10 }} />
-              <Radar name={branch.name} dataKey="sucursal" stroke="var(--chart-blue)" fill="var(--chart-blue)" fillOpacity={0.35} />
-              <Radar name="Red" dataKey="red" stroke="var(--chart-ghost)" fill="var(--chart-ghost)" fillOpacity={0.12} />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-            </RadarChart>
-          </ResponsiveContainer>
+          {benchmarkHasData ? (
+            <BranchLineBenchmark branchName={branch.name} rows={benchmarkData} />
+          ) : (
+            <EmptyChartState minHeight={300} description="No hay mix por linea suficiente para comparar esta sucursal con la red." />
+          )}
         </ChartCard>
         <ChartCard title="Comparacion con otras sucursales" subtitle={metricLabel(mode)}>
           <RankingBars data={report.branch_mix} color="var(--chart-teal)" mode={mode} onSelect={setSelectedBranch} />
@@ -874,21 +927,25 @@ function BranchDetail({
       </div>
 
       <ChartCard title={`Evolucion de ${branch.name}`} subtitle="Tendencia diaria de la sucursal">
-        <ResponsiveContainer width="100%" height={300}>
-          <AreaChart data={branchTrend} margin={{ top: 8, right: 18, left: 0, bottom: 8 }}>
-            <defs>
-              <linearGradient id="branchTrendFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="var(--chart-teal)" stopOpacity={0.36} />
-                <stop offset="100%" stopColor="var(--chart-teal)" stopOpacity={0.02} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148,163,184,0.14)" />
-            <XAxis dataKey="name" tick={{ fill: '#B8C5DA', fontSize: 10 }} />
-            <YAxis hide />
-            <Tooltip formatter={(value) => metricFormatter(mode)(Number(value))} contentStyle={CHART_TOOLTIP_STYLE} />
-            <Area type="monotone" dataKey={branch.name} stroke="var(--chart-teal)" strokeWidth={2.5} fill="url(#branchTrendFill)" />
-          </AreaChart>
-        </ResponsiveContainer>
+        {branchTrendHasData ? (
+          <ResponsiveContainer width="100%" height={300}>
+            <AreaChart data={branchTrend} margin={{ top: 8, right: 18, left: 0, bottom: 8 }}>
+              <defs>
+                <linearGradient id="branchTrendFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--chart-teal)" stopOpacity={0.36} />
+                  <stop offset="100%" stopColor="var(--chart-teal)" stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148,163,184,0.14)" />
+              <XAxis dataKey="name" tick={{ fill: '#B8C5DA', fontSize: 10 }} />
+              <YAxis hide />
+              <Tooltip formatter={(value) => metricFormatter(mode)(Number(value))} contentStyle={CHART_TOOLTIP_STYLE} />
+              <Area type="monotone" dataKey={branch.name} stroke="var(--chart-teal)" strokeWidth={2.5} fill="url(#branchTrendFill)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : (
+          <EmptyChartState minHeight={300} description="No hay evolucion diaria para esta sucursal en el rango seleccionado." />
+        )}
       </ChartCard>
 
       <TopProductsTable
@@ -922,6 +979,13 @@ function Heatmap({
     ...matrixRows.flatMap((row) => row.items.map((item) => metricValue(item, mode))),
   );
   const format = metricFormatter(mode);
+  if (!matrixRows.length || !hasMetricRows(matrixRows.map((row) => row.total), mode)) {
+    return (
+      <ChartCard title="Heatmap sucursal x linea" subtitle={`${metricLabel(mode)} · color por intensidad`}>
+        <EmptyChartState description="No hay cruces de sucursal y linea para los filtros seleccionados." />
+      </ChartCard>
+    );
+  }
   return (
     <ChartCard title="Heatmap sucursal x linea" subtitle={`${metricLabel(mode)} · color por intensidad · clic para enfocar linea`}>
       <div className="overflow-x-auto">
@@ -970,6 +1034,60 @@ function Heatmap({
   );
 }
 
+function BranchLineBenchmark({
+  branchName,
+  rows,
+}: {
+  branchName: string;
+  rows: Array<{ name: string; sucursal: number; red: number }>;
+}) {
+  const sorted = [...rows].sort((a, b) => Math.abs(b.sucursal - b.red) - Math.abs(a.sucursal - a.red));
+  return (
+    <div className="space-y-3">
+      {sorted.map((row, index) => {
+        const gap = row.sucursal - row.red;
+        const tone = gap >= 0 ? 'text-emerald-200 bg-emerald-500/15' : 'text-rose-200 bg-rose-500/15';
+        return (
+          <div key={row.name} className="rounded-xl bg-white/[0.035] px-3 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: colorFor(index) }} />
+                  <span className="truncate text-sm font-black text-white">{row.name}</span>
+                </div>
+                <div className="mt-1 text-[11px] text-[color:var(--text-3)]">{branchName} vs promedio de red</div>
+              </div>
+              <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-black tabular-nums', tone)}>
+                {gap >= 0 ? '+' : ''}{gap.toFixed(1)} pp
+              </span>
+            </div>
+            <div className="mt-3 grid gap-2">
+              <div>
+                <div className="mb-1 flex justify-between text-[11px] font-bold text-[color:var(--text-3)]">
+                  <span>{branchName}</span>
+                  <span>{row.sucursal.toFixed(1)}%</span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                  <div className="h-full rounded-full bg-[color:var(--chart-blue)]" style={{ width: `${safePct(row.sucursal)}%` }} />
+                </div>
+              </div>
+              <div>
+                <div className="mb-1 flex justify-between text-[11px] font-bold text-[color:var(--text-3)]">
+                  <span>Red</span>
+                  <span>{row.red.toFixed(1)}%</span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                  <div className="h-full rounded-full bg-[color:var(--chart-ghost)]" style={{ width: `${safePct(row.red)}%` }} />
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function TopProductsTable({
   rows,
   title = 'Top productos',
@@ -985,6 +1103,9 @@ function TopProductsTable({
 }) {
   return (
     <ChartCard title={title} subtitle={subtitle}>
+      {rows.length === 0 ? (
+        <EmptyChartState description="No hay productos para mostrar en este periodo." />
+      ) : (
       <div className="overflow-x-auto">
         <table className="min-w-full text-sm">
           <thead className="text-[11px] uppercase tracking-[0.16em] text-[color:var(--text-3)]">
@@ -1021,6 +1142,7 @@ function TopProductsTable({
           </tbody>
         </table>
       </div>
+      )}
     </ChartCard>
   );
 }
@@ -1257,9 +1379,9 @@ function BranchRankingTable({
               <th className="px-3 py-2 text-left">Sucursal</th>
               <th className="px-3 py-2 text-right">Unidades</th>
               <th className="px-3 py-2 text-right">PVP</th>
-              <th className="px-3 py-2 text-right">Registros</th>
+              <th className="px-3 py-2 text-right">Lineas</th>
               <th className="px-3 py-2 text-right">SKUs</th>
-              <th className="px-3 py-2 text-right">PVP prom.</th>
+              <th className="px-3 py-2 text-right">PVP prom. unidad</th>
               <th className="px-3 py-2 text-right">Part.</th>
               <th className="px-3 py-2 text-left">Peso</th>
             </tr>
@@ -1431,7 +1553,7 @@ function ProductsDashboard({
           <select value={sort} onChange={(event) => setSort(event.target.value as 'pvp' | 'units' | 'avg')} className={inputClass}>
             <option value="pvp">Ordenar por PVP</option>
             <option value="units">Ordenar por unidades</option>
-            <option value="avg">Ordenar por PVP prom.</option>
+            <option value="avg">Ordenar por PVP prom. unidad</option>
           </select>
         </div>
       </section>
@@ -1456,7 +1578,7 @@ function ProductsDashboard({
       <div className="grid gap-4 lg:grid-cols-2">
         <ProductPresenceList
           title="Productos en todas las sucursales"
-          subtitle="Asortimento comun"
+          subtitle="Surtido comun"
           rows={commonProducts}
           empty="Todavia no hay productos presentes en todas las sucursales con estos filtros."
         />
@@ -1543,9 +1665,9 @@ function CompareDashboard({
   const rows: Array<{ label: string; values: number[]; format: (value: number) => string; sensitive?: boolean }> = [
     { label: 'Vendido', values: selected.map((item) => item.brand.total_vendido), format: money },
     { label: 'Unidades', values: selected.map((item) => item.brand.unidades), format: num },
-    { label: 'Registros', values: selected.map((item) => item.brand.lineas), format: num },
+    { label: 'Lineas', values: selected.map((item) => item.brand.lineas), format: num },
     { label: 'SKUs', values: selected.map((item) => item.brand.productos), format: num },
-    { label: 'PVP promedio', values: selected.map((item) => item.brand.pvp_promedio), format: money },
+    { label: 'PVP prom. unidad', values: selected.map((item) => item.brand.pvp_promedio), format: money },
     { label: 'Participacion', values: selected.map((item) => item.brand.participacion_pct), format: (value) => `${value.toFixed(1)}%` },
   ];
   if (report.sensitive.include_margin) {
@@ -1563,14 +1685,7 @@ function CompareDashboard({
   });
   const globalWinnerIndex = winCounts.indexOf(Math.max(...winCounts));
   const globalWinner = selected[globalWinnerIndex];
-  const radarData = rows
-    .filter((row) => !row.sensitive)
-    .map((row) => ({
-      metric: row.label,
-      A: Math.round((row.values[0] / Math.max(...row.values, 1)) * 100),
-      B: Math.round((row.values[1] / Math.max(...row.values, 1)) * 100),
-      C: Math.round((row.values[2] / Math.max(...row.values, 1)) * 100),
-    }));
+  const capabilityRows = rows.filter((row) => !row.sensitive);
   const branchCompare = report.branch_mix.map((branch) => ({
     name: branch.name,
     A: metricValue(matrixItem(matrixByName(report.brand_branch_matrix, brandA.name), branch.name) || { total_vendido: 0, unidades: 0 }, mode),
@@ -1624,17 +1739,8 @@ function CompareDashboard({
       </ChartCard>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <ChartCard title="Radar de capacidades" subtitle="Perfil relativo entre marcas">
-          <ResponsiveContainer width="100%" height={320}>
-            <RadarChart data={radarData}>
-              <PolarGrid stroke="rgba(148,163,184,0.22)" />
-              <PolarAngleAxis dataKey="metric" tick={{ fill: '#B8C5DA', fontSize: 10 }} />
-              <Radar name={brandA.name} dataKey="A" stroke="var(--chart-blue)" fill="var(--chart-blue)" fillOpacity={0.32} />
-              <Radar name={brandB.name} dataKey="B" stroke="var(--chart-violet)" fill="var(--chart-violet)" fillOpacity={0.24} />
-              <Radar name={brandC.name} dataKey="C" stroke="var(--chart-teal)" fill="var(--chart-teal)" fillOpacity={0.2} />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-            </RadarChart>
-          </ResponsiveContainer>
+        <ChartCard title="Perfil comparativo" subtitle="Barras normalizadas por metrica">
+          <CapabilityComparisonBars rows={capabilityRows} selected={selected} />
         </ChartCard>
         <ChartCard title="Marcas en sucursales" subtitle="Que marca empuja cada sucursal">
           <ResponsiveContainer width="100%" height={320}>
@@ -1691,6 +1797,53 @@ function CompareBrandCard({
         {brands.map((row) => <option key={row.name} value={row.name}>{row.name}</option>)}
       </select>
     </section>
+  );
+}
+
+function CapabilityComparisonBars({
+  rows,
+  selected,
+}: {
+  rows: Array<{ label: string; values: number[]; format: (value: number) => string }>;
+  selected: Array<{ key: string; color: string; brand: SalesBICommercialMix }>;
+}) {
+  return (
+    <div className="space-y-4">
+      {rows.map((row) => {
+        const max = Math.max(1, ...row.values);
+        const winnerIndex = row.values.indexOf(Math.max(...row.values));
+        return (
+          <div key={row.label} className="rounded-xl bg-white/[0.035] px-3 py-3">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="text-sm font-black text-white">{row.label}</div>
+              <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-black text-emerald-200">
+                Lidera {selected[winnerIndex].brand.name}
+              </span>
+            </div>
+            <div className="space-y-2.5">
+              {selected.map((item, index) => {
+                const value = row.values[index] || 0;
+                const width = Math.max(4, (value / max) * 100);
+                return (
+                  <div key={`${row.label}-${item.key}`} className="grid gap-2 sm:grid-cols-[130px_1fr_auto] sm:items-center">
+                    <div className="truncate text-xs font-black text-[color:var(--text-2)]">{item.brand.name}</div>
+                    <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                      <div
+                        className="h-full rounded-full transition-[width] duration-700 ease-out"
+                        style={{ width: `${width}%`, background: item.color }}
+                      />
+                    </div>
+                    <div className={cn('text-right text-xs font-mono font-black', index === winnerIndex ? 'text-emerald-200' : 'text-[color:var(--text-2)]')}>
+                      {row.format(value)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1786,8 +1939,8 @@ function PeriodsDashboard({
                 </div>
                 <div className="mt-4 grid grid-cols-3 gap-2">
                   <MiniMetric label="Vendido" value={money(branch.total_vendido)} />
-                  <MiniMetric label="Registros" value={num(branch.lineas)} />
-                  <MiniMetric label="PVP prom." value={money(branch.pvp_promedio)} />
+                  <MiniMetric label="Lineas" value={num(branch.lineas)} />
+                  <MiniMetric label="PVP prom. unidad" value={money(branch.pvp_promedio)} />
                 </div>
               </section>
             );
@@ -2202,7 +2355,7 @@ function PresentationDashboard({
           <KpiCard label="Unidades" value={brand.unidades} format={num} accent="teal" />
           <KpiCard label="Participacion" value={brand.participacion_pct} format={(value) => `${value.toFixed(1)}%`} accent="violet" />
           <KpiCard label="SKUs" value={brand.productos} format={num} accent="amber" />
-          <KpiCard label="PVP promedio" value={brand.pvp_promedio} format={money} accent="positive" />
+          <KpiCard label="PVP prom. unidad" value={brand.pvp_promedio} format={money} accent="positive" />
         </div>
       </section>
 
@@ -2221,7 +2374,7 @@ function PresentationDashboard({
 
       <div className="grid gap-4 lg:grid-cols-2">
         <ChartCard title="Participacion por sucursal" subtitle={`Distribucion de ${brand.name}`}>
-          <DonutMix rows={branchMatrix?.items || []} mode="pvp" />
+          <ShareBars rows={branchMatrix?.items || []} mode="pvp" />
         </ChartCard>
         <ChartCard title="Lineas comerciales donde aporta" subtitle="Mix de la marca">
           <RankingBars data={lineMatrix?.items || []} color="var(--chart-blue)" mode="pvp" />

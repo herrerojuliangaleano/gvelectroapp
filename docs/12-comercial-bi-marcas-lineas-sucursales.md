@@ -101,6 +101,74 @@ Implementacion real:
   - marca en caida o crecimiento contra periodo anterior;
   - linea desbalanceada por volumen alto y PVP relativo bajo.
 
+## Fase 1 - estabilizacion de metricas y lectura visual
+
+Fecha de implementacion: 2026-06-09.
+
+Objetivo:
+
+- Corregir metricas base antes de seguir agregando graficos.
+- Evitar que el dashboard muestre graficos vacios como si fueran resultados.
+- Normalizar el lenguaje comercial visible para usuarios y agentes.
+
+Cambios aplicados:
+
+- `pvp_promedio` se calcula como `PVP vendido / unidades`.
+- La metrica `lineas` representa lineas importadas desde `Ventas Vs. Costos`.
+- `Margen %` muestra porcentaje de margen; no debe llamarse margen bruto si no
+  muestra pesos.
+- El modo `Ambos` se entiende como lectura conjunta de PVP y unidades. En
+  graficos de ranking la escala principal sigue siendo PVP, pero la UI muestra
+  tambien unidades cuando corresponde.
+- Los graficos principales usan estado vacio cuando no hay datos suficientes:
+  evolucion diaria, rankings, mixes, heatmap, composicion, tendencias y top
+  productos.
+
+Reglas para proximos agentes:
+
+- No volver a calcular `pvp_promedio` por cantidad de filas o registros.
+- No llamar `ticket` a ninguna metrica de esta capa: `Ventas Vs. Costos` no trae
+  tickets, remitos ni recibos.
+- Si se agrega un grafico nuevo, debe tener estado vacio profesional.
+- Si se muestra rentabilidad, respetar permisos `sales_bi.view_costs` y
+  `sales_bi.view_margin`.
+- Mantener esta capa separada de las planillas diarias operativas.
+
+## Fase 2 - graficos ejecutivos y comparativas accionables
+
+Fecha de implementacion: 2026-06-09.
+
+Objetivo:
+
+- Reemplazar graficos decorativos por lecturas accionables.
+- Priorizar barras, matrices, rankings y tablas comparativas.
+- Hacer mas clara la interpretacion de marcas, lineas y sucursales sin cambiar
+  la API.
+
+Cambios aplicados:
+
+- Se reemplazo el donut de participacion por barras de share con valor visible.
+- Se reemplazo el radar de sucursal contra red por una comparativa de brechas
+  por linea comercial en puntos porcentuales.
+- Se reemplazo el radar del comparador de marcas por barras normalizadas por
+  metrica.
+- La vista de presentacion tambien usa barras de participacion por sucursal.
+- Productos usa copy comercial consistente: surtido comun y PVP promedio por
+  unidad.
+
+Reglas para proximos agentes:
+
+- Evitar donuts y radares en esta capa salvo decision explicita del usuario.
+- Para comparaciones ejecutivas, preferir:
+  - barras horizontales;
+  - matrices/heatmaps;
+  - tablas con lider y brecha;
+  - rankings clickeables.
+- Si se agrega una oportunidad, debe poder leerse como accion: que pasa, donde
+  pasa, cuanto se desvia y que deberia revisar el gerente.
+- La vista presentacion debe seguir ocultando costo, diferencia, margen y
+  recomendaciones internas.
+
 ## Modelo de datos
 
 ### `sales_bi_commercial_batches`
@@ -135,7 +203,7 @@ Campos clave:
 `pvp` y `costo` son valores unitarios. Los reportes multiplican por
 `cantidad`. `diferencia` se guarda como total de linea.
 
-#### Categoria (5 buckets) — que entiende el dashboard por "linea"
+#### Categoria (6 buckets) — que entiende el dashboard por "linea"
 
 `categoria` reemplaza al `tipo_producto` granular como la dimension
 **"linea comercial"** que muestra el dashboard. Vale uno de estos 6:
@@ -173,7 +241,7 @@ docker exec electrogv-backend-prod python -c \
 
 | Campo           | Que devuelve                                              |
 |-----------------|-----------------------------------------------------------|
-| `line_mix`      | Mix por las 5 categorias (dimension "linea" del dashboard) |
+| `line_mix`      | Mix por las 6 categorias (dimension "linea" del dashboard) |
 | `tipo_mix`      | Mix por `tipo_producto` granular (drill-down)             |
 | `*_line_matrix` | Matrices cruzadas con categoria como una de las dimensiones |
 
@@ -245,7 +313,7 @@ Objetivo:
 - Productos movidos.
 - Oportunidades internas: lineas con baja participacion contra el consolidado.
 - Evolucion diaria de la sucursal.
-- Radar contra promedio de red.
+- Brechas por linea contra el promedio de red.
 - Perfil de PVP, variedad de surtido, fortalezas y debilidades.
 
 Ejemplo: Norcenter puede aparecer como sucursal de PVP promedio alto y baja
@@ -258,7 +326,7 @@ Ruta interna: pestana `Productos`.
 Objetivo:
 
 - Buscar por SKU, descripcion, marca o linea.
-- Ordenar por PVP, unidades o PVP promedio.
+- Ordenar por PVP, unidades o PVP promedio por unidad.
 - Ver costo y margen solo si el usuario tiene permiso interno.
 - Detectar surtido comun: productos vendidos en todas las sucursales.
 - Detectar productos exclusivos: productos vendidos en una sola sucursal.
@@ -272,7 +340,8 @@ Objetivo:
 - Comparar periodo actual contra periodo anterior equivalente.
 - Mostrar evolucion diaria superpuesta.
 - Comparar marca por marca.
-- Comparar sucursal por sucursal usando vendido, registros y PVP promedio.
+- Comparar sucursal por sucursal usando vendido, lineas y PVP promedio por
+  unidad.
 
 Nota: se usa `registros`, no `tickets`, porque `Ventas Vs. Costos` no trae
 remitos ni recibos.
