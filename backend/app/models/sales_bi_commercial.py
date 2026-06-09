@@ -97,6 +97,11 @@ class SalesBICommercialRecord(Base):
 
     marca: Mapped[str] = mapped_column(Text, default="", nullable=False, index=True)
     tipo_producto: Mapped[str] = mapped_column(Text, default="", nullable=False, index=True)
+    # Categoria comercial (5 buckets): LINEA BLANCA / COCINA / CLIMATIZACION /
+    # TV / AUDIO / PEQUENOS / OTROS. Derivada de `tipo_producto` con la misma
+    # taxonomía de `sales_bi._classify`. Es la dimensión "línea" que ve el
+    # gerente en el dashboard (más útil que el tipo granular tipo HELADERA).
+    categoria: Mapped[str] = mapped_column(Text, default="", nullable=False, index=True)
     descripcion: Mapped[str] = mapped_column(Text, default="", nullable=False)
     sku: Mapped[str] = mapped_column(Text, default="", nullable=False, index=True)
     sku_normalized: Mapped[str] = mapped_column(Text, default="", nullable=False, index=True)

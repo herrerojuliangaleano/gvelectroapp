@@ -190,12 +190,18 @@ def _apply_commercial_match(
     descripcion = corrected_desc or rec.get("descripcion_raw") or (str(product.descripcion or "") if product else "")
     marca = corrected_brand or rec.get("marca_raw") or (str(product.marca or "") if product else "")
     tipo_producto = corrected_type or rec.get("tipo_raw") or (str(product.tipo or "") if product else "")
+    # Categoria comercial (5 buckets) — reusa el clasificador del módulo
+    # Vendedores así no divergen las taxonomías. tipo_producto sigue
+    # disponible como dimensión de drill-down granular.
+    from .sales_bi import _classify as _classify_categoria
+    categoria, _ = _classify_categoria(str(tipo_producto or ""))
 
     rec.update({
         "sku": str(sku or "").strip(),
         "descripcion": str(descripcion or "").strip(),
         "marca": str(marca or "").strip() or "Sin marca",
         "tipo_producto": str(tipo_producto or "").strip() or "Sin linea",
+        "categoria": categoria or "OTROS",
         "sku_normalized": _normalize_sku(sku),
         "descripcion_normalized": normalize_descripcion(descripcion),
         "product_id": int(product.id) if product else None,
@@ -432,6 +438,7 @@ def save_commercial_import(
                     sku_raw=str(rec.get("sku_raw") or ""),
                     marca=str(rec.get("marca") or ""),
                     tipo_producto=str(rec.get("tipo_producto") or ""),
+                    categoria=str(rec.get("categoria") or "OTROS"),
                     descripcion=str(rec.get("descripcion") or ""),
                     sku=str(rec.get("sku") or ""),
                     sku_normalized=str(rec.get("sku_normalized") or ""),
@@ -637,7 +644,14 @@ def _record_dimension(record: SalesBICommercialRecord, dimension: str) -> str:
     if dimension == "brand":
         return str(record.marca or "Sin marca")
     if dimension == "line":
-        return str(record.tipo_producto or "Sin linea")
+        # `line` ahora apunta a la categoria comercial (5 buckets: LINEA BLANCA,
+        # COCINA, CLIMATIZACION, TV / AUDIO, PEQUENOS, OTROS) y no al
+        # tipo_producto granular. La taxonomía es la misma que el módulo
+        # Vendedores (`sales_bi._classify`). El tipo granular sigue
+        # disponible vía `dimension="tipo"` (drill-down).
+        return str(record.categoria or "OTROS")
+    if dimension == "tipo":
+        return str(record.tipo_producto or "Sin tipo")
     if dimension == "branch":
         return str(record.sucursal or "Sin sucursal")
     if dimension == "sale_type":
@@ -701,7 +715,11 @@ def _common_report(
     overall = _metric_bucket()
     daily: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
     brands: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    # `lines` = categoria comercial (5 buckets); `tipos` = tipo_producto granular
+    # (HELADERA, LAVARROPAS, ...) que ahora vive en su propia dimensión para
+    # quien quiera drill-down debajo de la línea.
     lines: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    tipos: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
     branches: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
     tipo_venta: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
     products: dict[tuple[str, str], dict[str, Any]] = {}
@@ -712,7 +730,8 @@ def _common_report(
         _add_metric(overall, record)
         _add_metric(daily[_fmt_date(record.fecha)], record)
         _add_metric(brands[str(record.marca or "Sin marca")], record)
-        _add_metric(lines[str(record.tipo_producto or "Sin linea")], record)
+        _add_metric(lines[str(record.categoria or "OTROS")], record)
+        _add_metric(tipos[str(record.tipo_producto or "Sin tipo")], record)
         _add_metric(branches[str(record.sucursal or "Sin sucursal")], record)
         _add_metric(tipo_venta[str(record.tipo_venta or "Sin tipo")], record)
         key = (str(record.sku or ""), str(record.descripcion or ""))
@@ -790,7 +809,12 @@ def _common_report(
             for key, bucket in sorted(daily.items())
         ],
         "brand_mix": _ranked(brands, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference),
+        # `line_mix` = mix por las 5 categorías comerciales.
         "line_mix": _ranked(lines, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference),
+        # `tipo_mix` = mix por tipo_producto granular (drill-down debajo de
+        # la línea/categoria). El frontend lo usa cuando el usuario hace
+        # click en una categoria para ver el desglose por tipo.
+        "tipo_mix": _ranked(tipos, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference),
         "branch_mix": _ranked(branches, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference),
         "sale_type_mix": _ranked(tipo_venta, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference),
         "branch_line_matrix": _cross_matrix(
@@ -1004,7 +1028,7 @@ def _brands_by_line(fecha_desde: str | None, fecha_hasta: str | None, **kwargs: 
     line_brand: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
     line_totals: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
     for record in records:
-        line = str(record.tipo_producto or "Sin linea")
+        line = str(record.categoria or "OTROS")
         brand = str(record.marca or "Sin marca")
         _add_metric(line_brand[line][brand], record)
         _add_metric(line_totals[line], record)
@@ -1034,7 +1058,7 @@ def _branch_opportunities(fecha_desde: str | None, fecha_hasta: str | None, **kw
     branch_total: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
     company_total = _metric_bucket()
     for record in records:
-        line = str(record.tipo_producto or "Sin linea")
+        line = str(record.categoria or "OTROS")
         branch = str(record.sucursal or "Sin sucursal")
         _add_metric(company_by_line[line], record)
         _add_metric(branch_by_line[branch][line], record)
@@ -1298,6 +1322,7 @@ def rematch_commercial_records() -> dict[str, Any]:
             record.descripcion = rec["descripcion"]
             record.marca = rec["marca"]
             record.tipo_producto = rec["tipo_producto"]
+            record.categoria = rec.get("categoria") or "OTROS"
             record.sku_normalized = rec["sku_normalized"]
             record.descripcion_normalized = rec["descripcion_normalized"]
             record.product_id = rec["product_id"]
@@ -1306,3 +1331,33 @@ def rematch_commercial_records() -> dict[str, Any]:
             counts[record.match_status] = counts.get(record.match_status, 0) + 1
         session.commit()
         return {"ok": True, **counts, "total": len(records)}
+
+
+def backfill_categoria(*, dry_run: bool = False) -> dict[str, int]:
+    """Aplica `_classify` sobre `tipo_producto` y rellena `categoria` en cada
+    SalesBICommercialRecord. Pensada para correr una sola vez después de
+    aplicar la migración 20260609_0001.
+
+    Args:
+        dry_run: si True solo cuenta cuántos cambiarían sin tocar la DB.
+
+    Returns:
+        {scanned, updated, <categoria>: N, ...}
+    """
+    from .sales_bi import _classify as _classify_categoria
+
+    counts: dict[str, int] = {"scanned": 0, "updated": 0}
+    with db_session() as session:
+        for record in session.scalars(select(SalesBICommercialRecord)).all():
+            counts["scanned"] += 1
+            new_cat, _ = _classify_categoria(str(record.tipo_producto or ""))
+            new_cat = new_cat or "OTROS"
+            if str(record.categoria or "") == new_cat:
+                continue
+            counts["updated"] += 1
+            counts[new_cat] = counts.get(new_cat, 0) + 1
+            if not dry_run:
+                record.categoria = new_cat
+        if not dry_run:
+            session.commit()
+    return counts

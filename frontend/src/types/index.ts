@@ -739,7 +739,13 @@ export interface SalesBICommercialReport {
   daily_series: SalesBICommercialDaily[];
   ranking: SalesBICommercialMix[];
   brand_mix: SalesBICommercialMix[];
+  /** Mix por las 5 categorías comerciales (LINEA BLANCA / COCINA /
+   *  CLIMATIZACION / TV / AUDIO / PEQUENOS / OTROS). Es la dimensión
+   *  "línea" del dashboard. */
   line_mix: SalesBICommercialMix[];
+  /** Mix por tipo_producto granular (HELADERA, LAVARROPAS, MICROONDAS, ...).
+   *  Drill-down debajo de la categoría. Puede no estar en respuestas viejas. */
+  tipo_mix?: SalesBICommercialMix[];
   branch_mix: SalesBICommercialMix[];
   sale_type_mix: SalesBICommercialMix[];
   branch_line_matrix: SalesBICommercialMatrixRow[];

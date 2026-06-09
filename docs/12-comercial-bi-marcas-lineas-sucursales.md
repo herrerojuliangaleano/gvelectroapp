@@ -128,12 +128,59 @@ Campos clave:
 - `sucursal`, `branch_id`.
 - `tipo_venta`: `local` / `online`.
 - `marca_raw`, `tipo_raw`, `descripcion_raw`, `sku_raw`.
-- `marca`, `tipo_producto`, `descripcion`, `sku`.
+- `marca`, `tipo_producto`, `categoria`, `descripcion`, `sku`.
 - `product_id`, `correction_id`, `match_status`.
 - `cantidad`, `pvp`, `costo`, `diferencia`, `margen_porcentaje`.
 
 `pvp` y `costo` son valores unitarios. Los reportes multiplican por
 `cantidad`. `diferencia` se guarda como total de linea.
+
+#### Categoria (5 buckets) — que entiende el dashboard por "linea"
+
+`categoria` reemplaza al `tipo_producto` granular como la dimension
+**"linea comercial"** que muestra el dashboard. Vale uno de estos 6:
+
+| categoria       | tipos que entran (ejemplos)                                     |
+|-----------------|-----------------------------------------------------------------|
+| `LINEA BLANCA`  | HELADERA, FREEZER, LAVARROPAS, LAVASECARROPAS, SECARROPAS, LAVAVAJILLAS, TORRE DE LAVADO |
+| `COCINA`        | COCINA, ANAFE, HORNO, CAMPANA, MICROONDAS                       |
+| `CLIMATIZACION` | AIRE ACONDICIONADO, VENTILADOR, CALOVENTOR, CONVECTOR, PANEL, CALEFON, TERMOTANQUE, PURIFICADOR |
+| `TV / AUDIO`    | TV, MONITOR, PARLANTE, MINICOMPONENTE                           |
+| `PEQUENOS`      | CAFETERA, LICUADORA, BATIDORA, PAVA, TOSTADORA, PLANCHA, ... (lista larga) |
+| `OTROS`         | cualquier tipo no listado en los 5 anteriores                   |
+
+La clasificacion se hace con la **misma funcion** que usa el modulo
+Vendedores (`sales_bi._classify`), asi que cualquier cambio de
+taxonomia se propaga automaticamente a los dos modulos. Para evitar
+divergencia, NO duplicar la lista en `sales_bi_commercial.py` — siempre
+hacer `from .sales_bi import _classify`.
+
+`tipo_producto` (granular: HELADERA, LAVARROPAS, MICROONDAS, ...)
+**sigue guardado** para drill-down. El frontend lo expone como
+secundario debajo de la categoria cuando el usuario hace click.
+
+Backfill de registros ya importados (despues de la migracion
+`20260609_0001`):
+
+```bash
+docker exec electrogv-backend-prod python -c \
+  "from app.sales_bi_commercial import backfill_categoria; print(backfill_categoria())"
+```
+
+`backfill_categoria(dry_run=True)` muestra el impacto sin tocar la DB.
+
+#### Salida del endpoint `*/report`
+
+| Campo           | Que devuelve                                              |
+|-----------------|-----------------------------------------------------------|
+| `line_mix`      | Mix por las 5 categorias (dimension "linea" del dashboard) |
+| `tipo_mix`      | Mix por `tipo_producto` granular (drill-down)             |
+| `*_line_matrix` | Matrices cruzadas con categoria como una de las dimensiones |
+
+`brand_line_matrix`, `branch_line_matrix`, `date_line_matrix` quedaron
+todas **keyed por categoria**, no por tipo granular. Con esto se
+alimentan: heatmap sucursal x linea, mix por linea en cada marca, mix
+por linea en cada sucursal, etc.
 
 ### `sales_bi_commercial_corrections`
 
