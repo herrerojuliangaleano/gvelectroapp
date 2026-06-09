@@ -98,7 +98,8 @@ Implementacion real:
 - El comparador permite comparar hasta tres marcas en simultaneo.
 - La pestana de oportunidades combina:
   - sucursal debil por linea;
-  - marca en caida o crecimiento contra periodo anterior;
+  - marca en caida o crecimiento contra el rango comparado, si el comparador
+    esta activo;
   - linea desbalanceada por volumen alto y PVP relativo bajo.
 
 ## Fase 1 - estabilizacion de metricas y lectura visual
@@ -155,6 +156,9 @@ Cambios aplicados:
 - La vista de presentacion tambien usa barras de participacion por sucursal.
 - Productos usa copy comercial consistente: surtido comun y PVP promedio por
   unidad.
+- El comparador de periodo queda explicito en filtros: apagado por defecto y
+  con rango editable cuando se activa. Cuando esta apagado, no se dibujan
+  deltas ni lineas "anteriores" artificiales.
 
 Reglas para proximos agentes:
 
@@ -337,11 +341,13 @@ Ruta interna: pestana `Periodos`.
 
 Objetivo:
 
-- Comparar periodo actual contra periodo anterior equivalente.
+- Comparar periodo actual contra otro rango elegido por el usuario.
 - Mostrar evolucion diaria superpuesta.
 - Comparar marca por marca.
 - Comparar sucursal por sucursal usando vendido, lineas y PVP promedio por
   unidad.
+- Si el comparador esta apagado, la pestana muestra estado vacio y pide
+  activarlo desde filtros.
 
 Nota: se usa `registros`, no `tickets`, porque `Ventas Vs. Costos` no trae
 remitos ni recibos.

@@ -561,17 +561,18 @@ function MixList({
   );
 }
 
-function SummaryKpis({ report }: { report: SalesBICommercialReport }) {
+function SummaryKpis({ report, previousReport }: { report: SalesBICommercialReport; previousReport?: SalesBICommercialReport | null }) {
   const showMargin = report.sensitive.include_margin && typeof report.totals.margen_porcentaje === 'number';
+  const previous = previousReport?.totals;
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-      <KpiCard label="Vendido" value={report.totals.total_vendido} format={money} accent="blue" />
-      <KpiCard label="Unidades" value={report.totals.unidades} format={num} accent="teal" />
-      <KpiCard label="Lineas" value={report.totals.lineas} format={num} accent="violet" />
-      <KpiCard label="SKUs" value={report.totals.productos} format={num} accent="amber" />
-      <KpiCard label="PVP prom. unidad" value={report.totals.pvp_promedio} format={money} accent="positive" />
+      <KpiCard label="Vendido" value={report.totals.total_vendido} prev={previous?.total_vendido} format={money} accent="blue" />
+      <KpiCard label="Unidades" value={report.totals.unidades} prev={previous?.unidades} format={num} accent="teal" />
+      <KpiCard label="Lineas" value={report.totals.lineas} prev={previous?.lineas} format={num} accent="violet" />
+      <KpiCard label="SKUs" value={report.totals.productos} prev={previous?.productos} format={num} accent="amber" />
+      <KpiCard label="PVP prom. unidad" value={report.totals.pvp_promedio} prev={previous?.pvp_promedio} format={money} accent="positive" />
       {showMargin ? (
-        <KpiCard label="Margen %" value={report.totals.margen_porcentaje || 0} format={(value) => `${value.toFixed(1)}%`} accent="negative" />
+        <KpiCard label="Margen %" value={report.totals.margen_porcentaje || 0} prev={previous?.margen_porcentaje} format={(value) => `${value.toFixed(1)}%`} accent="negative" />
       ) : (
         <KpiCard label="Sin vincular" value={report.unmatched_count} format={num} accent="negative" />
       )}
@@ -1260,6 +1261,7 @@ function ProfileTag({ label, value }: { label: string; value: string }) {
 function OverviewDashboard({
   brandsReport,
   branchesReport,
+  previousReport,
   mode,
   setActiveTab,
   setSelectedBrand,
@@ -1268,6 +1270,7 @@ function OverviewDashboard({
 }: {
   brandsReport: SalesBICommercialReport;
   branchesReport?: SalesBICommercialReport;
+  previousReport?: SalesBICommercialReport | null;
   mode: MetricMode;
   setActiveTab: (tab: CommercialTab) => void;
   setSelectedBrand: (brand: string) => void;
@@ -1282,7 +1285,7 @@ function OverviewDashboard({
         Hace clic en barras, celdas o filas para abrir el perfil de marca, linea o sucursal.
       </div>
 
-      <SummaryKpis report={brandsReport} />
+      <SummaryKpis report={brandsReport} previousReport={previousReport} />
 
       <div className="grid gap-4 xl:grid-cols-[1.35fr_0.85fr]">
         <ChartCard title="Evolucion diaria" subtitle={`${brandsReport.filters.fecha_desde} al ${brandsReport.filters.fecha_hasta} · ${metricLabel(mode)}`}>
@@ -1851,13 +1854,41 @@ function PeriodsDashboard({
   report,
   previousReport,
   mode,
+  compareEnabled,
+  compareDesde,
+  compareHasta,
 }: {
   report: SalesBICommercialReport;
   previousReport: SalesBICommercialReport | null;
   mode: MetricMode;
+  compareEnabled: boolean;
+  compareDesde: string;
+  compareHasta: string;
 }) {
+  if (!compareEnabled) {
+    return (
+      <ChartCard title="Comparacion desactivada" subtitle="Activala desde los filtros para elegir otro rango">
+        <EmptyChartState
+          title="Sin rango comparado"
+          description="Activa 'Comparar contra otro periodo', elegi las fechas y presiona Aplicar para ver evolucion, marcas y sucursales contra ese rango."
+        />
+      </ChartCard>
+    );
+  }
+
+  if (!previousReport) {
+    return (
+      <ChartCard title="Sin datos comparados" subtitle={`${compareDesde || '-'} al ${compareHasta || '-'}`}>
+        <EmptyChartState
+          title="No se pudo cargar el rango comparado"
+          description="Revisa las fechas de comparacion y presiona Aplicar nuevamente."
+        />
+      </ChartCard>
+    );
+  }
+
   const daily = report.daily_series.map((row, index) => {
-    const prev = previousReport?.daily_series[index];
+    const prev = previousReport.daily_series[index];
     return {
       dia: index + 1,
       actual: mode === 'units' ? row.unidades : row.total_vendido,
@@ -1865,16 +1896,17 @@ function PeriodsDashboard({
     };
   });
   const rows = report.brand_mix.slice(0, 14).map((brand) => {
-    const prev = previousReport?.brand_mix.find((row) => row.name === brand.name);
+    const prev = previousReport.brand_mix.find((row) => row.name === brand.name);
     return {
       brand,
       prev,
       delta: pctDelta(metricValue(brand, mode), prev ? metricValue(prev, mode) : undefined),
     };
   });
+  const rangeLabel = `${report.filters.fecha_desde} al ${report.filters.fecha_hasta} vs ${compareDesde} al ${compareHasta}`;
   return (
     <div className="space-y-5">
-      <ChartCard title="Evolucion comparada" subtitle="Periodo actual vs periodo anterior equivalente">
+      <ChartCard title="Evolucion comparada" subtitle={rangeLabel}>
         <ResponsiveContainer width="100%" height={340}>
           <LineChart data={daily} margin={{ top: 8, right: 18, left: 0, bottom: 8 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148,163,184,0.14)" />
@@ -1888,7 +1920,7 @@ function PeriodsDashboard({
         </ResponsiveContainer>
       </ChartCard>
 
-      <ChartCard title="Marca por marca" subtitle="Actual vs anterior, ordenado por peso actual">
+      <ChartCard title="Marca por marca" subtitle="Actual vs rango comparado, ordenado por peso actual">
         <div className="overflow-x-auto">
           <table className="min-w-[820px] w-full text-sm">
             <thead>
@@ -1921,10 +1953,10 @@ function PeriodsDashboard({
         </div>
       </ChartCard>
 
-      <ChartCard title="Sucursales" subtitle="Actual vs anterior: quien empuja y quien retrocede">
+      <ChartCard title="Sucursales" subtitle="Actual vs rango comparado: quien empuja y quien retrocede">
         <div className="grid gap-3 md:grid-cols-2">
           {report.branch_mix.map((branch) => {
-            const prev = previousReport?.branch_mix.find((row) => row.name === branch.name);
+            const prev = previousReport.branch_mix.find((row) => row.name === branch.name);
             const delta = pctDelta(metricValue(branch, mode), prev ? metricValue(prev, mode) : undefined);
             return (
               <section key={branch.name} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
@@ -2003,9 +2035,9 @@ function buildOpportunityCards({
           title: `${brand.name} ${falling ? 'muestra caida' : 'crece de forma sostenida'}`,
           tags: [brand.name],
           summary: falling
-            ? `${brand.name} cae vs periodo anterior. Verificar mix de producto, stock y exhibicion.`
-            : `${brand.name} suma ${money(brand.total_vendido - (previous?.total_vendido || 0))} contra el periodo anterior.`,
-          metric: 'Variacion PVP vs periodo anterior',
+            ? `${brand.name} cae vs rango comparado. Verificar mix de producto, stock y exhibicion.`
+            : `${brand.name} suma ${money(brand.total_vendido - (previous?.total_vendido || 0))} contra el rango comparado.`,
+          metric: 'Variacion PVP vs rango comparado',
           observed: deltaLabel(delta),
           threshold: falling ? '< -4%' : '>= 8%',
           formula: '(actual - anterior) / anterior',
@@ -2136,7 +2168,7 @@ function AdvancedOpportunitiesDashboard({
         {showRules && (
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             <RuleInfo title="Sucursal debil en linea" description="Detecta lineas cuyo peso en una sucursal cae contra el consolidado." />
-            <RuleInfo title="Marca en caida / crecimiento" description="Compara la marca contra el periodo anterior equivalente." />
+            <RuleInfo title="Marca en caida / crecimiento" description="Compara la marca contra el rango elegido en el comparador de periodo." />
             <RuleInfo title="Linea desbalanceada" description="Detecta lineas que mueven muchas unidades pero aportan menos PVP relativo." />
           </div>
         )}
@@ -2410,6 +2442,9 @@ export function SalesBICommercialPage() {
   const [marca, setMarca] = useState('');
   const [linea, setLinea] = useState('');
   const [presentation, setPresentation] = useState(false);
+  const [compareEnabled, setCompareEnabled] = useState(false);
+  const [compareDesde, setCompareDesde] = useState('');
+  const [compareHasta, setCompareHasta] = useState('');
   const [metricMode, setMetricMode] = useState<MetricMode>('units');
   const [selectedBrand, setSelectedBrand] = useState('');
   const [selectedLine, setSelectedLine] = useState('');
@@ -2423,11 +2458,27 @@ export function SalesBICommercialPage() {
     fetchSalesBICommercialOptions()
       .then((data) => {
         setOptions(data);
-        setFechaDesde((prev) => prev || data.period_start || '');
-        setFechaHasta((prev) => prev || data.period_end || '');
+        const nextDesde = fechaDesde || data.period_start || '';
+        const nextHasta = fechaHasta || data.period_end || '';
+        setFechaDesde((prev) => prev || nextDesde);
+        setFechaHasta((prev) => prev || nextHasta);
+        const previous = previousRange(nextDesde, nextHasta);
+        if (previous) {
+          setCompareDesde((prev) => prev || previous.fecha_desde);
+          setCompareHasta((prev) => prev || previous.fecha_hasta);
+        }
       })
       .catch(() => setOptions({ period_start: '', period_end: '', marcas: [], tipos: [], sucursales: [], empresas: [], tipo_ventas: ['local', 'online'] }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (compareEnabled) return;
+    const previous = previousRange(fechaDesde, fechaHasta);
+    if (!previous) return;
+    setCompareDesde(previous.fecha_desde);
+    setCompareHasta(previous.fecha_hasta);
+  }, [compareEnabled, fechaDesde, fechaHasta]);
 
   const params = useMemo(() => ({
     fecha_desde: fechaDesde || undefined,
@@ -2443,23 +2494,17 @@ export function SalesBICommercialPage() {
     setLoading(true);
     setError('');
     try {
-      const [brands, lines, branches] = await Promise.all([
+      const previousParams = compareEnabled && compareDesde && compareHasta
+        ? { ...params, fecha_desde: compareDesde, fecha_hasta: compareHasta }
+        : null;
+      const [brands, lines, branches, previousBrands] = await Promise.all([
         fetchSalesBICommercialReport('brands', params),
         fetchSalesBICommercialReport('lines', params),
         fetchSalesBICommercialReport('branches', params),
+        previousParams ? fetchSalesBICommercialReport('brands', previousParams) : Promise.resolve(null),
       ]);
       setReports({ brands, lines, branches });
-      const previous = previousRange(fechaDesde, fechaHasta);
-      if (previous) {
-        const previousBrands = await fetchSalesBICommercialReport('brands', {
-          ...params,
-          fecha_desde: previous.fecha_desde,
-          fecha_hasta: previous.fecha_hasta,
-        });
-        setPreviousReport(previousBrands);
-      } else {
-        setPreviousReport(null);
-      }
+      setPreviousReport(previousBrands);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo cargar el informe comercial.');
     } finally {
@@ -2497,23 +2542,54 @@ export function SalesBICommercialPage() {
 
   function setPreset(preset: string) {
     const today = new Date();
+    let nextDesde = fechaDesde;
+    let nextHasta = fechaHasta;
     if (preset === 'today') {
-      setFechaDesde(isoDate(today));
-      setFechaHasta(isoDate(today));
+      nextDesde = isoDate(today);
+      nextHasta = isoDate(today);
     } else if (preset === 'yesterday') {
       const y = addDays(today, -1);
-      setFechaDesde(isoDate(y));
-      setFechaHasta(isoDate(y));
+      nextDesde = isoDate(y);
+      nextHasta = isoDate(y);
+    } else if (preset === 'week') {
+      nextDesde = isoDate(addDays(today, -((today.getDay() + 6) % 7)));
+      nextHasta = isoDate(today);
+    } else if (preset === 'previousWeek') {
+      const end = addDays(addDays(today, -((today.getDay() + 6) % 7)), -1);
+      nextDesde = isoDate(addDays(end, -6));
+      nextHasta = isoDate(end);
     } else if (preset === 'month') {
-      setFechaDesde(isoDate(startOfMonth(today)));
-      setFechaHasta(isoDate(today));
+      nextDesde = isoDate(startOfMonth(today));
+      nextHasta = isoDate(today);
     } else if (preset === 'previousMonth') {
       const start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-      setFechaDesde(isoDate(start));
-      setFechaHasta(isoDate(endOfMonth(start)));
+      nextDesde = isoDate(start);
+      nextHasta = isoDate(endOfMonth(start));
     } else {
-      setFechaDesde(isoDate(addDays(today, -29)));
-      setFechaHasta(isoDate(today));
+      nextDesde = isoDate(addDays(today, -29));
+      nextHasta = isoDate(today);
+    }
+    setFechaDesde(nextDesde);
+    setFechaHasta(nextHasta);
+    const previous = previousRange(nextDesde, nextHasta);
+    if (previous && !compareEnabled) {
+      setCompareDesde(previous.fecha_desde);
+      setCompareHasta(previous.fecha_hasta);
+    }
+  }
+
+  function toggleCompare(enabled: boolean) {
+    setCompareEnabled(enabled);
+    if (!enabled) {
+      setPreviousReport(null);
+      return;
+    }
+    if (!compareDesde || !compareHasta) {
+      const previous = previousRange(fechaDesde, fechaHasta);
+      if (previous) {
+        setCompareDesde(previous.fecha_desde);
+        setCompareHasta(previous.fecha_hasta);
+      }
     }
   }
 
@@ -2593,6 +2669,8 @@ export function SalesBICommercialPage() {
           <div className="flex flex-wrap gap-1.5">
             <button type="button" onClick={() => setPreset('today')} className="rounded-full border border-white/10 px-3 py-1 text-xs font-bold text-[color:var(--text-2)] hover:bg-white/10">Hoy</button>
             <button type="button" onClick={() => setPreset('yesterday')} className="rounded-full border border-white/10 px-3 py-1 text-xs font-bold text-[color:var(--text-2)] hover:bg-white/10">Ayer</button>
+            <button type="button" onClick={() => setPreset('week')} className="rounded-full border border-white/10 px-3 py-1 text-xs font-bold text-[color:var(--text-2)] hover:bg-white/10">Semana actual</button>
+            <button type="button" onClick={() => setPreset('previousWeek')} className="rounded-full border border-white/10 px-3 py-1 text-xs font-bold text-[color:var(--text-2)] hover:bg-white/10">Semana anterior</button>
             <button type="button" onClick={() => setPreset('month')} className="rounded-full border border-white/10 px-3 py-1 text-xs font-bold text-[color:var(--text-2)] hover:bg-white/10">Mes actual</button>
             <button type="button" onClick={() => setPreset('previousMonth')} className="rounded-full border border-white/10 px-3 py-1 text-xs font-bold text-[color:var(--text-2)] hover:bg-white/10">Mes anterior</button>
             <button type="button" onClick={() => setPreset('last30')} className="rounded-full border border-white/10 px-3 py-1 text-xs font-bold text-[color:var(--text-2)] hover:bg-white/10">Ultimos 30 dias</button>
@@ -2609,6 +2687,40 @@ export function SalesBICommercialPage() {
               </button>
             </div>
           </div>
+        </div>
+        <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3">
+          <label className="flex cursor-pointer items-center gap-3">
+            <span className={cn(
+              'inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors',
+              compareEnabled ? 'bg-[color:var(--chart-violet)]' : 'bg-[color:var(--border-strong)]',
+            )}>
+              <span className={cn(
+                'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                compareEnabled ? 'translate-x-4' : 'translate-x-0.5',
+              )}
+              />
+            </span>
+            <input
+              type="checkbox"
+              checked={compareEnabled}
+              onChange={(event) => toggleCompare(event.target.checked)}
+              className="sr-only"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-bold text-[color:var(--text)]">Comparar contra otro periodo</div>
+              <div className="text-[11px] text-[color:var(--text-3)]">
+                {compareEnabled
+                  ? 'Los KPIs, periodos y oportunidades usan el rango comparado elegido.'
+                  : 'Ver solo los datos del rango actual sin comparacion.'}
+              </div>
+            </div>
+          </label>
+          {compareEnabled && (
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <Field label="Comparar desde"><input type="date" value={compareDesde} onChange={(event) => setCompareDesde(event.target.value)} className={inputClass} /></Field>
+              <Field label="Comparar hasta"><input type="date" value={compareHasta} onChange={(event) => setCompareHasta(event.target.value)} className={inputClass} /></Field>
+            </div>
+          )}
         </div>
       </section>
 
@@ -2627,6 +2739,7 @@ export function SalesBICommercialPage() {
             <OverviewDashboard
               brandsReport={brandsReport}
               branchesReport={branchesReport || undefined}
+              previousReport={previousReport}
               mode={metricMode}
               setActiveTab={setActiveTab}
               setSelectedBrand={setSelectedBrand}
@@ -2672,7 +2785,14 @@ export function SalesBICommercialPage() {
           )}
 
           {activeTab === 'periods' && (
-            <PeriodsDashboard report={brandsReport} previousReport={previousReport} mode={metricMode} />
+            <PeriodsDashboard
+              report={brandsReport}
+              previousReport={previousReport}
+              mode={metricMode}
+              compareEnabled={compareEnabled}
+              compareDesde={compareDesde}
+              compareHasta={compareHasta}
+            />
           )}
 
           {activeTab === 'opportunities' && branchesReport && (
