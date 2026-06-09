@@ -611,7 +611,16 @@ function OverviewTab({
     }));
   }, [report.daily_series, compare]);
 
-  const maxSellerCobrado = Math.max(1, ...report.sellers.map((s) => s.total_cobrado));
+  // El max debe contemplar TANTO el periodo actual COMO el comparado. Si solo
+  // miramos `report.sellers[].total_cobrado` y alguien cobro mas en el rango
+  // anterior, la barra gris (anterior) se va arriba del 100% y se desborda
+  // visualmente sobre la columna del $ y el delta.
+  const maxSellerCobrado = useMemo(() => {
+    const currentVals = report.sellers.map((s) => s.total_cobrado);
+    const prevVals = (compare?.sellers ?? [])
+      .map((s) => s.delta?.total_cobrado?.comparado ?? 0);
+    return Math.max(1, ...currentVals, ...prevVals);
+  }, [report.sellers, compare]);
   const sellersWithSenas = useMemo(
     () => report.sellers
       .filter((s) => (s.sena_tickets || 0) > 0)
@@ -748,8 +757,8 @@ function RankingRow({
           </div>
         </div>
         <div className="relative mt-2 h-2 overflow-hidden rounded-full bg-[color:var(--surface-2)]">
-          <div className="absolute inset-y-0 left-0 rounded bg-[color:var(--chart-ghost)] transition-[width] duration-700 ease-out" style={{ width: `${widthPrev}%` }} />
-          <div className="absolute inset-y-0 left-0 rounded bg-gradient-to-r from-[color:var(--chart-blue)] to-[color:var(--chart-violet)] transition-[width] duration-700 ease-out" style={{ width: `${widthCurr}%` }} />
+          <div className="absolute inset-y-0 left-0 rounded bg-[color:var(--chart-ghost)] transition-[width] duration-700 ease-out" style={{ width: `${Math.min(100, widthPrev)}%` }} />
+          <div className="absolute inset-y-0 left-0 rounded bg-gradient-to-r from-[color:var(--chart-blue)] to-[color:var(--chart-violet)] transition-[width] duration-700 ease-out" style={{ width: `${Math.min(100, widthCurr)}%` }} />
         </div>
       </div>
       {/* ── Desktop ── */}
@@ -762,9 +771,9 @@ function RankingRow({
             <div className="text-[10px] uppercase tracking-wide text-[color:var(--text-3)]">{num(seller.tickets)} tk · {num(seller.unidades)} u</div>
           </div>
         </div>
-        <div className="relative h-5">
-          <div className="absolute inset-y-0 left-0 rounded bg-[color:var(--chart-ghost)] transition-[width] duration-700 ease-out" style={{ width: `${widthPrev}%` }} />
-          <div className="absolute inset-y-0 left-0 rounded bg-gradient-to-r from-[color:var(--chart-blue)] to-[color:var(--chart-violet)] transition-[width] duration-700 ease-out" style={{ width: `${widthCurr}%` }} />
+        <div className="relative h-5 overflow-hidden rounded">
+          <div className="absolute inset-y-0 left-0 rounded bg-[color:var(--chart-ghost)] transition-[width] duration-700 ease-out" style={{ width: `${Math.min(100, widthPrev)}%` }} />
+          <div className="absolute inset-y-0 left-0 rounded bg-gradient-to-r from-[color:var(--chart-blue)] to-[color:var(--chart-violet)] transition-[width] duration-700 ease-out" style={{ width: `${Math.min(100, widthCurr)}%` }} />
         </div>
         <div className="text-right text-sm font-black tabular-nums text-[color:var(--text)]">{money(seller.total_cobrado)}</div>
         <div className="text-right"><DeltaPill value={deltaPct} /></div>
