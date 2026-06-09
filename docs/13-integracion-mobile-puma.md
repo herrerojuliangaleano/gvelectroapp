@@ -7,12 +7,11 @@
 > **Audiencia**: Victor (CEO ElectroGV), equipo tecnico de Puma Software,
 > consultores externos. Asume vocabulario tecnico medio-alto.
 >
-> **Fecha**: 2026-06-09 · **Version doc**: 0.3 — corregida la
-> interpretacion de la pantalla 6: las 6 pantallas generan una
-> **prefactura guardada en Caja Recaudadora** (sin CAE), y la
-> **emision real** (que llama a AFIP) es **un paso separado**
-> en otra pantalla del modulo Caja. Esto simplifica la integracion
-> mobile y reordena el roadmap.
+> **Fecha**: 2026-06-09 · **Version doc**: 0.4 — agregado el
+> caso "Buscar AFIP" como necesidad P0 desde Fase 2 (lookup
+> fiscal por DNI/CUIT a traves de Puma como proxy hacia AFIP).
+> Esto es el primer caso real donde la integracion API es
+> **obligatoria desde el dia 1**, no diferible.
 
 ---
 
@@ -64,6 +63,10 @@ reunion es un **hibrido** (§3.3):
 6. Plan de contingencia cuando Puma esta caido.
 7. **Como se devuelve el CAE de AFIP** (sincrono / asincrono /
    webhook) — esto define la arquitectura de la pantalla 4 mobile.
+8. **Endpoint "Buscar AFIP"** (`POST /afip/lookup`) — proxy desde la
+   app movil hacia Puma para consultar AFIP por DNI/CUIT y
+   autocompletar alta de cliente. **NECESARIO desde Fase 2**, no
+   diferible. Ver §1.2 (P0) y §4.2.
 
 ### Hallazgo crítico — separacion Prefactura vs Factura emitida
 
@@ -109,7 +112,7 @@ capturas del 2026-06-06 / 2026-06-09:
 
 | # | Pantalla / paso          | Ventanas abiertas | Entidades manipuladas             | Friccion observada |
 |---|--------------------------|-------------------|-----------------------------------|--------------------|
-| 1 | Identificar cliente      | Prefactura + **Asistente de busqueda** | Cliente (search por nombre/DNI) | 2 ventanas para encontrar 1 cliente; teclado obligatorio |
+| 1 | Identificar cliente      | Prefactura + **Asistente de busqueda** | Cliente (search por nombre/DNI). Si es nuevo: **boton "Buscar AFIP"** que consulta padron AFIP por DNI/CUIT y autocompleta razon social, domicilio, condicion IVA, localidad. | 2 ventanas para encontrar 1 cliente; teclado obligatorio. La feature "Buscar AFIP" es **clave** para alta rapida — mobile tiene que tenerla. |
 | 2 | Agregar articulo         | Prefactura + **Buscar articulo** | Producto, stock multi-deposito (LANUS / CANNING / CHICLANA / TOTAL), precio | Hay que elegir manualmente deposito de origen; no hay scan |
 | 3 | Forma de pago + plan     | Prefactura (la misma) | Plan de credito (`CANCELAR PARA RETIRAR`, cuotas, fecha 1° cuota) | Sub-formulario embebido — visualmente cargado |
 | 4 | Datos finales            | Prefactura + **Datos Finales** | Anticipo, Efectivo, Cheques, Saldo a favor, Vendedor (cod. `0011`), Percepciones | Otra ventana modal, repite cliente abajo |
@@ -232,7 +235,7 @@ es ordenar lo que ya pasa.
 | **Bloqueo de entrega** | **flag "Bloquear ENTREGA DE MERCADERIA" — entrega diferida** | **P0** |
 | Garantia extendida  | opcional sobre articulo                              | P1 |
 | Cargos extras       | instalacion, armado, fletes                          | P2 |
-| AFIP / consulta fiscal | resolucion de datos del cliente desde DNI/CUIT     | P1 |
+| **AFIP / consulta fiscal** | **lookup por DNI/CUIT — el vendedor en mobile carga el doc, Puma proxiea a AFIP, devuelve razon social + domicilio + condicion IVA + localidad → autocompleta alta de cliente nuevo**. Necesario desde Fase 2 (no diferible). | **P0** |
 
 ### 1.3 Dolores operativos detectados
 
@@ -587,13 +590,80 @@ Que necesitamos escribir y como:
 | Alta de cliente            | Si       | `POST /api/v1/customers`             | DNI/CUIT             |
 | Update cliente             | No       | `PATCH /api/v1/customers/:id`        | revision             |
 | Recibo a cuenta            | Si       | `POST /api/v1/customers/:id/payments` | `payment_id` propio |
-| Resolver AFIP              | No       | `POST /api/v1/afip/lookup`           | DNI/CUIT             |
+| **"Buscar AFIP" (lookup fiscal)** | **Si (P0, Fase 2)** | **`POST /api/v1/afip/lookup`** | **DNI/CUIT**         |
 
 > **Cambio clave en v0.3**: las operaciones de venta se separaron en
 > **dos endpoints distintos**: `/prefacturas` (sin AFIP) y
 > `/prefacturas/:id/emit` (con AFIP). Esto refleja el modelo real
 > de Puma y permite que la app movil opere solo el primero,
 > dejando el segundo a la operatoria de Caja.
+
+#### Payload `POST /api/v1/afip/lookup` ("Buscar AFIP" desde mobile)
+
+Caso de uso: el vendedor en mobile esta dando de alta un cliente
+nuevo. Tipea el DNI/CUIT en el formulario y aprieta el boton
+"Buscar en AFIP" (lo mismo que el boton del flujo Puma desktop). La
+app movil **no consulta AFIP directamente** — manda el documento a
+Puma, Puma proxiea hacia AFIP (usa sus propios certificados WSAA),
+y devuelve la respuesta normalizada.
+
+Request:
+
+```json
+{
+  "document_type": "CUIT",
+  "document_number": "20954993368"
+}
+```
+
+Response esperada cuando AFIP resuelve:
+
+```json
+{
+  "ok": true,
+  "document_type": "CUIT",
+  "document_number": "20954993368",
+  "legal_name": "GALEANO HERRERA, VICTOR JULIAN",
+  "display_name": "Victor Galeano",
+  "iva_condition": "Consumidor Final",
+  "fiscal_address": "CURAPALIGUE 1891",
+  "locality": "CAPITAL FEDERAL",
+  "postal_code": "1406",
+  "province": "Buenos Aires",
+  "actividades": [],
+  "estado": "ACTIVO",
+  "raw": {
+    "padron_a5_response": "<respuesta cruda de AFIP por si Puma quiere mostrarla>"
+  }
+}
+```
+
+Response cuando no se encuentra (la app no debe romperse):
+
+```json
+{
+  "ok": false,
+  "error": "Documento no encontrado en padron AFIP",
+  "fallback": "manual"
+}
+```
+
+**Por que este endpoint es P0 y no diferible**:
+
+- Sin AFIP lookup, el vendedor tiene que tipear razon social,
+  domicilio, IVA, localidad y CP a mano para cada cliente nuevo.
+  En Caseros (sucursal grande con tasa alta de clientes nuevos)
+  esto **anula gran parte de la ganancia de velocidad** que
+  buscamos en mobile.
+- Es la unica operacion donde la app movil **requiere
+  obligatoriamente** una API de Puma desde el inicio. No se puede
+  postergar a Fase 3.
+- Hoy ya existe el boton "Buscar AFIP" en Puma desktop — la
+  infraestructura existe. Solo hay que exponerla.
+
+**Caching y costo**: la app movil cachea la respuesta por DNI/CUIT
+en su propia BD (`afip_cache`) por 30 dias para no martillar al
+ERP. Si AFIP cambia algo del cliente, se invalida al usarlo.
 
 #### Payload `POST /api/v1/prefacturas` (lo que la app mobile crea)
 
@@ -735,6 +805,11 @@ Reduccion del flujo de Puma al minimo viable:
 - **Search-as-you-type** con debounce 300ms — sin botones "Buscar".
 - **Auto-fill de cliente** por DNI: pega DNI y autocompleta domicilio
   / iva / saldo (consume API o replica).
+- **Buscar AFIP integrado en el formulario de alta**: si el DNI/CUIT
+  no esta en la base local, la app llama a `/api/v1/afip/lookup`
+  (proxy de Puma) y autocompleta razon social + domicilio + IVA +
+  localidad. **El vendedor solo tipea el DNI** — el resto es
+  AFIP-fill.
 - **Bottom sheets** en vez de modales superpuestos — gestualmente
   natural en mobile.
 - **Persistencia automatica** del borrador: si la app se cierra, el
@@ -777,6 +852,44 @@ Reduccion del flujo de Puma al minimo viable:
 └─────────────────────────────────┘
 ```
 
+### 5.4 Wireframe del paso 2 — Cliente (con Buscar AFIP)
+
+```
+┌─────────────────────────────────┐
+│ ← Volver                        │
+│ Nueva venta · Paso 2: Cliente   │
+│ ────●────●────○────○─────────── │
+│     1    2    3    4             │
+│                                 │
+│ 🔍 Buscar cliente existente:    │
+│ ┌─────────────────────────────┐ │
+│ │ DNI / CUIT / nombre...      │ │
+│ └─────────────────────────────┘ │
+│                                 │
+│  o crear cliente nuevo:         │
+│ ┌─────────────────────────────┐ │
+│ │ DNI o CUIT  20954993368   ⚡│ │  ← icono "Buscar AFIP"
+│ └─────────────────────────────┘ │
+│                                 │
+│ ╔═══════════════════════════╗   │
+│ ║  Buscando en AFIP...      ║   │  ← spinner ~1s
+│ ╚═══════════════════════════╝   │
+│                                 │
+│ ✅ AFIP encontro:               │
+│ Razon social: GALEANO HERRERA, .│
+│ Domicilio:    CURAPALIGUE 1891  │
+│ Localidad:    CAPITAL FEDERAL   │
+│ CP:           1406              │
+│ IVA:          Consumidor Final  │
+│                                 │
+│ [Editar campos]  [Confirmar →]  │
+└─────────────────────────────────┘
+```
+
+El "rayito" ⚡ al lado del campo DNI es el detalle UX clave: el
+vendedor lo aprieta (o se dispara solo cuando completa 8 digitos)
+y en ~1 segundo tiene 5 campos completados sin tipear.
+
 ---
 
 ## 6. Roadmap
@@ -803,7 +916,7 @@ Reduccion del flujo de Puma al minimo viable:
 **Hito Fase 1**: vendedor puede consultar stock y cliente desde
 mobile, **sin crear venta**. Validamos UX y velocidad real.
 
-### Fase 2 — Prefactura mobile sin API (4 semanas)
+### Fase 2 — Prefactura mobile con un solo endpoint API: AFIP lookup (4-5 semanas)
 
 - ⬜ Extender `sales_web_requests` con campos de plan de credito,
   anticipo detallado, orden de entrega, **desglose de pago 8
@@ -812,13 +925,26 @@ mobile, **sin crear venta**. Validamos UX y velocidad real.
 - ⬜ Scanner de codigo de barras.
 - ⬜ Firma del cliente en pantalla.
 - ⬜ Generar PDF de prefactura (formato Puma-compatible).
-- ⬜ Sigue siendo manual del lado Puma: el cajero abre la prefactura
+- ⬜ **Endpoint `POST /api/v1/afip/lookup` de Puma**: unico endpoint
+  API necesario en esta fase. La app movil lo llama cuando el
+  vendedor da de alta cliente nuevo (consulta AFIP por DNI/CUIT,
+  autocompleta razon social + domicilio + IVA).
+- ⬜ Tabla `afip_cache` local con TTL 30 dias para no repetir
+  consultas.
+- ⬜ Resto sigue manual del lado Puma: el cajero abre la prefactura
   en mobile (o ve el PDF), la transcribe en su PC en la pantalla
   "Prefacturas y Presupuestos" de Puma, y emite cuando corresponde.
 
-**Hito Fase 2**: vendedor opera 100% en mobile creando prefacturas.
-Cajero las pasa a Puma. **Caseros gana velocidad en la creacion sin
-integracion API**. La emision con AFIP queda intacta en Puma.
+**Hito Fase 2**: vendedor opera 100% en mobile creando prefacturas
+**con autocompletado AFIP para clientes nuevos**. Cajero las pasa a
+Puma. Caseros gana velocidad real (no solo en armar prefactura,
+tambien en alta de cliente nuevo). La emision con AFIP queda
+intacta en Puma.
+
+> **Nota**: si Puma no expone `/afip/lookup` en Fase 2, hay
+> fallback: alta manual con teclado (el dolor que estamos tratando
+> de eliminar). Si esto pasa, mueve el endpoint AFIP a Fase 1.5
+> intermedia y manten Fase 2 vendible internamente.
 
 ### Fase 3 — Escritura de prefacturas via API (6 semanas)
 
@@ -928,6 +1054,27 @@ Lleva esta lista preparada. Marca las respuestas en vivo.
     se creo? (caso: vendedor crea en Norcenter, cajero centralizado
     emite).
 
+### Sobre "Buscar AFIP" / lookup fiscal (P0 desde Fase 2)
+
+> Estas preguntas son **bloqueantes para Fase 2** — sin respuestas
+> aca no hay alta rapida de clientes nuevos en mobile.
+
+28a. ¿El boton "Buscar AFIP" que existe en Puma desktop, llama al
+     padron A5 (constancia de inscripcion) o a algun otro web
+     service?
+28b. ¿Pueden exponer ese mismo lookup como endpoint REST
+     (`POST /api/v1/afip/lookup`) para que la app movil lo consuma?
+     ¿Que costo / tiempo?
+28c. ¿Cual es la latencia tipica del lookup (Puma → AFIP → Puma)?
+     ¿Hace cache del lado Puma?
+28d. ¿Hay rate limit del lado AFIP? Si llamamos 200 veces/dia desde
+     mobile, ¿hay riesgo de baneo?
+28e. ¿La respuesta de AFIP devuelve domicilio fiscal + localidad +
+     CP + condicion IVA + razon social en un solo response, o hay
+     que hacer 2-3 llamadas?
+28f. ¿Que pasa si AFIP esta caido al hacer un lookup? ¿Puma puede
+     responder con fallback "sin datos, completar manual"?
+
 ### Sobre AFIP / emision (cuando lleguemos a Fase 3.5)
 
 29. ¿Como manejan hoy la emision de CAE (WSFE de AFIP)? ¿Es
@@ -1012,6 +1159,8 @@ Lleva esta lista preparada. Marca las respuestas en vivo.
 | Entrega / Vuelto       | Lo que entrega el cliente / lo que se le devuelve | Solo aplica a efectivo |
 | Bloquear ENTREGA DE MERCADERIA | Flag: mercaderia facturada pero retenida en deposito | Caso "entrega diferida" |
 | Entrega diferida       | Operacion donde la mercaderia se entrega despues de la factura | Checkbox en pantalla 6 |
+| **Buscar AFIP / Padron A5** | Boton que consulta el padron AFIP por DNI/CUIT y devuelve razon social, domicilio, IVA, localidad | En mobile lo expone Puma via `POST /api/v1/afip/lookup` — P0 desde Fase 2 |
+| WSAA / WSFE / Padron A5 | Web services de AFIP — autenticacion / facturacion electronica / padron de contribuyentes | La app movil NO los toca directo. Los usa Puma como proxy. |
 
 ### B. Referencias internas
 
@@ -1055,11 +1204,13 @@ documento entero **mas** estos puntos como pregunta especifica:
 - [x] Cerrar la 6ta pantalla del flujo Puma → **v0.2**.
 - [x] Corregir interpretacion: la pantalla 6 cierra prefactura, NO
       emite factura. La emision es paso 7 separado en Caja
-      Recaudadora → **v0.3** (este doc).
+      Recaudadora → **v0.3**.
+- [x] "Buscar AFIP" como necesidad P0 desde Fase 2: la app movil
+      delega el lookup fiscal a Puma → **v0.4** (este doc).
 - [ ] Compartir este doc al equipo Puma 48h antes de la reunion para
       que vengan con respuestas a §7 (especialmente preguntas 22-28
-      sobre modelo de prefactura, y 29-33 sobre AFIP cuando llegue
-      Fase 3.5).
+      sobre modelo de prefactura, 28a-f sobre Buscar AFIP, y 29-33
+      sobre AFIP emision cuando llegue Fase 3.5).
 - [ ] Imprimir matriz §3.5 a la reunion (es el ancla de la
       decision).
 - [ ] Definir piloto: 2 vendedores en Caseros, 4 SKUs, 2 semanas.
