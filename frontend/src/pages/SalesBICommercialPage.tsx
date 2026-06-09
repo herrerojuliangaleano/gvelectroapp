@@ -1415,6 +1415,44 @@ function OverviewDashboard({
   );
 }
 
+/** Sparkline inline SVG sin recharts — pensado para tablas con muchas filas
+ *  donde montar un BarChart o LineChart por celda seria costoso. */
+function MiniSparkline({
+  values,
+  width = 84,
+  height = 22,
+  color = 'var(--chart-blue)',
+  fillOpacity = 0.18,
+}: {
+  values: number[];
+  width?: number;
+  height?: number;
+  color?: string;
+  fillOpacity?: number;
+}) {
+  if (!values || values.length < 2 || values.every((v) => v === 0)) {
+    return <span className="text-[10px] text-[color:var(--text-3)]">—</span>;
+  }
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const range = max - min || 1;
+  const stepX = width / (values.length - 1);
+  const points = values.map((v, i) => {
+    const x = (i * stepX).toFixed(2);
+    const y = (height - 2 - ((v - min) / range) * (height - 4)).toFixed(2);
+    return `${x},${y}`;
+  });
+  const polyline = points.join(' ');
+  // Area cerrada para dar volumen visual a la tendencia
+  const area = `${0},${height} ${polyline} ${width},${height}`;
+  return (
+    <svg width={width} height={height} className="block" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+      <polygon points={area} fill={color} fillOpacity={fillOpacity} />
+      <polyline points={polyline} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function BranchRankingTable({
   report,
   mode,
@@ -1426,10 +1464,24 @@ function BranchRankingTable({
 }) {
   const max = Math.max(1, ...report.branch_mix.map((row) => metricValue(row, mode)));
   const format = metricFormatter(mode);
+  // Por cada sucursal, armar la serie diaria a partir de date_branch_matrix
+  // (cada row es una fecha, cada item es una sucursal). Sin la matriz, la
+  // columna TENDENCIA muestra un dash en lugar de crashear.
+  const dailyByBranch = useMemo(() => {
+    const map = new Map<string, number[]>();
+    for (const dateRow of report.date_branch_matrix || []) {
+      for (const branchItem of dateRow.items) {
+        const list = map.get(branchItem.name) ?? [];
+        list.push(metricValue(branchItem, mode));
+        map.set(branchItem.name, list);
+      }
+    }
+    return map;
+  }, [report.date_branch_matrix, mode]);
   return (
-    <ChartCard title="Ranking de sucursales" subtitle="Comparativo comercial por sucursal">
+    <ChartCard title="Ranking de sucursales" subtitle="Comparativo comercial por sucursal · clic para abrir perfil">
       <div className="overflow-x-auto">
-        <table className="min-w-[900px] w-full text-sm">
+        <table className="min-w-[1000px] w-full text-sm">
           <thead>
             <tr className="text-[10px] uppercase tracking-[0.16em] text-[color:var(--text-3)]">
               <th className="px-3 py-2 text-left">#</th>
@@ -1440,12 +1492,14 @@ function BranchRankingTable({
               <th className="px-3 py-2 text-right">SKUs</th>
               <th className="px-3 py-2 text-right">PVP prom. unidad</th>
               <th className="px-3 py-2 text-right">Part.</th>
+              <th className="px-3 py-2 text-left">Tendencia</th>
               <th className="px-3 py-2 text-left">Peso</th>
             </tr>
           </thead>
           <tbody>
             {report.branch_mix.map((branch, index) => {
               const value = metricValue(branch, mode);
+              const trend = dailyByBranch.get(branch.name) ?? [];
               return (
                 <tr
                   key={branch.name}
@@ -1460,6 +1514,9 @@ function BranchRankingTable({
                   <td className="px-3 py-3 text-right font-mono text-[color:var(--text-2)]">{num(branch.productos)}</td>
                   <td className="px-3 py-3 text-right font-mono text-[color:var(--text-2)]">{money(branch.pvp_promedio)}</td>
                   <td className="px-3 py-3 text-right font-mono text-[color:var(--text-2)]">{branch.participacion_pct.toFixed(1)}%</td>
+                  <td className="px-3 py-3">
+                    <MiniSparkline values={trend} color="var(--chart-blue)" />
+                  </td>
                   <td className="px-3 py-3">
                     <div className="h-2 overflow-hidden rounded-full bg-white/10">
                       <div className="h-full rounded-full bg-[color:var(--chart-blue)]" style={{ width: `${Math.max(4, (value / max) * 100)}%` }} />
