@@ -679,6 +679,61 @@ def _detect_metadata(rows: list[list]) -> dict:
                         meta["cotizacion_dolar"] = v
                         break
 
+    # ── Fallback: hay planillas que arrancan con `N | 2026-05-23 | CASEROS |
+    # Tipo de cambio | 1395` sin un label DIA/FECHA que dispare el camino
+    # principal. Si tras escanear 15 filas no encontramos fecha, hacemos un
+    # segundo pase BUSCANDO un valor de fecha directo en las primeras 3
+    # filas. Tomamos el primer date-like value que aparezca. La sucursal y
+    # cotizacion se intentan agarrar de la misma forma (siguientes celdas
+    # no numericas / numericas respectivamente).
+    if not meta["fecha"]:
+        for row in rows[:3]:
+            non_empty = [(i, c) for i, c in enumerate(row) if c is not None and str(c).strip()]
+            for idx, (_col_i, cell) in enumerate(non_empty):
+                if _is_date_like(cell):
+                    try:
+                        parsed = _parse_date(cell)
+                    except Exception:
+                        parsed = ""
+                    if parsed:
+                        meta["fecha"] = parsed
+                        # Sucursal: primera celda siguiente que NO sea fecha,
+                        # ni un label de tipo cambio / total / similar, ni numerica.
+                        for _, nxt in non_empty[idx + 1 :]:
+                            if _is_date_like(nxt):
+                                continue
+                            nxt_n = _norm(nxt)
+                            if (
+                                not meta["sucursal"]
+                                and nxt_n
+                                and nxt_n not in _DATE_LABELS
+                                and nxt_n not in _NON_SUCURSAL_LABELS
+                                and not any(lbl in nxt_n for lbl in _RATE_LABELS | _SKIP_LABELS)
+                            ):
+                                try:
+                                    float(str(nxt).replace(",", ".").replace(".", "", 1))
+                                except ValueError:
+                                    meta["sucursal"] = str(nxt).strip()
+                                    break
+                        # Cotizacion: primer numero significativo despues del label
+                        # "tipo de cambio" si aparece, o el primer numero > 100 luego
+                        # de la sucursal (heuristica para evitar agarrar cantidades).
+                        if meta["cotizacion_dolar"] is None:
+                            saw_rate_label = False
+                            for _, nxt in non_empty[idx + 1 :]:
+                                nxt_n = _norm(nxt)
+                                if any(lbl in nxt_n for lbl in _RATE_LABELS):
+                                    saw_rate_label = True
+                                    continue
+                                if saw_rate_label:
+                                    v = _parse_num(nxt)
+                                    if v > 0:
+                                        meta["cotizacion_dolar"] = v
+                                        break
+                        break
+            if meta["fecha"]:
+                break
+
     return meta
 
 
