@@ -55,6 +55,26 @@ export const CHART_TOOLTIP_STYLE = {
   fontSize: 12,
   color: '#F1F5F9',
   boxShadow: '0 12px 32px rgba(0,0,0,0.45)',
+  padding: '8px 10px',
+};
+
+// Estilos compartidos para label y items del tooltip — definidos aparte
+// porque `contentStyle` no se propaga a los hijos. Sin estos, Recharts
+// pintaba el "series : value" con gris bajo contraste que no se leia
+// sobre el fondo dark.
+export const CHART_TOOLTIP_LABEL_STYLE = {
+  color: '#F8FAFC',
+  fontWeight: 800,
+  fontSize: 11,
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase' as const,
+  marginBottom: 4,
+};
+
+export const CHART_TOOLTIP_ITEM_STYLE = {
+  color: '#F1F5F9',
+  fontWeight: 600,
+  fontSize: 12,
 };
 
 // ── Format helpers ──────────────────────────────────────────────────────────

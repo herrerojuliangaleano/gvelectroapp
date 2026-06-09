@@ -26,7 +26,8 @@ import type {
   SalesBICommercialReport,
 } from '../types';
 import {
-  CHART_ANIM, CHART_TOOLTIP_STYLE, ChartCard, EmptyChartState, KpiCard, Tabs, cn, money, num,
+  CHART_ANIM, CHART_TOOLTIP_ITEM_STYLE, CHART_TOOLTIP_LABEL_STYLE, CHART_TOOLTIP_STYLE,
+  ChartCard, EmptyChartState, KpiCard, Tabs, cn, money, num,
 } from '../components/SalesBIWidgets';
 
 type CommercialKind = 'brands' | 'lines' | 'branches';
@@ -405,9 +406,14 @@ function DailyArea({
         <Tooltip
           formatter={(value, name) => {
             const isUnits = name === 'unidades' || name === 'Unid. anterior';
-            return isUnits ? `${num(Number(value))} u` : money(Number(value));
+            const label = name === 'unidades' ? 'Unidades' : name === 'PVP' ? 'PVP vendido' : String(name);
+            const formatted = isUnits ? `${num(Number(value))} u` : money(Number(value));
+            return [formatted, label];
           }}
+          labelFormatter={(label) => String(label).toUpperCase()}
           contentStyle={CHART_TOOLTIP_STYLE}
+          labelStyle={CHART_TOOLTIP_LABEL_STYLE}
+          itemStyle={CHART_TOOLTIP_ITEM_STYLE}
         />
         {previousReport && showPvp && (
           <Line
@@ -493,6 +499,9 @@ function RankingBars({
     const name = payload.payload?.name || payload.name;
     if (name) onSelect?.(name);
   };
+  // Label de la metrica que se muestra en el tooltip (Unidades / PVP vendido /
+  // PVP + unidades). Sin esto Recharts caia al dataKey crudo "metric_value".
+  const tooltipMetricLabel = metricLabel(mode);
   return (
     <ResponsiveContainer width="100%" height={300}>
       <BarChart data={rows} layout="vertical" margin={{ top: 8, right: 18, left: 12, bottom: 8 }}>
@@ -500,12 +509,16 @@ function RankingBars({
         <XAxis type="number" hide />
         <YAxis type="category" dataKey="name" width={110} tick={{ fill: '#B8C5DA', fontSize: 11 }} interval={0} />
         <Tooltip
-          formatter={(value) => format(Number(value))}
+          formatter={(value) => [format(Number(value)), tooltipMetricLabel]}
+          labelFormatter={(label) => String(label).toUpperCase()}
           contentStyle={CHART_TOOLTIP_STYLE}
-          cursor={{ fill: 'rgba(255,255,255,0.04)' }}
+          labelStyle={CHART_TOOLTIP_LABEL_STYLE}
+          itemStyle={CHART_TOOLTIP_ITEM_STYLE}
+          cursor={{ fill: 'rgba(96,165,250,0.10)' }}
         />
         <Bar
           dataKey="metric_value"
+          name={tooltipMetricLabel}
           radius={[0, 8, 8, 0]}
           cursor={onSelect ? 'pointer' : 'default'}
           onClick={handleSelect}
@@ -713,7 +726,13 @@ function BrandDetail({
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148,163,184,0.14)" />
               <XAxis dataKey="name" tick={{ fill: '#B8C5DA', fontSize: 10 }} />
               <YAxis hide />
-              <Tooltip formatter={(value) => metricFormatter(mode)(Number(value))} contentStyle={CHART_TOOLTIP_STYLE} />
+              <Tooltip
+                formatter={(value, name) => [metricFormatter(mode)(Number(value)), name]}
+                labelFormatter={(label) => String(label).toUpperCase()}
+                contentStyle={CHART_TOOLTIP_STYLE}
+                labelStyle={CHART_TOOLTIP_LABEL_STYLE}
+                itemStyle={CHART_TOOLTIP_ITEM_STYLE}
+              />
               <Area type="monotone" dataKey={brand.name} stroke="var(--chart-blue)" strokeWidth={2.5} fill="url(#brandTrendFill)" />
             </AreaChart>
           </ResponsiveContainer>
@@ -828,7 +847,13 @@ function LinesDetail({
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148,163,184,0.14)" />
               <XAxis dataKey="name" tick={{ fill: '#B8C5DA', fontSize: 10 }} />
               <YAxis hide />
-              <Tooltip formatter={(value) => metricFormatter(mode)(Number(value))} contentStyle={CHART_TOOLTIP_STYLE} />
+              <Tooltip
+                formatter={(value, name) => [metricFormatter(mode)(Number(value)), name]}
+                labelFormatter={(label) => String(label).toUpperCase()}
+                contentStyle={CHART_TOOLTIP_STYLE}
+                labelStyle={CHART_TOOLTIP_LABEL_STYLE}
+                itemStyle={CHART_TOOLTIP_ITEM_STYLE}
+              />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               {lineNames.map((name, index) => (
                 <Line key={name} type="monotone" dataKey={name} stroke={colorFor(index)} strokeWidth={2.2} dot={false} />
@@ -847,7 +872,13 @@ function LinesDetail({
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148,163,184,0.14)" />
               <XAxis dataKey="name" tick={{ fill: '#B8C5DA', fontSize: 10 }} />
               <YAxis hide />
-              <Tooltip formatter={(value) => metricFormatter(mode)(Number(value))} contentStyle={CHART_TOOLTIP_STYLE} />
+              <Tooltip
+                formatter={(value, name) => [metricFormatter(mode)(Number(value)), name]}
+                labelFormatter={(label) => String(label).toUpperCase()}
+                contentStyle={CHART_TOOLTIP_STYLE}
+                labelStyle={CHART_TOOLTIP_LABEL_STYLE}
+                itemStyle={CHART_TOOLTIP_ITEM_STYLE}
+              />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               {lineNames.map((name, index) => (
                 <Bar key={name} dataKey={name} stackId="lineas" fill={colorFor(index)} radius={index === lineNames.length - 1 ? [6, 6, 0, 0] : [0, 0, 0, 0]} />
@@ -996,7 +1027,13 @@ function BranchDetail({
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148,163,184,0.14)" />
               <XAxis dataKey="name" tick={{ fill: '#B8C5DA', fontSize: 10 }} />
               <YAxis hide />
-              <Tooltip formatter={(value) => metricFormatter(mode)(Number(value))} contentStyle={CHART_TOOLTIP_STYLE} />
+              <Tooltip
+                formatter={(value, name) => [metricFormatter(mode)(Number(value)), name]}
+                labelFormatter={(label) => String(label).toUpperCase()}
+                contentStyle={CHART_TOOLTIP_STYLE}
+                labelStyle={CHART_TOOLTIP_LABEL_STYLE}
+                itemStyle={CHART_TOOLTIP_ITEM_STYLE}
+              />
               <Area type="monotone" dataKey={branch.name} stroke="var(--chart-teal)" strokeWidth={2.5} fill="url(#branchTrendFill)" />
             </AreaChart>
           </ResponsiveContainer>
@@ -1892,7 +1929,13 @@ function CompareDashboard({
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148,163,184,0.14)" />
               <XAxis dataKey="name" tick={{ fill: '#B8C5DA', fontSize: 10 }} />
               <YAxis hide />
-              <Tooltip formatter={(value) => metricFormatter(mode)(Number(value))} contentStyle={CHART_TOOLTIP_STYLE} />
+              <Tooltip
+                formatter={(value, name) => [metricFormatter(mode)(Number(value)), name]}
+                labelFormatter={(label) => String(label).toUpperCase()}
+                contentStyle={CHART_TOOLTIP_STYLE}
+                labelStyle={CHART_TOOLTIP_LABEL_STYLE}
+                itemStyle={CHART_TOOLTIP_ITEM_STYLE}
+              />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <Bar dataKey="A" name={brandA.name} fill="var(--chart-blue)" radius={[6, 6, 0, 0]} />
               <Bar dataKey="B" name={brandB.name} fill="var(--chart-violet)" radius={[6, 6, 0, 0]} />
@@ -2118,7 +2161,13 @@ function PeriodsDashboard({
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148,163,184,0.14)" />
             <XAxis dataKey="dia" tick={{ fill: '#B8C5DA', fontSize: 11 }} />
             <YAxis hide />
-            <Tooltip formatter={(value) => metricFormatter(mode)(Number(value))} contentStyle={CHART_TOOLTIP_STYLE} />
+            <Tooltip
+              formatter={(value, name) => [metricFormatter(mode)(Number(value)), name]}
+              labelFormatter={(label) => `Dia ${label}`}
+              contentStyle={CHART_TOOLTIP_STYLE}
+              labelStyle={CHART_TOOLTIP_LABEL_STYLE}
+              itemStyle={CHART_TOOLTIP_ITEM_STYLE}
+            />
             <Legend wrapperStyle={{ fontSize: 11 }} />
             <Line type="monotone" dataKey="actual" name="Actual" stroke="var(--chart-blue)" strokeWidth={2.5} dot={false} />
             <Line type="monotone" dataKey="anterior" name="Anterior" stroke="var(--chart-ghost)" strokeWidth={2} strokeDasharray="5 5" dot={false} />
