@@ -532,6 +532,8 @@ def _commercial_rows(
     marcas: list[str] | str | None = None,
     tipo_producto: str | None = None,
     tipos: list[str] | str | None = None,
+    categoria: str | None = None,
+    categorias: list[str] | str | None = None,
 ) -> tuple[list[SalesBICommercialRecord], tuple[date, date]]:
     fd, fh = _date_bounds(fecha_desde, fecha_hasta)
     filters: list[Any] = [
@@ -552,10 +554,36 @@ def _commercial_rows(
         filters.append(SalesBICommercialRecord.marca == marca)
     elif marcas_list:
         filters.append(SalesBICommercialRecord.marca.in_(marcas_list))
+    # Filtro de "línea": el dashboard manda categoría (LINEA BLANCA, COCINA,
+    # …) pero el contrato viejo usaba `tipo_producto` con el granular
+    # (HELADERA, LAVARROPAS). Si el valor recibido matchea uno de los 5
+    # buckets de categoría, lo redirigimos a la columna `categoria`. Eso
+    # mantiene back-compat con clientes que ya mandaban tipo_producto
+    # granular y agrega soporte transparente para el dropdown nuevo.
+    _CATEGORIAS_VALIDAS = {"LINEA BLANCA", "COCINA", "CLIMATIZACION", "TV / AUDIO", "PEQUENOS", "OTROS"}
+    categorias_list = _parse_csv_list(categorias)
+    if categoria and not categorias_list:
+        filters.append(SalesBICommercialRecord.categoria == categoria)
+    elif categorias_list:
+        filters.append(SalesBICommercialRecord.categoria.in_(categorias_list))
+
     if tipo_producto and not tipos_list:
-        filters.append(SalesBICommercialRecord.tipo_producto == tipo_producto)
+        if tipo_producto in _CATEGORIAS_VALIDAS:
+            filters.append(SalesBICommercialRecord.categoria == tipo_producto)
+        else:
+            filters.append(SalesBICommercialRecord.tipo_producto == tipo_producto)
     elif tipos_list:
-        filters.append(SalesBICommercialRecord.tipo_producto.in_(tipos_list))
+        cats_in_list = [t for t in tipos_list if t in _CATEGORIAS_VALIDAS]
+        tipos_only = [t for t in tipos_list if t not in _CATEGORIAS_VALIDAS]
+        if cats_in_list and tipos_only:
+            filters.append(or_(
+                SalesBICommercialRecord.categoria.in_(cats_in_list),
+                SalesBICommercialRecord.tipo_producto.in_(tipos_only),
+            ))
+        elif cats_in_list:
+            filters.append(SalesBICommercialRecord.categoria.in_(cats_in_list))
+        else:
+            filters.append(SalesBICommercialRecord.tipo_producto.in_(tipos_only))
     if empresa:
         filters.append(
             SalesBICommercialRecord.branch_id.in_(
@@ -1195,6 +1223,16 @@ def get_commercial_options() -> dict[str, Any]:
             .distinct()
             .order_by(SalesBICommercialRecord.tipo_producto)
         ).all()
+        # Categorias (5 buckets + OTROS) — orden fijo para que el dropdown
+        # siempre las muestre igual. Solo incluimos las que tienen datos.
+        present_categorias = set(session.scalars(
+            select(SalesBICommercialRecord.categoria)
+            .join(SalesBICommercialBatch, SalesBICommercialBatch.id == SalesBICommercialRecord.batch_id)
+            .where(SalesBICommercialBatch.status == "activo", SalesBICommercialRecord.categoria != "")
+            .distinct()
+        ).all())
+        _CAT_ORDER = ["LINEA BLANCA", "COCINA", "CLIMATIZACION", "TV / AUDIO", "PEQUENOS", "OTROS"]
+        categorias = [c for c in _CAT_ORDER if c in present_categorias]
         sucursales = session.scalars(
             select(SalesBICommercialRecord.sucursal)
             .join(SalesBICommercialBatch, SalesBICommercialBatch.id == SalesBICommercialRecord.batch_id)
@@ -1208,6 +1246,9 @@ def get_commercial_options() -> dict[str, Any]:
         "period_end": _fmt_date(rows[1]),
         "marcas": [str(v) for v in marcas],
         "tipos": [str(v) for v in tipos],
+        # `categorias` = 5 buckets + OTROS, en el orden canonico. Es lo que
+        # el dropdown "Linea" del dashboard usa por default.
+        "categorias": categorias,
         "sucursales": [str(v) for v in sucursales],
         "empresas": [{"id": str(e.id), "name": str(e.name or e.id)} for e in empresas],
         "tipo_ventas": ["local", "online"],

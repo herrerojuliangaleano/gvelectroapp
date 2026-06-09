@@ -833,7 +833,12 @@ export interface SalesBICommercialOptions {
   period_start: string;
   period_end: string;
   marcas: string[];
+  /** Tipo_producto granular (HELADERA, LAVARROPAS, MICROONDAS, ...). */
   tipos: string[];
+  /** Categorias comerciales (5 buckets + OTROS). Es lo que el dropdown
+   *  "Linea" del dashboard usa por default. Puede no estar en respuestas
+   *  viejas — caer al list de `tipos`. */
+  categorias?: string[];
   sucursales: string[];
   empresas: SalesBIEmpresaOption[];
   tipo_ventas: string[];

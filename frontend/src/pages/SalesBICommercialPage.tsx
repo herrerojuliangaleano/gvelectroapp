@@ -2663,7 +2663,7 @@ export function SalesBICommercialPage() {
           <Field label="Sucursal"><select value={sucursal} onChange={(event) => setSucursal(event.target.value)} className={inputClass}><option value="">Todas</option>{options?.sucursales.map((value) => <option key={value} value={value}>{value}</option>)}</select></Field>
           <Field label="Tipo venta"><select value={tipoVenta} onChange={(event) => setTipoVenta(event.target.value)} className={inputClass}><option value="">Local + online</option><option value="local">Local</option><option value="online">Online</option></select></Field>
           <Field label="Marca"><select value={marca} onChange={(event) => setMarca(event.target.value)} className={inputClass}><option value="">Todas</option>{options?.marcas.map((value) => <option key={value} value={value}>{value}</option>)}</select></Field>
-          <Field label="Linea"><select value={linea} onChange={(event) => setLinea(event.target.value)} className={inputClass}><option value="">Todas</option>{options?.tipos.map((value) => <option key={value} value={value}>{value}</option>)}</select></Field>
+          <Field label="Linea"><select value={linea} onChange={(event) => setLinea(event.target.value)} className={inputClass}><option value="">Todas</option>{(options?.categorias ?? options?.tipos ?? []).map((value) => <option key={value} value={value}>{value}</option>)}</select></Field>
         </div>
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex flex-wrap gap-1.5">
