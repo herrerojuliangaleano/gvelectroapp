@@ -7,11 +7,12 @@
 > **Audiencia**: Victor (CEO ElectroGV), equipo tecnico de Puma Software,
 > consultores externos. Asume vocabulario tecnico medio-alto.
 >
-> **Fecha**: 2026-06-09 · **Version doc**: 0.4 — agregado el
-> caso "Buscar AFIP" como necesidad P0 desde Fase 2 (lookup
-> fiscal por DNI/CUIT a traves de Puma como proxy hacia AFIP).
-> Esto es el primer caso real donde la integracion API es
-> **obligatoria desde el dia 1**, no diferible.
+> **Fecha**: 2026-06-09 · **Version doc**: 0.5 — **decision
+> arquitectonica tomada**: la integracion se hace por **tabla
+> intermedia (outbox) en MI Postgres** que Puma consume como
+> cliente read-only. Es la Opcion E (nueva) — ni escritura directa
+> al schema de Puma, ni API REST de Puma. Ver §3.5 y doc 14 para
+> el schema completo de la tabla.
 
 ---
 
@@ -513,6 +514,90 @@ sin sacrificar integridad de escritura. Es lo que hace, por ejemplo,
 Shopify POS con su back-office, o cualquier app movil bancaria
 contra el core legacy.
 
+### 3.4.bis Opcion E — Tabla intermedia (outbox) en mi Postgres ⭐ DECIDIDA
+
+**Que es**: la app escribe las prefacturas en una tabla
+**`puma_outbox_prefacturas`** que vive en MI Postgres (de
+gvelectroapp). Puma se conecta como cliente **read-only** a esa
+tabla y consume las prefacturas pendientes para crearlas en su
+sistema. La tabla actua como un **buzon / outbox** desacoplado del
+schema interno de ambos sistemas.
+
+**Diagrama**:
+
+```
+[Mobile / Web app]
+        |
+        ↓ HTTPS
+[gvelectroapp backend]
+        |
+        ↓ INSERT
+┌────────────────────────────────────────┐
+│  Postgres de gvelectroapp              │
+│  ├─ tablas internas (sales_web, ...)   │
+│  └─ puma_outbox_prefacturas  ←──┐      │
+└─────────────────────────────────│──────┘
+                                  │
+                       SELECT     │ UPDATE estado
+                       only       │ only
+                                  │
+                          [Puma ERP]
+```
+
+**Pros**:
+
+- ✅ **Decision ya tomada** con el equipo Puma — no hay que
+  negociar mas.
+- ✅ **Desacoplado del schema interno** de ambos sistemas. La
+  tabla intermedia es el contrato.
+- ✅ **No requiere que Puma desarrolle API REST** — solo SQL
+  basico (SELECT con filtro por estado).
+- ✅ **No requiere que yo lea el schema de Puma** — Puma es una
+  caja negra.
+- ✅ **Idempotencia natural** via `external_id UNIQUE` en la
+  tabla.
+- ✅ **Auditoria nativa** — todo queda en la fila (timestamps,
+  intentos, errores).
+- ✅ **Permisos finos**: Puma solo puede SELECT toda la fila +
+  UPDATE en columnas de estado (no toca el payload).
+- ✅ **Yo controlo el schema y los cambios** — versionado en
+  Alembic, parte de mi repo.
+- ✅ **Backups automaticos** ya cubren la tabla (volume
+  `electrogv-pgdata` esta en el ciclo de pg_dump nocturno).
+- ✅ Si en el futuro cambiamos Puma por otro ERP, solo cambia
+  quien lee la tabla — la app no se reescribe.
+
+**Contras**:
+
+- ⚠️ **Acoplamiento por SQL** sigue existiendo — si yo cambio
+  columnas de la tabla, Puma se rompe. Mitigacion: versionar el
+  schema (`puma_outbox_prefacturas_v1`, `_v2`).
+- ⚠️ **Sin push notification nativo**: Puma tiene que hacer
+  polling (cada X seg) o usar LISTEN/NOTIFY. Esto define
+  latencia. **Por decidir**.
+- ⚠️ **Devolucion de estado en una sola via**: la app escribe,
+  Puma actualiza estado. Si Puma necesita devolver mas
+  informacion (numero de factura emitida, errores complejos),
+  hay que extender la tabla o agregar una segunda outbox de
+  retorno.
+- ⚠️ **Necesita usuario Puma con permisos en mi Postgres**: hay
+  que crearlo, gestionar password rotation, exponer el puerto
+  (LAN o VPN — NUNCA Internet abierto).
+- ⚠️ **El "Buscar AFIP"** (§4.2) no se resuelve por esta vía —
+  ese sigue necesitando una **API HTTP de Puma** dedicada (es
+  request/response sincrono, no fire-and-forget). La tabla
+  intermedia solo cubre el flujo asincrono "crear prefactura".
+
+**Veredicto**: **OPCION DECIDIDA**. Pros muy superan los contras.
+El schema completo de la tabla esta en
+[**doc 14 — Tabla intermedia Puma**](./14-tabla-intermedia-puma.md).
+
+> **Excepcion**: el endpoint `/api/v1/afip/lookup` ("Buscar AFIP")
+> NO se puede resolver por tabla intermedia porque es sincrono
+> request/response. Sigue siendo necesario que Puma exponga ese
+> endpoint HTTP. Es **el unico** endpoint API que se sigue
+> negociando.
+
 ### 3.4 Opcion D — Sin integracion, doble carga "optimizada"
 
 **Que es**: la app NO se conecta con Puma. El vendedor arma el
@@ -537,23 +622,24 @@ inversion en integracion. No es solucion final.
 
 ### 3.5 Matriz comparativa
 
-| Criterio                       | A (Direct DB) | B (API only) | C (Hibrido) | D (Sin integ.) |
-|--------------------------------|:-------------:|:------------:|:-----------:|:--------------:|
-| Time-to-market                 | ⭐⭐⭐          | ⭐⭐           | ⭐⭐          | ⭐⭐⭐⭐           |
-| Velocidad lectura (UX)         | ⭐⭐⭐⭐         | ⭐⭐           | ⭐⭐⭐⭐         | ⭐⭐⭐            |
-| Integridad contable            | ⭐             | ⭐⭐⭐⭐         | ⭐⭐⭐⭐         | ⭐⭐⭐⭐           |
-| Resiliencia a caidas Puma      | ⭐             | ⭐⭐           | ⭐⭐⭐          | ⭐⭐⭐⭐           |
-| Soporte de Puma                | ⭐             | ⭐⭐⭐⭐         | ⭐⭐⭐⭐         | ⭐⭐⭐⭐           |
-| Riesgo legal/fiscal            | ⭐             | ⭐⭐⭐⭐         | ⭐⭐⭐⭐         | ⭐⭐⭐⭐           |
-| Costo de mantenimiento         | ⭐             | ⭐⭐⭐          | ⭐⭐⭐          | ⭐⭐⭐⭐           |
-| Costo de desarrollo (Puma)     | ⭐⭐⭐⭐         | ⭐⭐           | ⭐⭐           | ⭐⭐⭐⭐           |
-| Costo de desarrollo (nuestro) | ⭐⭐           | ⭐⭐⭐          | ⭐⭐          | ⭐⭐⭐            |
-| Portabilidad (cambiar ERP)    | ⭐             | ⭐⭐⭐⭐         | ⭐⭐⭐          | ⭐⭐⭐⭐           |
-| **TOTAL (sobre 40)**           | **18**        | **30**       | **32**      | **34**         |
+| Criterio                       | A (Direct DB) | B (API only) | C (Hibrido) | D (Sin integ.) | **E (Outbox)** |
+|--------------------------------|:-------------:|:------------:|:-----------:|:--------------:|:-------------:|
+| Time-to-market                 | ⭐⭐⭐          | ⭐⭐           | ⭐⭐          | ⭐⭐⭐⭐           | ⭐⭐⭐⭐          |
+| Velocidad lectura (UX)         | ⭐⭐⭐⭐         | ⭐⭐           | ⭐⭐⭐⭐         | ⭐⭐⭐            | ⭐⭐⭐           |
+| Integridad contable            | ⭐             | ⭐⭐⭐⭐         | ⭐⭐⭐⭐         | ⭐⭐⭐⭐           | ⭐⭐⭐⭐          |
+| Resiliencia a caidas Puma      | ⭐             | ⭐⭐           | ⭐⭐⭐          | ⭐⭐⭐⭐           | ⭐⭐⭐⭐          |
+| Soporte de Puma                | ⭐             | ⭐⭐⭐⭐         | ⭐⭐⭐⭐         | ⭐⭐⭐⭐           | ⭐⭐⭐           |
+| Riesgo legal/fiscal            | ⭐             | ⭐⭐⭐⭐         | ⭐⭐⭐⭐         | ⭐⭐⭐⭐           | ⭐⭐⭐⭐          |
+| Costo de mantenimiento         | ⭐             | ⭐⭐⭐          | ⭐⭐⭐          | ⭐⭐⭐⭐           | ⭐⭐⭐           |
+| Costo de desarrollo (Puma)     | ⭐⭐⭐⭐         | ⭐⭐           | ⭐⭐           | ⭐⭐⭐⭐           | ⭐⭐⭐⭐          |
+| Costo de desarrollo (nuestro) | ⭐⭐           | ⭐⭐⭐          | ⭐⭐          | ⭐⭐⭐            | ⭐⭐⭐           |
+| Portabilidad (cambiar ERP)    | ⭐             | ⭐⭐⭐⭐         | ⭐⭐⭐          | ⭐⭐⭐⭐           | ⭐⭐⭐⭐          |
+| **TOTAL (sobre 40)**           | **18**        | **30**       | **32**      | **34**         | **35** ⭐      |
 
-> **Sobre el total**: D gana en numeros porque "no hace nada riesgoso",
-> pero **no resuelve el problema operativo**. La decision real es
-> entre B y C. Recomiendo C.
+> **Decision tomada (post-meet 2026-06-09)**: **Opcion E** (tabla
+> intermedia outbox en mi Postgres). Gana en la matriz y es la que
+> Puma propuso/acepto. El unico componente API que sobrevive es
+> "Buscar AFIP" (§4.2) — el resto del flujo va por la outbox.
 
 ---
 
@@ -946,25 +1032,39 @@ intacta en Puma.
 > de eliminar). Si esto pasa, mueve el endpoint AFIP a Fase 1.5
 > intermedia y manten Fase 2 vendible internamente.
 
-### Fase 3 — Escritura de prefacturas via API (6 semanas)
+### Fase 3 — Tabla intermedia outbox (4-5 semanas) ⭐ DECIDIDA
 
-- ⬜ Puma expone `POST /api/v1/prefacturas` y endpoints relacionados.
-- ⬜ La app envia prefacturas directamente a Puma (sin transcripcion
-  manual del cajero).
-- ⬜ Integracion bidireccional con `Idempotency-Key`.
-- ⬜ Cola de reintentos para escrituras fallidas.
-- ⬜ Webhook de Puma → app cuando una prefactura se emite
-  (notificacion + PDF + CAE para mostrar al vendedor).
+- ⬜ Migracion Alembic: crear tabla `puma_outbox_prefacturas`
+  segun schema en doc 14.
+- ⬜ Usuario Postgres `puma_reader` con permisos minimos
+  (SELECT + UPDATE de columnas de estado).
+- ⬜ Endpoint backend `POST /api/sales-web/requests/:id/send-to-puma`
+  que inserta la prefactura en la outbox (con `external_id =
+  numero_solicitud`).
+- ⬜ Modelo SQLAlchemy + schema Pydantic para la tabla outbox.
+- ⬜ Indice + Alembic migration con downgrade testeada.
+- ⬜ Test de integracion: insertar → simular Puma leyendo →
+  actualizar estado → verificar callback.
+- ⬜ Documentar credenciales y red (VPN o LAN para Puma → mi
+  Postgres).
+- ⬜ Dashboard interno "Estado outbox": cuantas pendientes,
+  cuantas en error, ultimo procesamiento. Util para diagnostico.
+- ⬜ Notificacion al vendedor cuando la prefactura cambia de
+  estado (push o badge).
 
-**Hito Fase 3**: la prefactura nace en mobile, llega a Puma sin
-intervencion manual, y queda en Caja Recaudadora lista para emitir.
-La emision sigue en manos del cajero pero el flujo administrativo
-ya no requiere doble carga.
+**Hito Fase 3**: la prefactura nace en mobile, se inserta en mi
+outbox, Puma la consume cuando puede, y queda en Caja Recaudadora
+lista para emitir. **Cero doble carga manual**.
 
 ### Fase 3.5 — Emision desde mobile (opcional, 2-3 semanas)
 
-- ⬜ Botón "Emitir" en mobile que dispara
-  `POST /prefacturas/:id/emit`.
+> **Esta fase queda condicionada** a que Puma exponga el endpoint
+> HTTP `POST /api/v1/prefacturas/:id/emit`. La tabla intermedia
+> NO sirve para esto porque la emision es sincrona (necesita
+> response inmediata con CAE).
+
+- ⬜ Puma expone HTTP `POST /api/v1/prefacturas/:id/emit`.
+- ⬜ Botón "Emitir" en mobile que lo dispara.
 - ⬜ UX para el caso AFIP caido (estado pendiente_cae + reintentos).
 - ⬜ Mostrar CAE + numero definitivo + link al PDF en la pantalla
   de detalle.
@@ -1206,7 +1306,10 @@ documento entero **mas** estos puntos como pregunta especifica:
       emite factura. La emision es paso 7 separado en Caja
       Recaudadora → **v0.3**.
 - [x] "Buscar AFIP" como necesidad P0 desde Fase 2: la app movil
-      delega el lookup fiscal a Puma → **v0.4** (este doc).
+      delega el lookup fiscal a Puma → **v0.4**.
+- [x] **Decision arquitectonica: Opcion E** (tabla intermedia outbox
+      en mi Postgres, Puma lee como read-only). Schema en doc 14.
+      → **v0.5** (este doc).
 - [ ] Compartir este doc al equipo Puma 48h antes de la reunion para
       que vengan con respuestas a §7 (especialmente preguntas 22-28
       sobre modelo de prefactura, 28a-f sobre Buscar AFIP, y 29-33

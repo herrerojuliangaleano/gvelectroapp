@@ -108,6 +108,48 @@ services:
       postgres:
         condition: service_healthy
 
+  # ──────────────────────────────────────────────────────────────────
+  # pgAdmin — interfaz grafica completa para PostgreSQL.
+  # No arranca con `docker compose up` normal; se levanta con profile:
+  #
+  #   docker compose --profile tools up -d pgadmin
+  #
+  # Se accede en http://localhost:5050
+  #
+  # Credenciales:
+  #   email:    admin@example.com
+  #   password: electrogv
+  #
+  # Conexiones precargadas (via infra/pgadmin/servers.json):
+  #   - ElectroGV Dev (:5432)         → DB electrogv_dev
+  #   - ElectroGV Prod-Local (:5433)  → DB electrogv
+  #
+  # La password de los Postgres NO viene precargada — la tipeas la
+  # primera vez que conectas y pgAdmin la recuerda en su volumen.
+  # ──────────────────────────────────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: electrogv-pgadmin
+    restart: unless-stopped
+    profiles: ["tools"]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: electrogv
+      PGADMIN_LISTEN_PORT: 5050
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "127.0.0.1:5050:5050"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+      - ./infra/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    extra_hosts:
+      # Necesario en Linux para que host.docker.internal resuelva al host.
+      # En Windows/Mac, Docker Desktop ya lo provee.
+      - "host.docker.internal:host-gateway"
+
 volumes:
   pgdata:
     name: electrogv-pgdata
+  pgadmin-data:
+    name: electrogv-pgadmin-data

@@ -1,0 +1,24 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "ElectroGV Dev (:5432)",
+      "Group": "ElectroGV",
+      "Host": "host.docker.internal",
+      "Port": 5432,
+      "MaintenanceDB": "electrogv_dev",
+      "Username": "electrogv",
+      "SSLMode": "prefer",
+      "Comment": "Postgres de desarrollo. Database: electrogv_dev. User: electrogv. Password por env del compose."
+    },
+    "2": {
+      "Name": "ElectroGV Prod-Local (:5433)",
+      "Group": "ElectroGV",
+      "Host": "host.docker.internal",
+      "Port": 5433,
+      "MaintenanceDB": "electrogv",
+      "Username": "electrogv",
+      "SSLMode": "prefer",
+      "Comment": "Postgres de produccion local (mini-prod, antes del VPS). Database: electrogv. User: electrogv. Password en backend/.env.production.local."
+    }
+  }
+}

@@ -36,10 +36,40 @@ Archivos de configuracion relacionados:
 | Backend host | `localhost:8000` | `localhost:8010` |
 | Postgres host | `localhost:5432` | `localhost:5433` |
 | Adminer | `localhost:8080` | `localhost:8081` |
+| pgAdmin (opcional) | `localhost:5050` (ve los dos) | — |
 | DB | `electrogv_dev` | `electrogv` |
 | Storage host | `backend/storage/` | `backend/storage-prod/` |
 | Backups host | `backend/backups/` | `backend/backups-prod/` |
 | Volumen Docker | `electrogv-pgdata` | `electrogv-prod-pgdata-local` |
+
+### pgAdmin (alternativa mas completa a Adminer)
+
+Para trabajo "en serio" (modelar schemas, debuggear queries
+lentos, ver triggers, etc.) hay un servicio **pgAdmin** opcional
+en el compose principal:
+
+```bash
+docker compose --profile tools up -d pgadmin
+```
+
+Acceso: <http://localhost:5050>
+
+- Email login: `admin@example.com`
+- Password login: `electrogv`
+
+Las dos conexiones (dev :5432 + prod-local :5433) **vienen
+precargadas** via `infra/pgadmin/servers.json`. Solo hay que
+tipear la password del Postgres la primera vez (queda guardada en
+el volumen `electrogv-pgdata-pgadmin`).
+
+Para apagar: `docker compose --profile tools down pgadmin`. El
+volumen sobrevive para no perder las conexiones guardadas.
+
+Cuando usar Adminer vs pgAdmin:
+- **Adminer (8080/8081)**: consulta rapida, edit puntual de filas.
+- **pgAdmin (5050)**: modelado de schema, performance, triggers,
+  scripts SQL largos, comparacion entre dev y prod-local en una
+  misma sesion.
 
 ## Puesta en marcha
 
