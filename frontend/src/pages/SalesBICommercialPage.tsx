@@ -650,8 +650,11 @@ function LinesDetail({
   // un .map sobre undefined explota y como la app no tiene ErrorBoundary,
   // se cae toda la pantalla.
   const branchRows = (report.branch_line_matrix || [])
-    .map((row) => matrixItem(row, line?.name || ''))
-    .filter(Boolean) as SalesBICommercialMix[];
+    .map((row) => {
+      const item = matrixItem(row, line?.name || '');
+      return item ? { ...item, name: row.name } : null;
+    })
+    .filter((row): row is SalesBICommercialMix => Boolean(row));
   const leaders = report.brands_by_line?.find((row) => row.line === line?.name)?.leaders || [];
   const lineNames = (report.line_mix || []).slice(0, 6).map((row) => row.name);
   const lineTrend = matrixSeriesRows(report.date_line_matrix, lineNames, mode);
