@@ -379,54 +379,51 @@ export function ConsultaPreciosPage() {
   const showingResults = q.trim().length > 0;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 antialiased -mx-6 -my-6">
-      {/* ===== HEADER =====
-          NOTA: usamos bg opaco (sin transparency / backdrop-blur) porque en
-          Chrome Android los headers sticky con `bg-X/85 backdrop-blur` +
-          scroll generan artefactos de pintado horribles ("ghosts" del
-          contenido anterior). Trade-off acceptable: se pierde el efecto
-          glass pero la pantalla deja de "buguearse" al scrollear. */}
-      <header className="sticky top-0 z-30 bg-slate-950 border-b border-slate-800/80">
-        <div className="mx-auto w-full max-w-7xl px-4 lg:px-8 pt-4 pb-3">
-          <div className="flex items-center justify-between mb-3 gap-3">
-            <div className="min-w-0">
-              <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500 font-bold">
-                ElectroGV
-              </div>
-              <h1 className="text-[19px] lg:text-[22px] font-black tracking-tight leading-tight text-slate-50">
-                Consulta de precios
-              </h1>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <HistoryControls history={history} />
-              <button
-                onClick={() => setShortcutsOpen(true)}
-                title="Atajos de teclado (?)"
-                className="hidden lg:inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-slate-700/80 bg-slate-900/70 hover:bg-slate-800/80 text-slate-300 text-xs font-semibold transition"
-              >
-                <Keyboard className="size-3.5" />
-                Atajos
-              </button>
-              <FavCount n={favList.length} />
-            </div>
+    <div className="text-slate-100">
+      {/* ===== HEADER ESTATICO =====
+          NO usamos sticky. La pantalla vive dentro de <main className=
+          "erp-content"> del AppLayout que tiene su propio scroll mas un
+          bottom-nav fijo. Combinar sticky + backdrop-blur + un wrapper
+          que extiende el bg causaba bugs de compositing en Chrome Android
+          (ghosts, chips duplicados al scrollear). El header simple + scroll
+          natural elimina el problema. */}
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="min-w-0">
+          <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500 font-bold">
+            ElectroGV
           </div>
-
-          <div className="lg:max-w-2xl">
-            <SearchInput
-              ref={searchRef}
-              value={q}
-              onChange={setQ}
-              searching={searching}
-              placeholder="Buscar producto, marca o código…  (Ctrl+K)"
-              onEnter={() => { if (results.length > 0) addToBudget(results[0].sku); }}
-            />
-          </div>
+          <h1 className="text-[19px] lg:text-[22px] font-black tracking-tight leading-tight text-slate-50">
+            Consulta de precios
+          </h1>
         </div>
-      </header>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <HistoryControls history={history} />
+          <button
+            onClick={() => setShortcutsOpen(true)}
+            title="Atajos de teclado (?)"
+            className="hidden lg:inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-slate-700/80 bg-slate-900/70 text-slate-300 text-xs font-semibold"
+          >
+            <Keyboard className="size-3.5" />
+            Atajos
+          </button>
+          <FavCount n={favList.length} />
+        </div>
+      </div>
+
+      <div className="lg:max-w-2xl mb-5">
+        <SearchInput
+          ref={searchRef}
+          value={q}
+          onChange={setQ}
+          searching={searching}
+          placeholder="Buscar producto, marca o código…  (Ctrl+K)"
+          onEnter={() => { if (results.length > 0) addToBudget(results[0].sku); }}
+        />
+      </div>
 
       {/* ===== BODY ===== */}
-      <div className="mx-auto w-full max-w-7xl px-4 lg:px-8 lg:grid lg:grid-cols-[minmax(0,1fr)_420px] lg:gap-8 lg:items-start">
-        <main className="pb-40 lg:pb-12 pt-4">
+      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_420px] lg:gap-8 lg:items-start">
+        <main className="pb-24 lg:pb-12">
           {!showingResults && favList.length > 0 && (
             <section className="mb-5">
               <SectionLabel
@@ -702,23 +699,26 @@ function TypeChips({
   items: BudgetTypeInfo[];
   onPick: (tipo: string) => void;
 }) {
+  // NO usamos transitions ni hover/active animations. En Chrome Android
+  // con muchos elementos y scroll, las transitions disparan repaints que
+  // generan artefactos de compositing. Mejor un look estatico y fluido.
   return (
     <ul className="grid grid-cols-2 sm:grid-cols-3 gap-2">
       {items.map((t) => (
         <li key={t.tipo}>
           <button
             onClick={() => onPick(t.tipo)}
-            className="group w-full flex items-center justify-between gap-2 rounded-xl bg-slate-900/70 border border-slate-700/80 hover:border-indigo-500/60 hover:bg-slate-900 active:scale-[0.98] transition px-3.5 py-3 text-left"
+            className="w-full flex items-center justify-between gap-2 rounded-xl bg-slate-900 border border-slate-700 px-3.5 py-3 text-left"
           >
             <div className="min-w-0 flex-1">
-              <div className="text-[14px] font-bold text-slate-100 truncate group-hover:text-indigo-200 transition">
+              <div className="text-[14px] font-bold text-slate-100 truncate">
                 {humanizeType(t.tipo)}
               </div>
               <div className="text-[11px] tabular-nums text-slate-500 mt-0.5">
                 {t.count} {t.count === 1 ? 'modelo' : 'modelos'}
               </div>
             </div>
-            <Tag className="size-4 text-slate-600 group-hover:text-indigo-400 transition shrink-0" />
+            <Tag className="size-4 text-slate-600 shrink-0" />
           </button>
         </li>
       ))}
@@ -727,12 +727,14 @@ function TypeChips({
 }
 
 function TypeChipsSkeleton() {
+  // SIN `animate-pulse` para no contribuir a artefactos de pintado.
+  // Es estatico pero suficiente para indicar "cargando".
   return (
     <ul className="grid grid-cols-2 sm:grid-cols-3 gap-2">
       {[1, 2, 3, 4, 5, 6].map((i) => (
-        <li key={i} className="rounded-xl bg-slate-900/50 border border-slate-700/50 px-3.5 py-3 animate-pulse">
-          <div className="h-4 w-3/4 rounded bg-slate-700/50 mb-2" />
-          <div className="h-3 w-1/2 rounded bg-slate-700/50" />
+        <li key={i} className="rounded-xl bg-slate-900 border border-slate-800 px-3.5 py-3">
+          <div className="h-4 w-3/4 rounded bg-slate-800 mb-2" />
+          <div className="h-3 w-1/2 rounded bg-slate-800" />
         </li>
       ))}
     </ul>
