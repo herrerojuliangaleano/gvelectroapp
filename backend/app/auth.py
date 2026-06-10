@@ -26,8 +26,16 @@ def _unb64(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
 
 
-def create_token(user: CurrentUser | str, hours: int = 12) -> str:
+def create_token(user: CurrentUser | str, hours: int | None = None) -> str:
+    """Genera un JWT propio para el usuario.
+
+    Si `hours` es None, usa `settings.auth_token_hours` (default 30 dias).
+    Pasar `hours` explicito es solo para casos especiales (ej. token de
+    un solo uso para un flujo puntual).
+    """
     settings = get_settings()
+    if hours is None:
+        hours = settings.auth_token_hours
     username = user.username if isinstance(user, CurrentUser) else str(user)
     payload = {
         "sub": username,

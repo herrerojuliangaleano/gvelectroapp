@@ -1,15 +1,29 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BRANDS } from '../brand';
 import { BrandLogo } from '../components/BrandLogo';
-import { login, setSession } from '../api/client';
+import { login, setSession, getLastUsername } from '../api/client';
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const [username, setUsername] = useState('admin');
+  // Pre-cargamos el username del ultimo login para que el usuario solo
+  // tenga que tipear la password. Si nunca se logueo en este browser,
+  // arranca vacio.
+  const [username, setUsername] = useState(() => getLastUsername());
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const usernameRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+
+  // Foco inteligente: si hay username pre-cargado, foco en password;
+  // si no, foco en username.
+  useEffect(() => {
+    if (username) passwordRef.current?.focus();
+    else usernameRef.current?.focus();
+    // Solo al montar; no queremos re-focar cada vez que cambia el username.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -61,11 +75,26 @@ export function LoginPage() {
           {error && <div className="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>}
           <label className="mb-4 block">
             <span className="mb-2 block text-sm font-semibold text-slate-300">Usuario</span>
-            <input value={username} onChange={(e) => setUsername(e.target.value)} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10" />
+            <input
+              ref={usernameRef}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoComplete="username"
+              autoCapitalize="off"
+              spellCheck={false}
+              className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
+            />
           </label>
           <label className="mb-2 block">
             <span className="mb-2 block text-sm font-semibold text-slate-300">Contraseña</span>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10" />
+            <input
+              ref={passwordRef}
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3 text-base outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10"
+            />
           </label>
           <p className="mb-6 text-xs leading-5 text-slate-500">En el primer ingreso, si tu usuario fue creado sin contraseña, el sistema te va a pedir configurar una nueva.</p>
           <button disabled={loading} className="w-full rounded-2xl bg-blue-500 px-4 py-3 font-black text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-400 disabled:opacity-50">{loading ? 'Ingresando...' : 'Ingresar'}</button>

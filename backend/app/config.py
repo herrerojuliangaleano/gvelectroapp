@@ -52,6 +52,11 @@ class Settings(BaseModel):
     admin_user: str = os.getenv("ADMIN_USER", "admin")
     admin_password: str = os.getenv("ADMIN_PASSWORD", "admin")
     auth_secret: str = os.getenv("AUTH_SECRET", "dev-secret-change-me")
+    # Duracion del token JWT en horas. Default 30 dias (720 h) — la app es
+    # interna, las PCs son de la sucursal, asi que se prioriza no andar
+    # pidiendo login constantemente. Si querias 1 dia: 24. 1 semana: 168.
+    # Override por env var AUTH_TOKEN_HOURS.
+    auth_token_hours: int = int(os.getenv("AUTH_TOKEN_HOURS", "720"))
     cors_origins: list[str] = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000").split(",") if o.strip()]
 
     backend_dir: Path = Path(__file__).resolve().parents[1]

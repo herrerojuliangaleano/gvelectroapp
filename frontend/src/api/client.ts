@@ -121,6 +121,11 @@ import type {
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const TOKEN_KEY = 'electrogv_token';
 const SESSION_KEY = 'electrogv_session';
+// Persiste el username del ultimo login exitoso (para pre-llenar la
+// LoginPage al volver). NO es legacy: se mantiene a proposito incluso
+// despues de logout, asi el usuario no tiene que re-tipear su username
+// cada vez que cierra sesion. Solo se pisa al loguearse otro usuario.
+const LAST_USERNAME_KEY = 'electrogv_last_username';
 
 // Claves viejas mantenidas solo para migración automática al nuevo formato consolidado.
 const LEGACY_KEYS = [
@@ -202,7 +207,13 @@ export function setSession(token: string, username?: string, displayName?: strin
   };
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(SESSION_KEY, JSON.stringify(data));
+  if (username) localStorage.setItem(LAST_USERNAME_KEY, username);
   LEGACY_KEYS.forEach((k) => localStorage.removeItem(k));
+}
+
+/** Username del ultimo login exitoso. Sobrevive a logout. */
+export function getLastUsername(): string {
+  return localStorage.getItem(LAST_USERNAME_KEY) || '';
 }
 
 export function getCurrentUsername(): string | null { return readSession()?.username ?? null; }
