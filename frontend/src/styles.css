@@ -3309,3 +3309,58 @@ input[type="file"].erp-input {
   color: var(--text-2);
   line-height: 1.5;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Animaciones reutilizables tipo `animate-in`
+   Subconjunto compatible con tailwindcss-animate sin agregar el plugin.
+   Se aplican con clases: .animate-in + .fade-in + .slide-in-from-bottom-2.
+   ───────────────────────────────────────────────────────────────────────── */
+@keyframes egv-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes egv-slide-in-from-bottom {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+@keyframes egv-slide-in-from-bottom-1 {
+  from { transform: translateY(4px); opacity: 0; }
+  to   { transform: translateY(0);   opacity: 1; }
+}
+@keyframes egv-slide-in-from-bottom-2 {
+  from { transform: translateY(8px); opacity: 0; }
+  to   { transform: translateY(0);   opacity: 1; }
+}
+@keyframes egv-slide-in-from-top-1 {
+  from { transform: translateY(-4px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+@keyframes egv-zoom-in-95 {
+  from { transform: scale(0.95); opacity: 0; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+
+.animate-in {
+  animation-duration: 200ms;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  animation-fill-mode: both;
+}
+.animate-in.fade-in            { animation-name: egv-fade-in; }
+.animate-in.slide-in-from-bottom        { animation-name: egv-slide-in-from-bottom; }
+.animate-in.slide-in-from-bottom-1      { animation-name: egv-slide-in-from-bottom-1; }
+.animate-in.slide-in-from-bottom-2      { animation-name: egv-slide-in-from-bottom-2; }
+.animate-in.slide-in-from-top-1         { animation-name: egv-slide-in-from-top-1; }
+.animate-in.zoom-in-95                  { animation-name: egv-zoom-in-95; }
+/* Combinaciones: cuando se ponen multiples, la ultima gana — para
+   los casos donde queremos fade + slide al mismo tiempo, usamos clases
+   compuestas dedicadas. */
+.animate-in.fade-in.slide-in-from-bottom-1 { animation-name: egv-slide-in-from-bottom-1; }
+.animate-in.fade-in.slide-in-from-bottom-2 { animation-name: egv-slide-in-from-bottom-2; }
+.animate-in.fade-in.slide-in-from-top-1    { animation-name: egv-slide-in-from-top-1; }
+.animate-in.fade-in.zoom-in-95             { animation-name: egv-zoom-in-95; }
+
+.duration-200 { animation-duration: 200ms; }
+
+/* Oculta scrollbar en favoritos (Webkit + Firefox). */
+.scrollbar-none::-webkit-scrollbar { display: none; }
+.scrollbar-none { scrollbar-width: none; }

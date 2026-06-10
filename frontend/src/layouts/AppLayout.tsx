@@ -146,6 +146,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
           { to: '/venta/nueva', icon: <Globe2 size={14} />, label: 'Nueva venta', permission: 'sales_web.create' },
           { to: '/venta/mis-solicitudes', icon: <Globe2 size={14} />, label: 'Mis ventas', permission: 'sales_web.view' },
           { to: '/budgets/new', icon: <Calculator size={14} />, label: 'Presupuestos', permission: 'budgets.view' },
+          { to: '/consulta-precios', icon: <Calculator size={14} />, label: 'Consulta de precios', permission: 'budgets.view' },
         ] },
         { to: '/warranties', icon: <ShieldCheck size={16} />, label: 'Garantías', children: [
           // ── Núcleo operativo (el flujo: sucursal → gestor → posventa) ──
