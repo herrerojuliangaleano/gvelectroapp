@@ -18,7 +18,7 @@ from typing import Any
 from sqlalchemy import select
 
 from .db import db_session
-from .models.auth import Role, User, UserBranch, UserRole
+from .models.auth import Role, RoleGroup, User, UserBranch, UserRole
 from .models.org import Branch, Company
 from .security import hash_password
 
@@ -84,12 +84,14 @@ def _user_to_payload(u: User, session) -> dict[str, Any]:
 
 def load_roles_pg() -> dict[str, dict[str, Any]]:
     with db_session() as session:
+        groups = {g.id: g.name for g in session.scalars(select(RoleGroup)).all()}
         rows = session.scalars(select(Role)).all()
         return {
             r.name: {
                 "label": str(r.label or r.name),
                 "level": int(r.level or 0),
                 "permissions": list(r.permissions or []),
+                "group": groups.get(r.group_id, "") if r.group_id else "",
             }
             for r in rows
         }
@@ -97,17 +99,72 @@ def load_roles_pg() -> dict[str, dict[str, Any]]:
 
 def save_roles_pg(roles: dict[str, dict[str, Any]]) -> None:
     with db_session() as session:
+        group_ids = {g.name: g.id for g in session.scalars(select(RoleGroup)).all()}
         for name, info in roles.items():
             r = session.scalar(select(Role).where(Role.name == name))
             label = str(info.get("label") or name)
             level = int(info.get("level") or 0)
             permissions = list(info.get("permissions") or [])
+            # "group" puede no venir (flujos viejos): en ese caso NO tocamos
+            # el departamento actual del rol. String vacio = sacar del grupo.
+            group_value = info.get("group", None)
             if r:
                 r.label = label
                 r.level = level
                 r.permissions = permissions
+                if group_value is not None:
+                    r.group_id = group_ids.get(str(group_value)) if group_value else None
             else:
-                session.add(Role(name=name, label=label, level=level, permissions=permissions))
+                new_role = Role(name=name, label=label, level=level, permissions=permissions)
+                if group_value:
+                    new_role.group_id = group_ids.get(str(group_value))
+                session.add(new_role)
+        session.commit()
+
+
+# ── Departamentos (role_groups) ──────────────────────────────────────────────
+
+def list_role_groups_pg() -> list[dict[str, Any]]:
+    with db_session() as session:
+        rows = session.scalars(select(RoleGroup).order_by(RoleGroup.sort_order, RoleGroup.name)).all()
+        return [
+            {"id": g.id, "name": g.name, "label": g.label, "sort_order": int(g.sort_order or 0)}
+            for g in rows
+        ]
+
+
+def create_role_group_pg(name: str, label: str, sort_order: int = 0) -> dict[str, Any]:
+    with db_session() as session:
+        existing = session.scalar(select(RoleGroup).where(RoleGroup.name == name))
+        if existing:
+            raise ValueError(f"Ya existe un departamento con clave {name}")
+        g = RoleGroup(name=name, label=label, sort_order=sort_order)
+        session.add(g)
+        session.commit()
+        return {"id": g.id, "name": g.name, "label": g.label, "sort_order": int(g.sort_order or 0)}
+
+
+def update_role_group_pg(group_id: int, label: str | None = None, sort_order: int | None = None) -> dict[str, Any]:
+    with db_session() as session:
+        g = session.get(RoleGroup, group_id)
+        if not g:
+            raise ValueError("Departamento no encontrado")
+        if label is not None and label.strip():
+            g.label = label.strip()
+        if sort_order is not None:
+            g.sort_order = int(sort_order)
+        session.commit()
+        return {"id": g.id, "name": g.name, "label": g.label, "sort_order": int(g.sort_order or 0)}
+
+
+def delete_role_group_pg(group_id: int) -> None:
+    """Borra el departamento. Los roles que apuntaban a el quedan sin
+    departamento (FK ON DELETE SET NULL)."""
+    with db_session() as session:
+        g = session.get(RoleGroup, group_id)
+        if not g:
+            raise ValueError("Departamento no encontrado")
+        session.delete(g)
         session.commit()
 
 

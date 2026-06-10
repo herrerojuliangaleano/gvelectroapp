@@ -292,6 +292,16 @@ export interface RoleInfo {
   label: string;
   level: number;
   permissions: string[];
+  /** Departamento al que pertenece el rol ("" = sin departamento). */
+  group?: string;
+}
+
+/** Departamento de roles (Administración / Gerencia / Posventa / ...). */
+export interface RoleGroupInfo {
+  id: number;
+  name: string;
+  label: string;
+  sort_order: number;
 }
 
 export interface UserInfo {

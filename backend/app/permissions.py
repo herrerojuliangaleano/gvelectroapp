@@ -206,40 +206,11 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
         ],
     },
 
-    "ADMIN": {
-        "label": "Admin (legacy)",
-        "level": 60,
-        "permissions": [
-            "dashboard.view", "profile.view", "employees.photo.upload_own", "payroll_receipts.view_own", "payroll_receipts.sign_own", "payroll_receipts.observe_own", "about.view", "system.status.view", "system.diagnostics.view", "system.diagnostics.repair",
-            "warranties.view", "warranties.create", "warranties.dashboard", "warranties.manage", "warranties.review", "warranties.mark_incomplete", "warranties.approve_review", "warranties.manage_provider", "warranties.change_status", "warranties.register_provider_response", "warranties.register_claim", "warranties.export", "warranties.sync_to_sheet", "warranties.sync_from_sheet", "warranties.sync_logs", "warranties.config", "warranties.reset_data", "warranties.cancel", "warranties.delete", "warranties.update", "warranties.counters", "warranties.remitos.view", "warranties.remitos.generate", "warranties.remitos.dispatch", "warranties.remitos.receive", "warranties.remitos.deposit_transfer", "warranties.remitos.provider_delivery", "warranties.remitos.delete",
-            "budgets.view", "budgets.create", "budgets.save",
-            "products.view", "products.sync", "products.manage", "products.providers.manage",
-            "sales_web.view", "sales_web.create", "sales_web.take", "sales_web.complete", "sales_web.send", "sales_web.cancel", "sales_web.cancel_own", "sales_web.branch_manage", "sales_web.manage", "notifications.view", "notifications.manage", "push.subscribe",
-            "price_updates.view", "price_updates.create", "price_updates.check", "price_updates.check.web", "price_updates.check.puma", "price_updates.check.master", "price_updates.edit", "price_updates.delete",
-            "cost_updates.view", "cost_updates.check", "cost_updates.check.puma", "cost_updates.check.master",
-            "price_announcements.view", "price_announcements.generate",
-            "tools.view", "jobs.view", "settings.view", "ops_config.view", "companies.view", "companies.manage", "branches.view", "branches.manage", "employees.view", "employees.manage", "employees.photo.request", "payroll_receipts.view_all", "payroll_receipts.upload", "payroll_receipts.bulk_upload", "payroll_receipts.cancel", "payroll_receipts.respond_observation", "audit.view",
-            "sales_bi.view", "sales_bi.import", "sales_bi.void", "sales_bi.aliases.manage", "sales_bi.export", "sales_bi.view_costs", "sales_bi.view_margin",
-        ],
-    },
-    "VENDEDOR_WEB": {
-        "label": "Vendedor web",
-        "level": 25,
-        "permissions": [
-            "profile.view", "employees.photo.upload_own", "payroll_receipts.view_own", "payroll_receipts.sign_own", "payroll_receipts.observe_own", "about.view", "system.status.view",
-            "budgets.view", "budgets.create", "budgets.save",
-            "sales_web.view", "sales_web.create", "sales_web.send", "sales_web.complete", "sales_web.cancel", "sales_web.cancel_own", "notifications.view", "notifications.manage", "push.subscribe",
-        ],
-    },
-    "VENTA_WEB": {
-        "label": "Venta web (legacy)",
-        "level": 25,
-        "permissions": [
-            "profile.view", "employees.photo.upload_own", "payroll_receipts.view_own", "payroll_receipts.sign_own", "payroll_receipts.observe_own", "about.view", "system.status.view",
-            "budgets.view", "budgets.create", "budgets.save",
-            "sales_web.view", "sales_web.create", "sales_web.send", "sales_web.complete", "sales_web.cancel", "sales_web.cancel_own", "notifications.view", "notifications.manage", "push.subscribe",
-        ],
-    },
+    # Fase 1 roles/permisos (2026-06-10): ADMIN (legacy), VENDEDOR_WEB y
+    # VENTA_WEB se fusionaron — ADMIN→ADMINISTRADOR, VENDEDOR_WEB/VENTA_WEB→
+    # VENDEDOR (migracion 20260610_0001). El VENDEDOR unificado mantiene su
+    # set restrictivo: NO hereda sales_web.send/complete/cancel; eso se dara
+    # como override por usuario (Fase 2) si alguien lo necesita.
     "ENCARGADO_WEB": {
         "label": "Editor / Encargado de pagina web",
         "level": 35,
@@ -332,6 +303,34 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
         "level": 10,
         "permissions": ["profile.view", "employees.photo.upload_own", "payroll_receipts.view_own", "payroll_receipts.sign_own", "payroll_receipts.observe_own", "about.view", "system.status.view", "warranties.view", "budgets.view", "sales_web.view", "notifications.view"],
     },
+}
+
+# ── Departamentos (Fase 1 roles/permisos) ───────────────────────────────────
+# Catalogo de referencia para bootstrap/seed. La fuente de verdad operativa es
+# la tabla `role_groups` (creada y seedeada por la migracion 20260610_0001);
+# los departamentos se administran desde la pantalla Roles de la app.
+DEFAULT_ROLE_GROUPS: list[dict[str, object]] = [
+    {"name": "ADMINISTRACION", "label": "Administración", "sort_order": 10},
+    {"name": "GERENCIA", "label": "Gerencia", "sort_order": 20},
+    {"name": "POSVENTA", "label": "Posventa", "sort_order": 30},
+    {"name": "ENCARGADOS", "label": "Encargados", "sort_order": 40},
+    {"name": "DEPOSITO", "label": "Depósito", "sort_order": 50},
+    {"name": "VENTAS", "label": "Ventas", "sort_order": 60},
+]
+
+DEFAULT_ROLE_GROUP_MAP: dict[str, str] = {
+    "SUPERADMIN": "ADMINISTRACION",
+    "ADMINISTRADOR": "ADMINISTRACION",
+    "GERENTE": "GERENCIA",
+    "GERENTE_COMERCIAL": "GERENCIA",
+    "JEFE_POSVENTA": "POSVENTA",
+    "GESTOR_GARANTIAS": "POSVENTA",
+    "ENCARGADO_SUCURSAL": "ENCARGADOS",
+    "ENCARGADO_WEB": "ENCARGADOS",
+    "DEPOSITO": "DEPOSITO",
+    "CADETE_DEPOSITO": "DEPOSITO",
+    "VENDEDOR": "VENTAS",
+    # LECTURA queda sin departamento a proposito.
 }
 
 PERMISSION_GROUPS: dict[str, list[str]] = {

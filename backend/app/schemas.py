@@ -245,6 +245,16 @@ class RoleInfo(BaseModel):
     label: str
     level: int = 0
     permissions: list[str]
+    # Departamento al que pertenece el rol ('' = sin departamento). Fase 1.
+    group: str = ""
+
+
+class RoleGroupInfo(BaseModel):
+    """Departamento de roles (Administracion / Gerencia / Posventa / ...)."""
+    id: int
+    name: str
+    label: str
+    sort_order: int = 0
 
 
 class UserInfo(BaseModel):

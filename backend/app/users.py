@@ -195,6 +195,10 @@ def save_roles(roles: dict[str, dict[str, Any]]) -> None:
             "level": int(info.get("level") or 0) if isinstance(info, dict) else 0,
             "permissions": [str(p) for p in permissions if str(p) in ALL_PERMISSIONS or str(p) == "*"],
         }
+        # Departamento (Fase 1): solo se propaga si vino en el dict. Si no
+        # viene, save_roles_pg deja el grupo actual del rol sin tocar.
+        if isinstance(info, dict) and "group" in info:
+            clean[key]["group"] = str(info.get("group") or "")
     users_db.save_roles_pg(clean)
 
 

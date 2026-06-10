@@ -8,8 +8,9 @@ from pydantic import BaseModel, Field
 from ..audit import audit, get_audit_events
 from ..auth import require_permission
 from ..permissions import ALL_PERMISSIONS, PERMISSION_GROUPS, normalize_role
-from ..schemas import AuditEvent, PermissionInfo, RoleInfo, UserInfo
+from ..schemas import AuditEvent, PermissionInfo, RoleGroupInfo, RoleInfo, UserInfo
 from ..users import CurrentUser, delete_user, load_roles, load_users, repair_user_branch_links, repair_user_employees, repair_user_legacy_roles, reset_user_password, save_roles, set_user_active, upsert_user
+from .. import users_db
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -47,6 +48,19 @@ class RoleUpdateRequest(BaseModel):
     label: str = Field(min_length=1)
     level: int = 0
     permissions: list[str] = []
+    # Departamento ("" = sin departamento, None = no tocar el actual). Fase 1.
+    group: str | None = None
+
+
+class RoleGroupCreateRequest(BaseModel):
+    label: str = Field(min_length=1)
+    name: str | None = None  # clave; si no viene se deriva del label
+    sort_order: int = 0
+
+
+class RoleGroupUpdateRequest(BaseModel):
+    label: str | None = None
+    sort_order: int | None = None
 
 
 def _permission_group(permission_id: str) -> str | None:
@@ -80,7 +94,16 @@ def permissions(_user: Annotated[CurrentUser, Depends(require_permission("roles.
 @router.get("/roles", response_model=list[RoleInfo])
 def roles(_user: Annotated[CurrentUser, Depends(require_permission("roles.view"))]):
     data = load_roles()
-    return [RoleInfo(name=name, label=info["label"], level=int(info.get("level") or 0), permissions=list(info.get("permissions", []))) for name, info in sorted(data.items(), key=lambda p: int(p[1].get("level") or 0), reverse=True)]
+    return [
+        RoleInfo(
+            name=name,
+            label=info["label"],
+            level=int(info.get("level") or 0),
+            permissions=list(info.get("permissions", [])),
+            group=str(info.get("group") or ""),
+        )
+        for name, info in sorted(data.items(), key=lambda p: int(p[1].get("level") or 0), reverse=True)
+    ]
 
 
 @router.put("/roles/{role_name}", response_model=RoleInfo)
@@ -88,10 +111,57 @@ def update_role(role_name: str, req: RoleUpdateRequest, user: Annotated[CurrentU
     role = normalize_role(role_name)
     roles = load_roles()
     clean_permissions = [p for p in req.permissions if p in ALL_PERMISSIONS or p == "*"]
-    roles[role] = {"label": req.label, "level": req.level, "permissions": clean_permissions}
+    current = roles.get(role, {}) if isinstance(roles.get(role), dict) else {}
+    updated: dict = {"label": req.label, "level": req.level, "permissions": clean_permissions}
+    # group=None → conservar el departamento actual; ""/valor → setear.
+    if req.group is not None:
+        updated["group"] = req.group
+    elif "group" in current:
+        updated["group"] = current["group"]
+    roles[role] = updated
     save_roles(roles)
-    audit("roles.update", user=user, resource_type="role", resource_id=role, details={"permissions": clean_permissions})
-    return RoleInfo(name=role, label=req.label, level=req.level, permissions=clean_permissions)
+    audit("roles.update", user=user, resource_type="role", resource_id=role, details={"permissions": clean_permissions, "group": updated.get("group", "")})
+    return RoleInfo(name=role, label=req.label, level=req.level, permissions=clean_permissions, group=str(updated.get("group") or ""))
+
+
+# ── Departamentos (role_groups) — Fase 1 roles/permisos ─────────────────────
+
+@router.get("/role-groups", response_model=list[RoleGroupInfo])
+def role_groups(_user: Annotated[CurrentUser, Depends(require_permission("roles.view"))]):
+    return [RoleGroupInfo(**g) for g in users_db.list_role_groups_pg()]
+
+
+@router.post("/role-groups", response_model=RoleGroupInfo)
+def create_role_group(req: RoleGroupCreateRequest, user: Annotated[CurrentUser, Depends(require_permission("roles.manage"))]):
+    name = normalize_role(req.name or req.label)
+    if not name:
+        raise HTTPException(status_code=400, detail="El departamento necesita un nombre")
+    try:
+        created = users_db.create_role_group_pg(name=name, label=req.label.strip(), sort_order=req.sort_order)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit("role_groups.create", user=user, resource_type="role_group", resource_id=name, details={"label": req.label})
+    return RoleGroupInfo(**created)
+
+
+@router.patch("/role-groups/{group_id}", response_model=RoleGroupInfo)
+def update_role_group(group_id: int, req: RoleGroupUpdateRequest, user: Annotated[CurrentUser, Depends(require_permission("roles.manage"))]):
+    try:
+        updated = users_db.update_role_group_pg(group_id, label=req.label, sort_order=req.sort_order)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    audit("role_groups.update", user=user, resource_type="role_group", resource_id=str(group_id), details={"label": req.label, "sort_order": req.sort_order})
+    return RoleGroupInfo(**updated)
+
+
+@router.delete("/role-groups/{group_id}")
+def delete_role_group(group_id: int, user: Annotated[CurrentUser, Depends(require_permission("roles.manage"))]):
+    try:
+        users_db.delete_role_group_pg(group_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    audit("role_groups.delete", user=user, resource_type="role_group", resource_id=str(group_id))
+    return {"ok": True}
 
 
 @router.get("/users", response_model=list[UserInfo])

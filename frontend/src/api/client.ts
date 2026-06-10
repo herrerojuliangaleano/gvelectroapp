@@ -617,7 +617,12 @@ export async function fetchBudgetProductTypes(limit = 24): Promise<import('../ty
 
 export async function fetchPermissions(): Promise<PermissionInfo[]> { return request('/api/admin/permissions'); }
 export async function fetchRoles(): Promise<RoleInfo[]> { return request('/api/admin/roles'); }
-export async function updateRole(roleName: string, payload: { label: string; level: number; permissions: string[] }): Promise<RoleInfo> { return request(`/api/admin/roles/${encodeURIComponent(roleName)}`, { method: 'PUT', body: JSON.stringify(payload) }); }
+export async function updateRole(roleName: string, payload: { label: string; level: number; permissions: string[]; group?: string }): Promise<RoleInfo> { return request(`/api/admin/roles/${encodeURIComponent(roleName)}`, { method: 'PUT', body: JSON.stringify(payload) }); }
+// Departamentos de roles (Fase 1 roles/permisos)
+export async function fetchRoleGroups(): Promise<import('../types').RoleGroupInfo[]> { return request('/api/admin/role-groups'); }
+export async function createRoleGroup(payload: { label: string; name?: string; sort_order?: number }): Promise<import('../types').RoleGroupInfo> { return request('/api/admin/role-groups', { method: 'POST', body: JSON.stringify(payload) }); }
+export async function updateRoleGroup(id: number, payload: { label?: string; sort_order?: number }): Promise<import('../types').RoleGroupInfo> { return request(`/api/admin/role-groups/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }); }
+export async function deleteRoleGroup(id: number): Promise<{ ok: boolean }> { return request(`/api/admin/role-groups/${id}`, { method: 'DELETE' }); }
 export async function fetchUsers(): Promise<UserInfo[]> { return request('/api/admin/users'); }
 export async function saveUser(payload: { username: string; display_name: string; role: string; roles?: string[]; sucursal?: string; company_id?: string; branch_id?: string; branch_ids?: string[]; employee?: Partial<EmployeeInfo>; password?: string; is_active: boolean }): Promise<UserInfo> { return request('/api/admin/users', { method: 'POST', body: JSON.stringify(payload) }); }
 export async function activateUser(username: string): Promise<UserInfo> { return request(`/api/admin/users/${encodeURIComponent(username)}/activate`, { method: 'POST' }); }

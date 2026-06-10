@@ -30,6 +30,26 @@ class User(Base):
     user_branches: Mapped[list["UserBranch"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
+class RoleGroup(Base):
+    """Departamento / grupo de roles (Fase 1 reorganización roles-permisos).
+
+    Administración / Gerencia / Posventa / Encargados / Depósito / Ventas.
+    Es una dimensión organizativa: agrupa roles para que la pantalla de
+    Roles muestre el árbol departamento → roles → usuarios. NO afecta
+    permisos — la capacidad sigue siendo (roles del usuario + overrides).
+    """
+    __tablename__ = "role_groups"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)   # clave: ADMINISTRACION
+    label: Mapped[str] = mapped_column(Text, nullable=False)               # visible: Administración
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+    roles: Mapped[list["Role"]] = relationship(back_populates="group")
+
+
 class Role(Base):
     __tablename__ = "roles"
 
@@ -37,12 +57,17 @@ class Role(Base):
     name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     label: Mapped[str] = mapped_column(Text, nullable=False)
     level: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Departamento al que pertenece el rol (NULL = sin departamento).
+    group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("role_groups.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     # Lista de claves de permiso activas para el rol. El catálogo de permisos
     # vive en código (app/permissions.py); acá solo guardamos qué tiene cada rol.
     permissions: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
+    group: Mapped["RoleGroup | None"] = relationship(back_populates="roles")
     user_roles: Mapped[list["UserRole"]] = relationship(back_populates="role")
 
 
