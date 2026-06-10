@@ -400,6 +400,13 @@ export interface BudgetOptions {
   estado_default: string;
 }
 
+export interface BudgetTypeInfo {
+  /** Tipo de producto granular: HELADERA, LAVARROPAS, MICROONDAS, TV, ... */
+  tipo: string;
+  /** Cantidad de SKUs activos del catalogo en este tipo. */
+  count: number;
+}
+
 export interface BudgetLinePayload {
   producto: string;
   sku?: string | null;

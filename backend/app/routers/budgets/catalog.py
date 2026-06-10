@@ -4,6 +4,11 @@ from decimal import Decimal
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy import func, select
+
+from ...db import db_session
+from ...models.products import Product
 
 from . import (
     BudgetCreateRequest,
@@ -40,6 +45,42 @@ from . import (
 )
 
 router = APIRouter()
+
+
+class BudgetTypeInfo(BaseModel):
+    """Un tipo de producto granular (HELADERA, LAVARROPAS, ...) con
+    cantidad de SKUs activos. Usado por la pantalla `/consulta-precios`
+    para mostrar chips de filtro rapido cuando el buscador esta vacio.
+    """
+    tipo: str
+    count: int
+
+
+@router.get("/types", response_model=list[BudgetTypeInfo])
+def budget_types(
+    _user: Annotated[CurrentUser, Depends(require_permission("budgets.view"))],
+    limit: int = Query(default=24, ge=1, le=100),
+):
+    """Lista de tipos de producto del catalogo, ordenados por cantidad
+    de SKUs activos (los mas vendidos primero, en la practica).
+
+    Es muy rapido: una sola query GROUP BY contra products. Pensado para
+    armar chips/filtros rapidos en pantallas tipo POS donde mostrar
+    productos destacados (que requeriria un fetch grande) es lento en
+    mobile.
+    """
+    with db_session() as session:
+        stmt = (
+            select(Product.tipo, func.count().label("c"))
+            .where(Product.is_active.is_(True))
+            .where(Product.tipo != "")
+            .group_by(Product.tipo)
+            .order_by(func.count().desc())
+            .limit(limit)
+        )
+        rows = session.execute(stmt).all()
+    return [BudgetTypeInfo(tipo=r[0], count=int(r[1])) for r in rows]
+
 
 @router.get("/products", response_model=list[BudgetProduct])
 def budget_products(

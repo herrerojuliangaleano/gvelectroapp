@@ -26,11 +26,11 @@ import type { ReactNode } from 'react';
 import {
   Search, X, Star, Plus, Minus, Trash2, ShoppingBag, Store, Truck,
   Share2, ChevronDown, Banknote, CreditCard, Split, Undo2, Redo2,
-  Keyboard, Command, Loader2,
+  Keyboard, Command, Loader2, Tag,
 } from 'lucide-react';
 
-import { searchBudgetProducts } from '../api/client';
-import type { BudgetProduct } from '../types';
+import { searchBudgetProducts, fetchBudgetProductTypes } from '../api/client';
+import type { BudgetProduct, BudgetTypeInfo } from '../types';
 import { fmtMoney } from '../lib/format';
 
 /* ============================================================
@@ -203,8 +203,12 @@ export function ConsultaPreciosPage() {
   // Resultados de búsqueda (asíncronos, vienen del backend).
   const [results, setResults] = useState<Prod[]>([]);
   const [searching, setSearching] = useState(false);
-  // Productos "destacados" — se cargan una sola vez al montar.
-  const [featured, setFeatured] = useState<Prod[]>([]);
+  // Tipos del catalogo (HELADERA, LAVARROPAS, ...) — se cargan una vez al
+  // montar. Sirven como chips de filtro rapido cuando el buscador esta
+  // vacio. Mucho mas rapido que cargar productos destacados (1 query
+  // GROUP BY vs un fetch grande de productos).
+  const [types, setTypes] = useState<BudgetTypeInfo[]>([]);
+  const [typesLoading, setTypesLoading] = useState(true);
 
   /* hydrate */
   useEffect(() => {
@@ -213,16 +217,13 @@ export function ConsultaPreciosPage() {
     setProductCache(jsonLoad<Record<string, Prod>>(PRODUCT_CACHE_KEY, {}));
     const saved = jsonLoad<Partial<Budget>>(BUDGET_KEY, {});
     history.set({ ...EMPTY_BUDGET, ...saved }, false);
-    // Carga inicial de "destacados" (los primeros del catalogo).
-    void searchBudgetProducts('').then((items) => {
-      const mapped = items.map(mapProductInfo).filter((p): p is Prod => p !== null);
-      setFeatured(mapped.slice(0, 12));
-      setProductCache((c) => {
-        const next = { ...c };
-        for (const p of mapped) next[p.sku] = p;
-        return next;
-      });
-    }).catch(() => { /* silent — la pantalla sigue siendo usable sin destacados */ });
+    // Carga inicial de tipos de producto (chips de filtro rapido).
+    // Este endpoint es muy liviano: 1 query GROUP BY.
+    setTypesLoading(true);
+    void fetchBudgetProductTypes(24)
+      .then((items) => setTypes(items))
+      .catch(() => { /* silent — la pantalla sigue siendo usable sin chips */ })
+      .finally(() => setTypesLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -434,11 +435,17 @@ export function ConsultaPreciosPage() {
 
           {!showingResults && (
             <section>
-              <SectionLabel text="Más consultados" />
-              {featured.length === 0 ? (
-                <FeaturedSkeleton />
+              <SectionLabel
+                icon={<Tag className="size-3.5" />}
+                text="Tocá un tipo de producto"
+                hint="o buscá arriba"
+              />
+              {typesLoading ? (
+                <TypeChipsSkeleton />
+              ) : types.length === 0 ? (
+                <EmptyTypes />
               ) : (
-                <ProductGrid items={featured} term="" onAdd={addToBudget} isFav={isFav} onToggleFav={toggleFav} />
+                <TypeChips items={types} onPick={(tipo) => setQ(tipo)} />
               )}
             </section>
           )}
@@ -663,6 +670,78 @@ function FeaturedSkeleton() {
         </li>
       ))}
     </ul>
+  );
+}
+
+/* ============================================================
+ *  TYPE CHIPS (filtro rapido por tipo de producto)
+ * ========================================================== */
+
+/**
+ * Devuelve un titulo "humanizado": HELADERA → Heladera,
+ * LAVASECARROPAS → Lavasecarropas. Si ya viene en mixedcase, lo respeta.
+ */
+function humanizeType(tipo: string): string {
+  if (tipo.length <= 1) return tipo;
+  // Si el tipo viene en MAYUSCULAS, lo convertimos a Title Case.
+  if (tipo === tipo.toUpperCase()) {
+    return tipo.charAt(0) + tipo.slice(1).toLowerCase();
+  }
+  return tipo;
+}
+
+function TypeChips({
+  items,
+  onPick,
+}: {
+  items: BudgetTypeInfo[];
+  onPick: (tipo: string) => void;
+}) {
+  return (
+    <ul className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+      {items.map((t) => (
+        <li key={t.tipo}>
+          <button
+            onClick={() => onPick(t.tipo)}
+            className="group w-full flex items-center justify-between gap-2 rounded-xl bg-slate-900/70 border border-slate-700/80 hover:border-indigo-500/60 hover:bg-slate-900 active:scale-[0.98] transition px-3.5 py-3 text-left"
+          >
+            <div className="min-w-0 flex-1">
+              <div className="text-[14px] font-bold text-slate-100 truncate group-hover:text-indigo-200 transition">
+                {humanizeType(t.tipo)}
+              </div>
+              <div className="text-[11px] tabular-nums text-slate-500 mt-0.5">
+                {t.count} {t.count === 1 ? 'modelo' : 'modelos'}
+              </div>
+            </div>
+            <Tag className="size-4 text-slate-600 group-hover:text-indigo-400 transition shrink-0" />
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function TypeChipsSkeleton() {
+  return (
+    <ul className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+      {[1, 2, 3, 4, 5, 6].map((i) => (
+        <li key={i} className="rounded-xl bg-slate-900/50 border border-slate-700/50 px-3.5 py-3 animate-pulse">
+          <div className="h-4 w-3/4 rounded bg-slate-700/50 mb-2" />
+          <div className="h-3 w-1/2 rounded bg-slate-700/50" />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function EmptyTypes() {
+  return (
+    <div className="text-center py-10 rounded-xl border border-dashed border-slate-700/60 text-sm text-slate-400">
+      No hay tipos del catalogo disponibles.
+      <div className="mt-1 text-xs text-slate-500">
+        Sincronizá el catálogo de productos desde el panel de admin.
+      </div>
+    </div>
   );
 }
 

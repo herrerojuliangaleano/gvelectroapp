@@ -610,6 +610,7 @@ export async function generateProviderDeliveryRemito(payload: import('../types')
 
 export async function fetchBudgetOptions(): Promise<BudgetOptions> { return request('/api/budgets/options'); }
 export async function searchBudgetProducts(query: string): Promise<BudgetProduct[]> { return request(`/api/budgets/products?q=${encodeURIComponent(query)}&limit=20`); }
+export async function fetchBudgetProductTypes(limit = 24): Promise<import('../types').BudgetTypeInfo[]> { return request(`/api/budgets/types?limit=${limit}`); }
 export async function createBudget(payload: BudgetCreatePayload): Promise<BudgetCreateResponse> { return request('/api/budgets/entries', { method: 'POST', body: JSON.stringify(payload) }); }
 
 export async function fetchPermissions(): Promise<PermissionInfo[]> { return request('/api/admin/permissions'); }
