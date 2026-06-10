@@ -231,9 +231,13 @@ def save_operational_config(config: dict[str, Any], updated_by: str = "system", 
 
 
 def is_superadmin(user: Any) -> bool:
-    role = str(getattr(user, "role", "")).upper()
+    # Fase 0 roles/permisos: mira TODOS los roles del usuario, no solo el
+    # principal. Antes `user.role` (singular) hacia que un usuario con
+    # SUPERADMIN como rol secundario no fuera reconocido aca.
+    raw_roles = [getattr(user, "role", ""), *(getattr(user, "roles", []) or [])]
+    roles = {str(r or "").strip().upper() for r in raw_roles}
     permissions = getattr(user, "permissions", []) or []
-    return role == "SUPERADMIN" or "*" in permissions
+    return "SUPERADMIN" in roles or "*" in permissions
 
 
 

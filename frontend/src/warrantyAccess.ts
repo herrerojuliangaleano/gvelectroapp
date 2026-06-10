@@ -141,11 +141,16 @@ export function canSeeWarrantyConfig(user: CurrentUser | null | undefined): bool
 /**
  * Acceso a la página /warranties/remitos.
  * Contiene: Movimiento depósito→depósito (deposit_transfer) y Entrega al proveedor (provider_delivery).
- * Solo usuarios que NO son depósito puro y tienen alguno de esos permisos.
+ *
+ * Fase 0 roles/permisos: decision 100% por permiso. Antes habia un veto
+ * `!isPlainDepositOperator && !isCadeteDeposito` que bloqueaba combos
+ * multi-rol validos (ej. DEPOSITO + ENCARGADO_SUCURSAL con el permiso
+ * deposit_transfer quedaba afuera por su "identidad" de deposito).
+ * La identidad operativa solo decide redirects/landing, nunca capacidad.
  */
 export function canUseRemitosHub(user: CurrentUser | null | undefined): boolean {
-  return !isPlainDepositOperator(user) && !isCadeteDeposito(user)
-    && (can('warranties.remitos.deposit_transfer') || can('warranties.remitos.provider_delivery'));
+  if (!user) return false;
+  return can('warranties.remitos.deposit_transfer') || can('warranties.remitos.provider_delivery');
 }
 
 /**
@@ -164,9 +169,10 @@ export function canSeeDepositReceivePage(user: CurrentUser | null | undefined): 
 }
 
 export function canSeeGestorPanel(user: CurrentUser | null | undefined): boolean {
-  // Gestor panel absorbs revision panel — users with warranties.review access also land here
-  return !isPlainDepositOperator(user) && !isCadeteDeposito(user)
-    && (can('warranties.gestor.panel') || can('warranties.manage') || can('warranties.review'));
+  // Gestor panel absorbs revision panel — users with warranties.review access also land here.
+  // Fase 0 roles/permisos: decision por permiso, sin veto de identidad deposito.
+  if (!user) return false;
+  return can('warranties.gestor.panel') || can('warranties.manage') || can('warranties.review');
 }
 
 export function canSeeSucursalLogistics(user: CurrentUser | null | undefined): boolean {
@@ -174,7 +180,10 @@ export function canSeeSucursalLogistics(user: CurrentUser | null | undefined): b
 }
 
 export function canSeeRemitoTracking(user: CurrentUser | null | undefined): boolean {
-  // Cadete y depósito puro no ven el historial global de remitos
-  if (isPlainDepositOperator(user) || isCadeteDeposito(user)) return false;
+  // Fase 0 roles/permisos: decision por permiso, sin veto de identidad.
+  // El historial global requiere `warranties.remitos.view`, que los roles de
+  // deposito no tienen en el catalogo — si el admin se lo da explicitamente,
+  // debe funcionar.
+  if (!user) return false;
   return can('warranties.remitos.view');
 }

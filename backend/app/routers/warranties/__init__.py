@@ -147,7 +147,22 @@ PROVIDER_PICKUP_STATUSES = {
 # Aunque el catálogo de permisos haya quedado viejo o se le hayan colado permisos,
 # si su único rol operativo es DEPOSITO no debe poder revisar, exportar, gestionar proveedor
 # ni resolver garantías. Debe poder cargar cliente en depósito, recibir remitos y mover depósito→depósito.
-WARRANTY_PRIVILEGED_ROLES = {"SUPERADMIN", "GERENTE", "ADMINISTRADOR", "ADMIN", "GESTOR", "GESTOR_GARANTIAS", "JEFE_POSVENTA"}
+#
+# Fase 0 roles/permisos: el "escape" de este modo restringido se decide por
+# PERMISOS, no por nombres de rol. Si el usuario suma cualquier capacidad de
+# gestion (por otro rol o por permiso extra), deja de ser "deposito puro".
+# Antes se chequeaba contra WARRANTY_PRIVILEGED_ROLES (nombres hardcodeados),
+# lo que bloqueaba combos multi-rol validos (ej. DEPOSITO + un rol nuevo con
+# permisos de export que no estuviera en la lista).
+_DEPOSIT_ESCAPE_PERMISSIONS = (
+    "warranties.manage",
+    "warranties.manage_provider",
+    "warranties.review",
+    "warranties.gestor.panel",
+    "warranties.dashboard",
+    "warranties.export",
+    "branches.cross_select",
+)
 
 def _user_role_keys(user: Any) -> set[str]:
     return user_role_keys(user)
@@ -156,7 +171,7 @@ def is_plain_deposit_operator(user: Any) -> bool:
     roles = _user_role_keys(user)
     if "DEPOSITO" not in roles:
         return False
-    return not bool(roles & WARRANTY_PRIVILEGED_ROLES)
+    return not any(user_has(user, p) for p in _DEPOSIT_ESCAPE_PERMISSIONS)
 
 def deny_plain_deposit_operator(user: Any, action: str = "esta acción") -> None:
     if is_plain_deposit_operator(user):

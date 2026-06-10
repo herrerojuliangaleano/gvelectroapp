@@ -39,7 +39,6 @@ from . import (
     WarrantyResetRequest,
     WarrantyResetResponse,
     WarrantyResetSummary,
-    _user_role_keys,
     warranty_exports_dir,
 )
 
@@ -50,9 +49,11 @@ router = APIRouter(tags=["warranties"])
 # ── Helpers privados del módulo ─────────────────────────────────────────────
 
 def _is_reset_admin(user: Any) -> bool:
-    roles = _user_role_keys(user)
+    # Fase 0 roles/permisos: decide SOLO por permiso. Los roles admin tienen
+    # `warranties.reset_data` en el catalogo; el bypass por nombre de rol se
+    # elimino para que la pantalla de Roles refleje la realidad.
     perms = set(getattr(user, "permissions", []) or [])
-    return "*" in perms or "warranties.reset_data" in perms or bool(roles & {"SUPERADMIN", "ADMIN", "ADMINISTRADOR", "GERENTE"})
+    return "*" in perms or "warranties.reset_data" in perms
 
 
 def _require_reset_admin(user: Any) -> None:

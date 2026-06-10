@@ -18,10 +18,8 @@ from ...auth import require_permission
 from ...warranties_db import pg_fetch_all_guarantee_rows
 from ...warranty_helpers import normalize_text, parse_date_filter
 from . import (
-    WARRANTY_PRIVILEGED_ROLES,
     WarrantyListResponse,
     WarrantySummary,
-    _user_role_keys,
     deny_plain_deposit_operator,
     normalize_status,
     review_status_matches,
@@ -54,13 +52,14 @@ def list_warranties(
     limit: int = Query(default=200, ge=1, le=1000),
     sucursal_logistics: bool = Query(default=False),
 ):
+    # Capacidad de gestion global: SOLO por permiso, nunca por nombre de rol.
+    # (Fase 0 roles/permisos: antes habia un bypass `roles & WARRANTY_PRIVILEGED_ROLES`
+    # que hacia que la pantalla de Roles no reflejara la realidad.)
     user_perms = set(getattr(user, "permissions", []) or [])
-    roles = _user_role_keys(user)
     can_manage = (
         "*" in user_perms
         or "warranties.manage" in user_perms
         or "warranties.manage_provider" in user_perms
-        or bool(roles & WARRANTY_PRIVILEGED_ROLES)
         or bool(getattr(user, "has", lambda _p: False)("warranties.manage"))
         or bool(getattr(user, "has", lambda _p: False)("warranties.manage_provider"))
     )

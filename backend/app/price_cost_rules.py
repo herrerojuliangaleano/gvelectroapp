@@ -5,7 +5,7 @@ from typing import Any, Iterable
 
 from fastapi import HTTPException, status
 
-from .access import ensure_active_user, is_superadmin, user_has, user_has_any, user_role_keys, users_with_permission
+from .access import ensure_active_user, is_superadmin, user_has, user_has_any, users_with_permission
 
 
 CHECKS_BY_TYPE: dict[str, list[tuple[str, str]]] = {
@@ -34,8 +34,11 @@ CHECK_GRANULAR_PERMISSIONS: dict[str, dict[str, str]] = {
     },
 }
 
-ANNOUNCEMENT_ROLES = {"SUPERADMIN", "GERENTE", "GERENTE_COMERCIAL", "ADMINISTRADOR", "ADMIN"}
-PUMA_ALLOWED_ROLES = {"SUPERADMIN", "GERENTE", "ADMINISTRADOR", "ADMIN"}
+# Fase 0 roles/permisos: se eliminaron ANNOUNCEMENT_ROLES y PUMA_ALLOWED_ROLES.
+# La capacidad se decide SOLO por permiso (price_announcements.*,
+# price_updates.check.puma, etc.). Los roles que dependian del bypass por
+# nombre (GERENTE/ADMINISTRADOR/ADMIN) recibieron esos permisos en la tabla
+# `roles` via la reparacion de datos del 2026-06-10.
 
 
 def normalize_change_type(value: str) -> str:
@@ -72,8 +75,6 @@ def user_can_mark_check(user: Any, change_type: str, check_key: str) -> bool:
         return False
     if is_superadmin(user):
         return True
-    if check_key == "puma" and not (user_role_keys(user) & PUMA_ALLOWED_ROLES):
-        return False
     return user_has_any(user, check_permissions(change_type, check_key))
 
 
@@ -88,9 +89,7 @@ def user_can_generate_price_announcement(user: Any) -> bool:
         return False
     if is_superadmin(user):
         return True
-    if user_has(user, "price_announcements.generate"):
-        return True
-    return bool(user_role_keys(user) & ANNOUNCEMENT_ROLES)
+    return user_has(user, "price_announcements.generate")
 
 
 def user_can_view_price_announcements(user: Any) -> bool:
@@ -98,9 +97,7 @@ def user_can_view_price_announcements(user: Any) -> bool:
         return False
     if is_superadmin(user):
         return True
-    if user_has_any(user, ["price_announcements.view", "price_announcements.generate"]):
-        return True
-    return bool(user_role_keys(user) & ANNOUNCEMENT_ROLES)
+    return user_has_any(user, ["price_announcements.view", "price_announcements.generate"])
 
 
 def require_price_announcement_view_permission(user: Any) -> None:
