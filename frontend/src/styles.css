@@ -737,10 +737,15 @@ select.pro-input,
   gap: 0.25rem;
   border: 1px solid rgba(51, 65, 85, 0.95);
   border-radius: 1.25rem;
-  background: rgba(2, 6, 23, 0.94);
+  /* IMPORTANTE: fondo OPACO (sin transparencia) y SIN backdrop-filter.
+     En Chrome Android, esta barra fija con bg semi-transparente + blur
+     genera artefactos de pintado al scrollear cualquier pantalla por
+     detras (la pantalla "se buguea" — ghosts, contenido duplicado).
+     Trade-off: perdemos el efecto glass pero el scroll queda fluido
+     en toda la app. */
+  background: #020617;
   box-shadow: 0 22px 55px rgba(0, 0, 0, 0.45);
   padding: 0.25rem;
-  backdrop-filter: blur(18px);
   pointer-events: auto;
 }
 
