@@ -379,9 +379,14 @@ export function ConsultaPreciosPage() {
   const showingResults = q.trim().length > 0;
 
   return (
-    <div className="min-h-dvh bg-slate-950 text-slate-100 antialiased -mx-6 -my-6">
-      {/* ===== HEADER ===== */}
-      <header className="sticky top-0 z-30 bg-slate-950/85 backdrop-blur-xl border-b border-slate-800/80">
+    <div className="min-h-screen bg-slate-950 text-slate-100 antialiased -mx-6 -my-6">
+      {/* ===== HEADER =====
+          NOTA: usamos bg opaco (sin transparency / backdrop-blur) porque en
+          Chrome Android los headers sticky con `bg-X/85 backdrop-blur` +
+          scroll generan artefactos de pintado horribles ("ghosts" del
+          contenido anterior). Trade-off acceptable: se pierde el efecto
+          glass pero la pantalla deja de "buguearse" al scrollear. */}
+      <header className="sticky top-0 z-30 bg-slate-950 border-b border-slate-800/80">
         <div className="mx-auto w-full max-w-7xl px-4 lg:px-8 pt-4 pb-3">
           <div className="flex items-center justify-between mb-3 gap-3">
             <div className="min-w-0">
