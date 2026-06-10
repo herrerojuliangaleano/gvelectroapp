@@ -10,9 +10,11 @@
 //     no dependemos del plugin tailwindcss-animate).
 //
 // La pantalla NO guarda en backend — todo el estado vive en localStorage.
-// Para presupuestos formales que se persisten en BD, usar `/budgets/new`.
+// El modulo viejo de Presupuestos (`/budgets/new`) fue deprecado y la ruta
+// redirige aca. En proximas fases vamos a agregarle funciones formales
+// (guardar, multi-cliente, export PDF, integracion con tabla outbox Puma).
 //
-// Permiso requerido: `budgets.view` (igual que el viejo BudgetCreatePage).
+// Permiso requerido: `budgets.view`.
 
 import {
   forwardRef,

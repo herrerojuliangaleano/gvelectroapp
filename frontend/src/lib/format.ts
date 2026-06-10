@@ -1,12 +1,11 @@
 /**
  * Helpers de formato compartidos.
  *
- * Mantenemos `fmtMoney` simple ($ 1.234.567 sin decimales) para uso en
- * pantallas tipo POS / consulta de precios donde los centavos solo
- * agregan ruido visual.
+ * `fmtMoney` simple ($ 1.234.567 sin decimales) para uso en pantallas
+ * tipo POS / consulta de precios donde los centavos solo agregan ruido.
  *
- * Para presupuestos formales (BudgetCreatePage) seguimos usando
- * `formatArNumber(value, 2)` que mantiene decimales.
+ * `fmtMoneyExact` con decimales para casos donde se necesita precision
+ * (ej. reportes contables, comparaciones precio-costo).
  */
 
 const moneyFormatter = new Intl.NumberFormat('es-AR', {

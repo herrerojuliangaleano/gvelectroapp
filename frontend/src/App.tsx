@@ -14,7 +14,6 @@ import { PhotoApprovalPage } from './pages/PhotoApprovalPage';
 import { MyLegajoPage } from './pages/MyLegajoPage';
 import { AuditLogPage } from './pages/AuditLogPage';
 import { BackupsPage } from './pages/BackupsPage';
-import { BudgetCreatePage } from './pages/BudgetCreatePage';
 import { ConsultaPreciosPage } from './pages/ConsultaPreciosPage';
 import { CompaniesBranchesPage } from './pages/CompaniesBranchesPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -102,7 +101,7 @@ function defaultRedirect() {
     if (isPlainDepositOperator(getCurrentUserFromStorage())) return <Navigate to="/warranties/mi-espacio" replace />;
   }
   if (can('warranties.remitos.deposit_transfer') || can('warranties.remitos.provider_delivery')) return <Navigate to="/warranties/remitos" replace />;
-  if (can('budgets.view')) return <Navigate to="/budgets/new" replace />;
+  if (can('budgets.view')) return <Navigate to="/consulta-precios" replace />;
   return <NoAccessPage />;
 }
 
@@ -159,10 +158,12 @@ export default function App() {
       <Route path="/warranties/remitos" element={<ProtectedLayout allowed={() => canUseRemitosHub(getCurrentUserFromStorage())}><WarrantyRemitosPage /></ProtectedLayout>} />
       <Route path="/warranties/remito-historial" element={<ProtectedLayout allowed={() => canSeeRemitoTracking(getCurrentUserFromStorage())}><WarrantyRemitoTrackingPage /></ProtectedLayout>} />
       <Route path="/warranties/:warrantyId" element={<ProtectedLayout permission="warranties.view"><WarrantyDetailPage /></ProtectedLayout>} />
-      <Route path="/budgets/new" element={<ProtectedLayout permission="budgets.view"><BudgetCreatePage /></ProtectedLayout>} />
-      {/* Consulta de precios — pantalla mobile-first para vendedores en mostrador.
-          Todo el estado vive en localStorage (no guarda en backend). Coexiste con
-          /budgets/new que sigue siendo el flujo formal con persistencia. */}
+      {/* /budgets/new fue deprecado en favor de /consulta-precios.
+          Mantenemos la ruta como redirect para bookmarks viejos. */}
+      <Route path="/budgets/new" element={<Navigate to="/consulta-precios" replace />} />
+      {/* Consulta de precios — pantalla mobile-first para vendedores en
+          mostrador. Estado en localStorage, sin persistencia en backend
+          (en una proxima fase se le agregaran funciones formales). */}
       <Route path="/consulta-precios" element={<ProtectedLayout permission="budgets.view"><ConsultaPreciosPage /></ProtectedLayout>} />
       <Route path="/venta" element={<ProtectedLayout permission="sales_web.view"><SalesWebListPage /></ProtectedLayout>} />
       <Route path="/venta/admin" element={<ProtectedLayout permission="sales_web.view"><SalesWebListPage mode="admin" /></ProtectedLayout>} />

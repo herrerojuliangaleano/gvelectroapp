@@ -198,7 +198,7 @@ export function DashboardPage() {
       // ── Trabajo diario ────────────────────────────────────────────────────
       { title: 'Nueva venta', description: 'Cargar datos para prefactura o remito.', to: '/venta/nueva', icon: <Globe2 />, permission: 'sales_web.create', tone: 'blue', group: 'Trabajo diario' },
       { title: 'Mis ventas', description: 'Seguimiento de ventas cargadas por vos.', to: '/venta/mis-solicitudes', icon: <ClipboardList />, permission: 'sales_web.view', tone: 'violet', group: 'Trabajo diario' },
-      { title: 'Presupuesto rápido', description: 'Buscar productos y preparar importes.', to: '/budgets/new', icon: <Calculator />, permission: 'budgets.view', tone: 'green', group: 'Trabajo diario' },
+      { title: 'Consulta de precios', description: 'Buscar productos, armar presupuesto rápido y compartir por WhatsApp.', to: '/consulta-precios', icon: <Calculator />, permission: 'budgets.view', tone: 'green', group: 'Trabajo diario' },
       {
         title: depositUser ? 'Cargar cliente en depósito' : 'Cargar garantía',
         description: depositUser ? 'Registrar mercadería que el cliente deja en el depósito.' : 'Registrar un ingreso de garantía.',

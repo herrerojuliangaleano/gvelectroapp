@@ -25,9 +25,6 @@ import type {
   SalesBIProductAlias,
   BackupInfo,
   BranchInfo,
-  BudgetCreatePayload,
-  BudgetCreateResponse,
-  BudgetOptions,
   BudgetProduct,
   CompanyInfo,
   ConfigStatus,
@@ -608,10 +605,15 @@ export async function generateProviderDeliveryRemito(payload: import('../types')
   return { ok: res.ok, remitos: res.created, count: res.created.length, remito_code: res.remito_code, pdf_url: res.pdf_url };
 }
 
-export async function fetchBudgetOptions(): Promise<BudgetOptions> { return request('/api/budgets/options'); }
+// Endpoints `/api/budgets/products` y `/api/budgets/types` los sigue
+// usando la pantalla Consulta de precios (que reemplazo al viejo
+// BudgetCreatePage). Los endpoints `/options` y POST `/entries` quedaron
+// huerfanos cuando deprecamos el flujo formal de presupuestos guardados;
+// las funciones de client se borraron. Si en el futuro queremos volver
+// a guardar presupuestos formales, los endpoints del backend siguen
+// activos — solo hay que reagregar `fetchBudgetOptions` / `createBudget`.
 export async function searchBudgetProducts(query: string): Promise<BudgetProduct[]> { return request(`/api/budgets/products?q=${encodeURIComponent(query)}&limit=20`); }
 export async function fetchBudgetProductTypes(limit = 24): Promise<import('../types').BudgetTypeInfo[]> { return request(`/api/budgets/types?limit=${limit}`); }
-export async function createBudget(payload: BudgetCreatePayload): Promise<BudgetCreateResponse> { return request('/api/budgets/entries', { method: 'POST', body: JSON.stringify(payload) }); }
 
 export async function fetchPermissions(): Promise<PermissionInfo[]> { return request('/api/admin/permissions'); }
 export async function fetchRoles(): Promise<RoleInfo[]> { return request('/api/admin/roles'); }
