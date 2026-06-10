@@ -891,8 +891,15 @@ function EmptyState({ onClear }: { onClear: () => void }) {
  *  BOTTOM BAR (mobile)
  * ========================================================== */
 function BottomBar({ items, total, onOpen }: { items: number; total: number; onOpen: () => void }) {
+  // bottom: var(--mobile-nav-clearance) hace que el boton quede ARRIBA de
+  // la mobile-bottom-nav (Inicio/Garantia/...) en lugar de tapado por ella.
+  // En desktop la variable es 1rem (no hay nav), asi que se pega abajo
+  // como antes.
   return (
-    <div className="fixed inset-x-0 bottom-0 z-40 pb-[max(env(safe-area-inset-bottom),12px)] px-3 pointer-events-none">
+    <div
+      className="fixed inset-x-0 z-40 px-3 pointer-events-none"
+      style={{ bottom: 'var(--mobile-nav-clearance)' }}
+    >
       <div className="mx-auto max-w-2xl pointer-events-auto">
         <button
           onClick={onOpen}

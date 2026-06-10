@@ -679,7 +679,10 @@ export function PriceAnnouncementsPage() {
       </section>
 
       {selectedIds.size > 0 && (
-        <div className="fixed inset-x-3 bottom-3 z-40 md:hidden">
+        <div
+          className="fixed inset-x-3 z-40 md:hidden"
+          style={{ bottom: 'var(--mobile-nav-clearance)' }}
+        >
           <div className="rounded-2xl border border-blue-400/40 bg-slate-950/95 p-3 shadow-2xl shadow-black/50 backdrop-blur">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">

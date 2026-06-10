@@ -78,6 +78,21 @@
   --content-pad-x: 24px;
   --content-pad-y: 24px;
 
+  /* Altura efectiva de la mobile-bottom-nav fija en mobile.
+     Se usa como `bottom` en elementos flotantes (botones, paneles
+     stickys) para que NO queden tapados por la nav. Ejemplo:
+
+         <div className="fixed inset-x-3 z-40"
+              style={{ bottom: 'var(--mobile-nav-clearance)' }}>
+
+     Calculo: nav inner ~62px (padding 4px + item 6.7px top/bottom +
+     icono 19px + gap + label ~10px) + bottom offset 5.6px + 12px
+     de aire = ~80px. Sumo safe-area-inset-bottom para devices con
+     notch/home-indicator. En desktop (lg:+) la nav se oculta — la
+     variable se setea a 0 para que los floating se peguen al borde
+     como antes. */
+  --mobile-nav-clearance: calc(5rem + env(safe-area-inset-bottom));
+
   /* Sombras */
   --sh-1: 0 1px 2px rgba(0, 0, 0, 0.28);
   --sh-2: 0 4px 12px rgba(0, 0, 0, 0.32);
@@ -1347,6 +1362,15 @@ select.pro-input,
 @media (min-width: 1024px) {
   .erp-main {
     margin-left: var(--sidebar-width);
+  }
+}
+
+/* En desktop la mobile-bottom-nav esta oculta (lg:hidden). Los
+   elementos floating que usaban --mobile-nav-clearance se pueden pegar
+   al borde inferior porque no hay nav que los tape. */
+@media (min-width: 1024px) {
+  :root {
+    --mobile-nav-clearance: 1rem;
   }
 }
 

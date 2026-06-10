@@ -245,7 +245,12 @@ export function SalesWebCreatePage() {
         </Card>
       </section>
 
-      <div className="sticky bottom-4 rounded-2xl border border-slate-800 bg-slate-950/95 p-4 shadow-2xl backdrop-blur">
+      {/* bottom usa --mobile-nav-clearance para no quedar tapado por la
+          mobile-bottom-nav fija. En desktop la variable es 1rem. */}
+      <div
+        className="sticky rounded-2xl border border-slate-800 bg-slate-950/95 p-4 shadow-2xl backdrop-blur"
+        style={{ bottom: 'var(--mobile-nav-clearance)' }}
+      >
         <button disabled={saving || !canSave} onClick={submit} className="w-full rounded-xl bg-blue-500 px-5 py-4 font-black text-white disabled:cursor-not-allowed disabled:opacity-50">
           {saving ? 'Guardando...' : 'Crear venta pendiente'}
         </button>
