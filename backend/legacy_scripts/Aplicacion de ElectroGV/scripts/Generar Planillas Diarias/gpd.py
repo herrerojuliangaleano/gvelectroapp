@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -108,14 +108,23 @@ def obtener_servicios_google():
 # FECHAS
 # ============================================================
 
-def fecha_hoy_celda() -> str:
+def fecha_celda(dia: datetime) -> str:
     """Fecha para escribir dentro del sheet, formato dd/mm/aaaa."""
-    return datetime.now().strftime("%d/%m/%Y")
+    return dia.strftime("%d/%m/%Y")
+
+
+def fecha_archivo(dia: datetime) -> str:
+    """Fecha para el nombre del archivo, formato dd-mm-aaaa."""
+    return dia.strftime("%d-%m-%Y")
+
+
+# Compat: nombres viejos, por si algun otro script los importa.
+def fecha_hoy_celda() -> str:
+    return fecha_celda(datetime.now())
 
 
 def fecha_hoy_archivo() -> str:
-    """Fecha para el nombre del archivo, formato dd-mm-aaaa."""
-    return datetime.now().strftime("%d-%m-%Y")
+    return fecha_archivo(datetime.now())
 
 
 # ============================================================
@@ -227,11 +236,12 @@ def generar_archivo(
     nombre_archivo: str,
     folder_id: str,
     sucursal: str,
+    dia: datetime,
 ) -> str:
     """
     1) Copia la plantilla
     2) Renombra el archivo copiado
-    3) Escribe fecha y sucursal en la hoja objetivo
+    3) Escribe fecha (del dia indicado) y sucursal en la hoja objetivo
 
     Devuelve:
         ID del archivo generado.
@@ -249,7 +259,7 @@ def generar_archivo(
         sheets_service=sheets_service,
         spreadsheet_id=nuevo_spreadsheet_id,
         rango=f"{NOMBRE_HOJA_OBJETIVO}!B1:C1",
-        valores=[[fecha_hoy_celda(), sucursal]],
+        valores=[[fecha_celda(dia), sucursal]],
     )
 
     return nuevo_spreadsheet_id
@@ -265,38 +275,61 @@ def main() -> None:
     - se actualiza en B1 y C1
     """
     drive_service, sheets_service = obtener_servicios_google()
-    hoy = fecha_hoy_archivo()
+    hoy_dt = datetime.now()
+    hoy = fecha_archivo(hoy_dt)
 
-    trabajos: List[Tuple[str, str, str, str]] = [
+    # (template, nombre_archivo, carpeta, sucursal, dia_de_la_planilla)
+    trabajos: List[Tuple[str, str, str, str, datetime]] = [
         (
             PLANTILLA_SUCURSALES_ID,
             f"Planilla Ventas SUR - {hoy}",
             CARPETA_SUR_ID,
             "SUR",
+            hoy_dt,
         ),
         (
             PLANTILLA_SUCURSALES_ID,
             f"Planilla Ventas NORTE - {hoy}",
             CARPETA_NORTE_ID,
             "NORTE",
+            hoy_dt,
         ),
         (
             PLANTILLA_SUCURSALES_ID,
             f"Planilla Ventas CANNING - {hoy}",
             CARPETA_CANNING_ID,
             "CANNING",
+            hoy_dt,
         ),
         (
             PLANTILLA_CASEROS_ID,
             f"Planilla Ventas - {hoy}",
             CARPETA_CASEROS_ID,
             "CASEROS",
+            hoy_dt,
         ),
     ]
 
+    # NORTE (Norcenter) abre tambien los DOMINGOS, pero este generador no se
+    # corre los domingos. Cuando se ejecuta un sabado, ademas de las planillas
+    # del dia se genera la del domingo para NORTE, con la fecha del domingo
+    # tanto en el nombre del archivo como en la celda B1.
+    if hoy_dt.weekday() == 5:  # 0=lunes ... 5=sabado, 6=domingo
+        domingo = hoy_dt + timedelta(days=1)
+        trabajos.append(
+            (
+                PLANTILLA_SUCURSALES_ID,
+                f"Planilla Ventas NORTE - {fecha_archivo(domingo)}",
+                CARPETA_NORTE_ID,
+                "NORTE",
+                domingo,
+            )
+        )
+        print(f"Hoy es sabado: se genera ademas la planilla del domingo {fecha_archivo(domingo)} para NORTE (Norcenter).")
+
     generados: List[Tuple[str, str]] = []
 
-    for template_id, nombre_archivo, carpeta_id, sucursal in trabajos:
+    for template_id, nombre_archivo, carpeta_id, sucursal, dia in trabajos:
         if "PEGAR_ID_" in template_id or "PEGAR_ID_" in carpeta_id:
             raise ValueError(
                 "Todavía hay IDs sin completar en la configuración. "
@@ -311,6 +344,7 @@ def main() -> None:
             nombre_archivo=nombre_archivo,
             folder_id=carpeta_id,
             sucursal=sucursal,
+            dia=dia,
         )
         generados.append((nombre_archivo, nuevo_id))
         print(f"  OK -> {nombre_archivo}")
