@@ -94,8 +94,14 @@ const CONFIG = {
   protectAfterFreeze: true,
 
   // Usuarios que SÍ pueden editar filas congeladas.
+  // Victor + administración. Importante: ademas de figurar aca, estas
+  // cuentas tienen que tener permiso de edicion sobre la planilla en
+  // Drive (la proteccion no da acceso al archivo, solo exime del
+  // bloqueo a quienes ya pueden editarlo).
   protectionEditors: [
-    // 'tuemail@gmail.com'
+    'admgv92@gmail.com',       // Victor (instalar el script con ESTA cuenta)
+    'cchaparrogv@gmail.com',   // adm
+    'ngimenezgv@gmail.com',    // adm
   ],
 
   protectionDescriptionPrefix: 'AUTO_VENTA_CONGELADA_'
