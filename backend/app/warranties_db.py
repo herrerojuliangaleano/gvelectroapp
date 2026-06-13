@@ -235,6 +235,7 @@ def _guarantee_to_dict(g: Guarantee, session: Session, *, with_parent_code: bool
         "deposito": g.deposito,
         "lugar_llegada": g.lugar_llegada,
         "ingreso_at": _iso_or_empty(g.ingreso_at),
+        "carga_historica": bool(getattr(g, "carga_historica", False)),
         "created_at": _iso_or_empty(g.created_at),
         "updated_at": _iso_or_empty(g.updated_at),
         "cliente_nombre": g.cliente_nombre,
@@ -435,6 +436,7 @@ def pg_collect_export_rows_by_codes(warranty_codes: Iterable[str]) -> list[dict[
                 "warranty_code": g.warranty_code,
                 "status": g.status,
                 "ingreso_at": _iso_or_empty(g.ingreso_at),
+        "carga_historica": bool(getattr(g, "carga_historica", False)),
                 "created_at": _iso_or_empty(g.created_at),
                 "fecha_resolucion": _iso_or_empty(g.fecha_resolucion),
                 "cancelled_at": _iso_or_empty(g.cancelled_at),
@@ -472,6 +474,7 @@ def pg_collect_export_rows() -> list[dict[str, Any]]:
                 "warranty_code": g.warranty_code,
                 "status": g.status,
                 "ingreso_at": _iso_or_empty(g.ingreso_at),
+        "carga_historica": bool(getattr(g, "carga_historica", False)),
                 "created_at": _iso_or_empty(g.created_at),
                 "fecha_resolucion": _iso_or_empty(g.fecha_resolucion),
                 "cancelled_at": _iso_or_empty(g.cancelled_at),
@@ -641,7 +644,7 @@ _UPDATE_DATE_FIELDS = {
     "fecha_compra", "fecha_nota_credito", "fecha_reparacion",
     "fecha_recepcion_reemplazo",
 }
-_UPDATE_BOOL_FIELDS = {"cancelled", "synced_to_google_sheet", "pickup_alert_sent"}
+_UPDATE_BOOL_FIELDS = {"cancelled", "synced_to_google_sheet", "pickup_alert_sent", "carga_historica"}
 # Campos legacy con username/display que mapean a FK en Postgres.
 _UPDATE_USER_FK = {
     "responsible_username": "responsible_user_id",

@@ -444,6 +444,10 @@ export async function fetchWarrantyDetail(id: string): Promise<WarrantyDetailRes
 export async function updateWarranty(id: string, payload: WarrantyUpdatePayload): Promise<WarrantyDetailResponse> {
   return request(`/api/warranties/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) });
 }
+export async function updateWarrantyDates(id: string, payload: import('../types').WarrantyDatesUpdatePayload): Promise<WarrantyDetailResponse> {
+  return request(`/api/warranties/${encodeURIComponent(id)}/dates`, { method: 'PATCH', body: JSON.stringify(payload) });
+}
+export async function fetchBrandsWithoutProvider(): Promise<import('../types').BrandWithoutProviderInfo[]> { return request('/api/products/brands/without-provider'); }
 export async function updateWarrantyEntryBase(id: string, payload: WarrantyEntryBaseUpdatePayload): Promise<WarrantyDetailResponse> {
   return request(`/api/warranties/${encodeURIComponent(id)}/entry-base`, { method: 'PATCH', body: JSON.stringify(payload) });
 }

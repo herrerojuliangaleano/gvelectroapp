@@ -4,6 +4,7 @@ import {
   createProvider,
   deleteBrandProvider,
   fetchBrandProviders,
+  fetchBrandsWithoutProvider,
   fetchProductBrands,
   fetchProductCatalogStatus,
   fetchProductSyncLogs,
@@ -14,7 +15,7 @@ import {
   updateProvider,
 } from '../api/client';
 import { EmptyState, KpiCard, Notice, PageHeader, Panel, ResponsiveTable, SearchField, SectionHeader, TabButton, Tabs, primaryButtonClass, proInputClass, secondaryButtonClass } from '../components/ProUI';
-import type { BrandProviderInfo, ProductBrandInfo, ProductCatalogStatus, ProductInfo, ProductSyncLogInfo, ProviderInfo } from '../types';
+import type { BrandProviderInfo, BrandWithoutProviderInfo, ProductBrandInfo, ProductCatalogStatus, ProductInfo, ProductSyncLogInfo, ProviderInfo } from '../types';
 
 const inputClass = proInputClass;
 
@@ -27,6 +28,7 @@ export function ProductCatalogPage() {
   const [brands, setBrands] = useState<ProductBrandInfo[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [relations, setRelations] = useState<BrandProviderInfo[]>([]);
+  const [unmatchedBrands, setUnmatchedBrands] = useState<BrandWithoutProviderInfo[]>([]);
   const [logs, setLogs] = useState<ProductSyncLogInfo[]>([]);
   const [q, setQ] = useState('');
   const [brandFilter, setBrandFilter] = useState('');
@@ -41,15 +43,16 @@ export function ProductCatalogPage() {
   async function loadAll() {
     setLoading(true); setError('');
     try {
-      const [st, prod, br, prov, rel, syncLogs] = await Promise.all([
+      const [st, prod, br, prov, rel, unmatched, syncLogs] = await Promise.all([
         fetchProductCatalogStatus(),
         fetchProducts({ q, marca: brandFilter, limit: 80 }),
         fetchProductBrands(),
         fetchProviders(true),
         fetchBrandProviders(),
+        fetchBrandsWithoutProvider().catch(() => [] as BrandWithoutProviderInfo[]),
         fetchProductSyncLogs(12),
       ]);
-      setStatus(st); setProducts(prod.items); setBrands(br); setProviders(prov); setRelations(rel); setLogs(syncLogs);
+      setStatus(st); setProducts(prod.items); setBrands(br); setProviders(prov); setRelations(rel); setUnmatchedBrands(unmatched); setLogs(syncLogs);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo cargar el catálogo.');
     } finally { setLoading(false); }
@@ -169,7 +172,35 @@ export function ProductCatalogPage() {
     </Panel>}
 
     {tab === 'marcas' && <Panel>
-      <SectionHeader title="Relación marca / proveedor" description="Usá esta vinculación para que Garantías sugiera el proveedor correcto por marca." />
+      <SectionHeader title="Relación marca / proveedor" description="Usá esta vinculación para que Garantías sugiera el proveedor correcto por marca. Una marca puede tener varios proveedores; marcá uno como predeterminado." />
+      {unmatchedBrands.length > 0 && (
+        <div className="mb-5 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
+          <div className="mb-2 text-sm font-black text-amber-200">
+            {unmatchedBrands.length} marca{unmatchedBrands.length === 1 ? '' : 's'} sin proveedor
+          </div>
+          <p className="mb-3 text-xs text-slate-400">
+            Estas marcas no tienen ningún proveedor vinculado. Se ordenan por cantidad de garantías para que vincules
+            primero las que más impactan en el cruce de datos (tiempos por proveedor). Tocá una para cargarla arriba.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {unmatchedBrands.slice(0, 30).map((b) => {
+              const match = brands.find((x) => x.name === b.name);
+              return (
+                <button
+                  key={b.brand_id}
+                  onClick={() => { if (match) setBrandId(String(match.id)); }}
+                  className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-100 hover:bg-amber-500/20"
+                >
+                  {b.name}
+                  {b.warranty_count > 0 && (
+                    <span className="rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-200">{b.warranty_count} gar.</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <div className="grid gap-4 lg:grid-cols-[1fr_1fr_auto]">
         <select className={inputClass} value={brandId} onChange={(e) => setBrandId(e.target.value)}><option value="">Marca</option>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}</select>
         <select className={inputClass} value={providerId} onChange={(e) => setProviderId(e.target.value)}><option value="">Proveedor</option>{activeProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select>

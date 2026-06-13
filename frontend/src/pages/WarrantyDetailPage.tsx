@@ -8,7 +8,7 @@ import {
 import {
   approveWarrantyReview, cancelWarranty, can, deleteWarranty,
   fetchWarrantyDetail, fetchWarrantyOptions, markWarrantyIncomplete,
-  takeWarrantyIntoReview, updateWarranty, updateWarrantyEntryBase,
+  takeWarrantyIntoReview, updateWarranty, updateWarrantyDates, updateWarrantyEntryBase,
 } from '../api/client';
 import { ErpConfirmDialog, ErpTimeline, ErpTimelineItem } from '../components/ProUI';
 import type { WarrantyDetailResponse, WarrantyItemUpdatePayload, WarrantyOptions } from '../types';
@@ -774,6 +774,13 @@ export function WarrantyDetailPage() {
       )}
 
       {/* ══════════════════════════════════════════════════════════════════
+          FECHAS REALES (carga histórica) — solo warranties.edit_dates
+      ══════════════════════════════════════════════════════════════════ */}
+      {can('warranties.edit_dates') && (
+        <HistoricDatesCard summary={s} warrantyId={s.id_garantia} onUpdated={setData} />
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
           HISTORY / MOVEMENTS — collapsible
       ══════════════════════════════════════════════════════════════════ */}
       <div className="rounded-3xl border border-slate-700 bg-slate-950/60 shadow-xl">
@@ -1054,6 +1061,91 @@ function ReadOnlyItem({ row }: { row: any }) {
       {row.observaciones && (
         <div className="mt-2 whitespace-pre-wrap rounded-xl bg-slate-950 p-3 text-sm text-slate-300">
           <span className="font-bold text-slate-400">Obs: </span>{row.observaciones}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   Fechas reales para garantías de carga histórica (migradas desde Excel).
+   Solo visible con `warranties.edit_dates` (adm/gerencia). Permite corregir
+   ingreso / envío a proveedor / resolución / finalización para que el cruce
+   de datos (SLA por proveedor, tasa de falla por marca) use fechas reales
+   y no el timestamp de cuando se cargó el Excel viejo.
+   ════════════════════════════════════════════════════════════════════════ */
+function HistoricDatesCard({ summary, warrantyId, onUpdated }: {
+  summary: import('../types').WarrantySummary;
+  warrantyId: string;
+  onUpdated: (detail: import('../types').WarrantyDetailResponse) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [historica, setHistorica] = useState(!!summary.carga_historica);
+  const [ingreso, setIngreso] = useState(summary.ingreso_iso || '');
+  const [envio, setEnvio] = useState(summary.sent_to_provider_iso || '');
+  const [resolucion, setResolucion] = useState(summary.fecha_resolucion_iso || '');
+  const [finalizacion, setFinalizacion] = useState(summary.fecha_finalizacion_iso || '');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+
+  async function save() {
+    setSaving(true); setMsg(''); setErr('');
+    try {
+      const detail = await updateWarrantyDates(warrantyId, {
+        carga_historica: historica,
+        ingreso_at: ingreso,
+        sent_to_provider_at: envio,
+        fecha_resolucion: resolucion,
+        fecha_finalizacion: finalizacion,
+      });
+      onUpdated(detail);
+      setMsg('Fechas actualizadas. El cruce de datos va a usar estos valores.');
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'No se pudo guardar');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="rounded-3xl border border-amber-500/30 bg-amber-500/5 shadow-xl">
+      <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center justify-between p-5 text-left">
+        <div className="flex items-center gap-2">
+          <Clock size={18} className="text-amber-400" />
+          <h2 className="text-lg font-black">Fechas reales (carga histórica)</h2>
+          {summary.carga_historica && (
+            <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-bold text-amber-200">Histórica</span>
+          )}
+        </div>
+        {open ? <ChevronUp size={20} className="text-slate-400" /> : <ChevronDown size={20} className="text-slate-400" />}
+      </button>
+      {open && (
+        <div className="border-t border-amber-500/20 p-5">
+          <p className="mb-4 text-sm text-slate-400">
+            Para garantías migradas desde los Excel viejos: corregí acá las fechas reales para que las estadísticas
+            (tiempos por proveedor, tasa de falla) no usen la fecha de carga. Dejá un campo vacío para borrar esa fecha.
+          </p>
+          {err && <div className="mb-3 rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">{err}</div>}
+          {msg && <div className="mb-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-100">{msg}</div>}
+          <label className="mb-4 flex items-center gap-2 text-sm font-bold text-slate-200">
+            <input type="checkbox" checked={historica} onChange={(e) => setHistorica(e.target.checked)} />
+            Marcar como carga histórica (migrada de Excel)
+          </label>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <label><span className="mb-1 block text-xs font-bold text-slate-400">Ingreso real</span>
+              <input type="date" value={ingreso} onChange={(e) => setIngreso(e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm" /></label>
+            <label><span className="mb-1 block text-xs font-bold text-slate-400">Envío a proveedor</span>
+              <input type="date" value={envio} onChange={(e) => setEnvio(e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm" /></label>
+            <label><span className="mb-1 block text-xs font-bold text-slate-400">Resolución</span>
+              <input type="date" value={resolucion} onChange={(e) => setResolucion(e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm" /></label>
+            <label><span className="mb-1 block text-xs font-bold text-slate-400">Finalización</span>
+              <input type="date" value={finalizacion} onChange={(e) => setFinalizacion(e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm" /></label>
+          </div>
+          <button onClick={save} disabled={saving} className="mt-4 rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-black text-slate-950 disabled:opacity-50">
+            {saving ? 'Guardando…' : 'Guardar fechas reales'}
+          </button>
         </div>
       )}
     </div>

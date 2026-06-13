@@ -132,6 +132,12 @@ class Guarantee(Base):
     fecha_llegada_transito: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     lugar_salida_transito: Mapped[str] = mapped_column(Text, default="", nullable=False)
 
+    # Carga histórica: garantía migrada desde los Excel pre-sistema. Sus
+    # fechas (ingreso, envío a proveedor, resolución) pueden editarse a mano
+    # con el permiso `warranties.edit_dates` para que el cruce de datos /
+    # SLA por proveedor no quede contaminado con timestamps de carga.
+    carga_historica: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+
     # Resolución
     fecha_resolucion: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     resultado_resolucion: Mapped[str] = mapped_column(Text, default="", nullable=False)

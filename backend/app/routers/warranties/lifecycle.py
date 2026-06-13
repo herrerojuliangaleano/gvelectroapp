@@ -12,9 +12,11 @@ Este modulo debe registrarse ultimo: contiene el catch-all GET /{warranty_id}.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from ...audit import audit
 from ...auth import require_current_user, require_permission
@@ -214,6 +216,74 @@ def get_warranty_history(warranty_id: str, _user: Annotated[Any, Depends(require
         raise HTTPException(status_code=404, detail="Garantía no encontrada")
     row, _items = result
     return pg_history_for_guarantee(int(row["id"]))
+
+
+class WarrantyDatesUpdateRequest(BaseModel):
+    """Edicion de fechas reales para garantias de carga historica.
+
+    Cada campo: None = no tocar; "" = limpiar; ISO date/datetime = setear.
+    Solo accesible con `warranties.edit_dates` (adm/gerencia) para que las
+    estadisticas (SLA por proveedor, tasa de falla) usen fechas reales y no
+    el timestamp de cuando se cargo el Excel viejo.
+    """
+    carga_historica: bool | None = None
+    ingreso_at: str | None = None
+    sent_to_provider_at: str | None = None
+    fecha_resolucion: str | None = None
+    fecha_finalizacion: str | None = None
+
+
+_EDITABLE_DATE_FIELDS = ("ingreso_at", "sent_to_provider_at", "fecha_resolucion", "fecha_finalizacion")
+
+
+def _parse_iso_or_400(field: str, value: str) -> str:
+    try:
+        # Acepta YYYY-MM-DD o ISO completo; validamos y devolvemos ISO.
+        return datetime.fromisoformat(value).isoformat()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Fecha invalida en {field}: {value!r} (usar YYYY-MM-DD o ISO)") from exc
+
+
+@router.patch("/{warranty_id}/dates", response_model=WarrantyDetailResponse)
+def update_warranty_dates(warranty_id: str, data: WarrantyDatesUpdateRequest, user: Annotated[Any, Depends(require_permission("warranties.edit_dates"))]):
+    result = pg_fetch_guarantee_with_items(warranty_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Garantía no encontrada")
+    row, _items = result
+
+    updates: dict[str, Any] = {}
+    changes: list[str] = []
+    if data.carga_historica is not None and bool(row.get("carga_historica")) != data.carga_historica:
+        updates["carga_historica"] = data.carga_historica
+        changes.append(f"carga_historica → {data.carga_historica}")
+    for field in _EDITABLE_DATE_FIELDS:
+        value = getattr(data, field)
+        if value is None:
+            continue
+        value = value.strip()
+        if value == "":
+            if row.get(field):
+                updates[field] = None
+                changes.append(f"{field}: {row.get(field)} → (vacio)")
+            continue
+        iso = _parse_iso_or_400(field, value)
+        if str(row.get(field) or "") != iso:
+            updates[field] = iso
+            changes.append(f"{field}: {row.get(field) or '-'} → {iso}")
+
+    if not updates:
+        return get_warranty_detail(warranty_id, user)
+
+    pg_update_guarantee_fields(
+        guarantee_id=int(row["id"]),
+        user=user,
+        updates=updates,
+        action="dates_edited",
+        note="Fechas reales editadas (carga histórica): " + "; ".join(changes),
+        details={"changes": changes},
+    )
+    audit("warranties.edit_dates", user=user, resource_type="warranty", resource_id=warranty_id, details={"changes": changes})
+    return get_warranty_detail(warranty_id, user)
 
 
 @router.patch("/{warranty_id}", response_model=WarrantyDetailResponse)

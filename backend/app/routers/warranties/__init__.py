@@ -422,6 +422,11 @@ class WarrantySummary(BaseModel):
     grouped_item_label: str = ""
     ingreso: str = ""
     ingreso_iso: str = ""
+    # Cruce de datos / cargas historicas (editar con warranties.edit_dates)
+    carga_historica: bool = False
+    sent_to_provider_iso: str = ""
+    fecha_resolucion_iso: str = ""
+    fecha_finalizacion_iso: str = ""
     responsible_username: str = ""
     responsable: str = ""
     usuario: str = ""
@@ -1726,6 +1731,10 @@ def row_to_summary(row: dict[str, Any], items: list[dict[str, Any]]) -> Warranty
         grouped_item_label=(f"Ítem {int(row['parent_item_index']):02d} de {row['parent_warranty_code']}" if "parent_warranty_code" in row.keys() and row["parent_warranty_code"] and "parent_item_index" in row.keys() and row["parent_item_index"] else ""),
         ingreso=ingreso,
         ingreso_iso=date_input_from_iso(row["ingreso_at"]),
+        carga_historica=bool(row.get("carga_historica")) if "carga_historica" in row.keys() else False,
+        sent_to_provider_iso=date_input_from_iso(row.get("sent_to_provider_at") or "") if "sent_to_provider_at" in row.keys() else "",
+        fecha_resolucion_iso=date_input_from_iso(row.get("fecha_resolucion") or "") if "fecha_resolucion" in row.keys() else "",
+        fecha_finalizacion_iso=date_input_from_iso(row.get("fecha_finalizacion") or "") if "fecha_finalizacion" in row.keys() else "",
         responsible_username=str(row["responsible_username"] or ""),
         responsable=str(row["responsible_name"] or ""),
         usuario=str(row["created_by"] or ""),

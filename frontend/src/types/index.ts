@@ -1203,6 +1203,11 @@ export interface WarrantySummary {
   grouped_item_label?: string;
   ingreso: string;
   ingreso_iso?: string;
+  /** Garantia migrada desde Excel pre-sistema (fechas editables con warranties.edit_dates). */
+  carga_historica?: boolean;
+  sent_to_provider_iso?: string;
+  fecha_resolucion_iso?: string;
+  fecha_finalizacion_iso?: string;
   responsible_username?: string;
   responsable: string;
   usuario: string;
@@ -1297,6 +1302,21 @@ export interface WarrantyDetailResponse {
   summary: WarrantySummary;
   rows: WarrantyRow[];
   history: AuditEvent[];
+}
+
+export interface WarrantyDatesUpdatePayload {
+  carga_historica?: boolean;
+  /** undefined = no tocar; '' = limpiar; 'YYYY-MM-DD' = setear. */
+  ingreso_at?: string;
+  sent_to_provider_at?: string;
+  fecha_resolucion?: string;
+  fecha_finalizacion?: string;
+}
+
+export interface BrandWithoutProviderInfo {
+  brand_id: number;
+  name: string;
+  warranty_count: number;
 }
 
 export interface WarrantyItemUpdatePayload {

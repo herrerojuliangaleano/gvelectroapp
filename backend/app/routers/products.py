@@ -282,6 +282,51 @@ def sync_logs(_user: Annotated[Any, Depends(require_permission("products.view"))
         return [_sync_log_info(row, session) for row in rows]
 
 
+class BrandWithoutProviderInfo(BaseModel):
+    """Marca activa sin ningun proveedor vinculado, con cantidad de garantias
+    para priorizar el trabajo de matching (cruce de datos posventa)."""
+    brand_id: int
+    name: str
+    warranty_count: int
+
+
+@router.get("/brands/without-provider", response_model=list[BrandWithoutProviderInfo])
+def brands_without_provider(_user: Annotated[Any, Depends(require_permission("products.view"))]):
+    """Bandeja de matching marca→proveedor.
+
+    Devuelve las marcas activas que NO tienen ningun proveedor vinculado en
+    brand_providers, ordenadas por cantidad de garantias historicas con esa
+    marca (descendente) — asi el matching se hace primero donde mas duele
+    el cruce de datos (SLA por proveedor)."""
+    from ..models.warranties import GuaranteeItem
+    from ..warranty_helpers import normalize_text as _norm
+
+    with db_session() as session:
+        linked_ids = {bp.brand_id for bp in session.scalars(select(BrandProvider)).all()}
+        brands = session.scalars(
+            select(ProductBrand).where(ProductBrand.is_active.is_(True))
+        ).all()
+        unlinked = [b for b in brands if b.id not in linked_ids]
+        if not unlinked:
+            return []
+        # Conteo de garantias por marca normalizada (items de garantia).
+        counts: dict[str, int] = {}
+        for (marca,) in session.execute(select(GuaranteeItem.marca)).all():
+            key = _norm(str(marca or ""))
+            if key:
+                counts[key] = counts.get(key, 0) + 1
+        out = [
+            BrandWithoutProviderInfo(
+                brand_id=int(b.id),
+                name=str(b.name),
+                warranty_count=counts.get(str(b.normalized_name or ""), 0),
+            )
+            for b in unlinked
+        ]
+        out.sort(key=lambda x: (-x.warranty_count, x.name))
+        return out
+
+
 @router.get("/brands", response_model=list[ProductBrandInfo])
 def list_brands(_user: Annotated[Any, Depends(require_permission("products.view"))]):
     with db_session() as session:
