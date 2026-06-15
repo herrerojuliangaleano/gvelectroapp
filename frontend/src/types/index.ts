@@ -2200,6 +2200,8 @@ export interface BrandProviderInfo {
   is_default: boolean;
   created_at: string;
   updated_at: string;
+  /** Garantías históricas completadas al vincular esta marca. */
+  warranties_backfilled?: number;
 }
 
 export interface BrandProviderPayload {

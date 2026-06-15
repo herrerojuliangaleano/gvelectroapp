@@ -48,7 +48,22 @@ async def lifespan(_app: FastAPI):
         logging.getLogger("electrogv.permissions").warning(
             "No se pudo validar el catálogo de permisos en startup: %s", exc
         )
+    # Scheduler de tareas automáticas (sync nocturno de catálogo, etc.).
+    # Solo arranca si SCHEDULER_ENABLED=true (prod-local); no rompe si falla.
+    try:
+        from .scheduler import start_scheduler
+        start_scheduler()
+    except Exception as exc:
+        import logging
+        logging.getLogger("electrogv.scheduler").warning(
+            "No se pudo iniciar el scheduler: %s", exc
+        )
     yield
+    try:
+        from .scheduler import shutdown_scheduler
+        shutdown_scheduler()
+    except Exception:
+        pass
 
 
 app = FastAPI(title=settings.app_name, version="1.5.0-pro-base", lifespan=lifespan)

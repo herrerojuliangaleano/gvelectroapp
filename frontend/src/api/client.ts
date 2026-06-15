@@ -826,6 +826,7 @@ export async function updateProvider(id: number, payload: ProviderPayload): Prom
 export async function fetchBrandProviders(): Promise<BrandProviderInfo[]> { return request('/api/products/brand-providers'); }
 export async function setBrandProvider(payload: BrandProviderPayload): Promise<BrandProviderInfo> { return request('/api/products/brand-providers', { method: 'POST', body: JSON.stringify(payload) }); }
 export async function deleteBrandProvider(id: number): Promise<{ ok: boolean }> { return request(`/api/products/brand-providers/${encodeURIComponent(String(id))}`, { method: 'DELETE' }); }
+export async function backfillProviderNames(): Promise<{ updated: number; by_provider: Record<string, number> }> { return request('/api/products/brand-providers/backfill', { method: 'POST' }); }
 
 // ── Sales BI ──────────────────────────────────────────────────────────────────
 

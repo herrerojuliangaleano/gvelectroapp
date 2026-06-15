@@ -94,6 +94,14 @@ class BrandProviderInfo(BaseModel):
     is_default: bool
     created_at: str
     updated_at: str
+    # Cuántas garantías históricas sin proveedor se completaron al vincular
+    # esta marca (solo se rellena en la respuesta de POST /brand-providers).
+    warranties_backfilled: int = 0
+
+
+class BackfillResult(BaseModel):
+    updated: int
+    by_provider: dict[str, int] = {}
 
 
 class BrandProviderPayload(BaseModel):
@@ -469,7 +477,27 @@ def set_brand_provider(data: BrandProviderPayload, _user: Annotated[Any, Depends
             session.add(relation)
             session.flush()
         session.commit()
-        return _brand_provider_info(relation)
+        info = _brand_provider_info(relation)
+        brand_name = str(brand.name or "")
+    # Fuera de la sesión: completar garantías históricas de esta marca que
+    # estaban sin proveedor (el matching retroactivo que pidió el negocio).
+    if data.is_default and brand_name:
+        try:
+            from ..warranties_db import pg_backfill_provider_names
+            result = pg_backfill_provider_names(brand_name)
+            info.warranties_backfilled = int(result.get("updated") or 0)
+        except Exception:
+            pass  # no romper el vínculo si el backfill falla
+    return info
+
+
+@router.post("/brand-providers/backfill", response_model=BackfillResult)
+def backfill_provider_names(_user: Annotated[Any, Depends(require_permission("products.providers.manage"))]):
+    """Completa el proveedor en TODAS las garantías históricas que están sin
+    proveedor, usando el default de su marca. Para el botón "completar
+    proveedores faltantes" de la bandeja de matching."""
+    from ..warranties_db import pg_backfill_provider_names
+    return BackfillResult(**pg_backfill_provider_names())
 
 
 @router.delete("/brand-providers/{relation_id}")

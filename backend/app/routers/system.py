@@ -299,12 +299,18 @@ def diagnostics(_user: Annotated[CurrentUser, Depends(require_permission("system
     issues = [*user_issues, *(db.get("issues") or [])]
     if recent_errors:
         issues.append({"severity": "warning", "title": "Procesos recientes con error", "detail": f"{len(recent_errors)} proceso/s recientes terminaron con error.", "action": "Revisar Historial de procesos."})
+    try:
+        from ..scheduler import scheduler_status
+        sched = scheduler_status()
+    except Exception:
+        sched = {"enabled": False, "running": False, "jobs": []}
     critical = len([i for i in issues if i.get("severity") == "critical"])
     warning = len([i for i in issues if i.get("severity") == "warning"])
     status = "critical" if critical else "warning" if warning else "ok"
     return {
         "status": status,
         "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "scheduler": sched,
         "summary": {
             **user_counts,
             **(db.get("counts") or {}),

@@ -57,6 +57,20 @@ class Settings(BaseModel):
     # pidiendo login constantemente. Si querias 1 dia: 24. 1 semana: 168.
     # Override por env var AUTH_TOKEN_HOURS.
     auth_token_hours: int = int(os.getenv("AUTH_TOKEN_HOURS", "720"))
+
+    # ── Scheduler de tareas automáticas (APScheduler) ──────────────────────
+    # Desactivado por default (dev). Se activa en prod-local con
+    # SCHEDULER_ENABLED=true para no gastar llamadas a Google ni correr jobs
+    # automáticos mientras se desarrolla.
+    scheduler_enabled: bool = os.getenv("SCHEDULER_ENABLED", "false").lower() in {"1", "true", "yes", "si", "sí"}
+    # Sync nocturno del catálogo desde la Planilla Madre. Hora local (0-23).
+    # El catálogo no se corrige a la mañana como las planillas diarias, así
+    # que correrlo de madrugada es seguro.
+    catalog_sync_enabled: bool = os.getenv("CATALOG_SYNC_ENABLED", "true").lower() in {"1", "true", "yes", "si", "sí"}
+    catalog_sync_hour: int = int(os.getenv("CATALOG_SYNC_HOUR", "3"))
+    catalog_sync_minute: int = int(os.getenv("CATALOG_SYNC_MINUTE", "30"))
+    # Zona horaria para los cron jobs.
+    scheduler_timezone: str = os.getenv("SCHEDULER_TIMEZONE", "America/Argentina/Buenos_Aires")
     cors_origins: list[str] = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000").split(",") if o.strip()]
 
     backend_dir: Path = Path(__file__).resolve().parents[1]

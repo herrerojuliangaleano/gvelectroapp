@@ -5,6 +5,7 @@ import {
   deleteBrandProvider,
   fetchBrandProviders,
   fetchBrandsWithoutProvider,
+  backfillProviderNames,
   fetchProductBrands,
   fetchProductCatalogStatus,
   fetchProductSyncLogs,
@@ -108,12 +109,28 @@ export function ProductCatalogPage() {
     setError(''); setMessage('');
     try {
       if (!brandId || !providerId) throw new Error('Elegí una marca y un proveedor.');
-      await setBrandProvider({ brand_id: Number(brandId), provider_id: Number(providerId), is_default: true });
+      const link = await setBrandProvider({ brand_id: Number(brandId), provider_id: Number(providerId), is_default: true });
       setBrandId(''); setProviderId('');
-      setMessage('Relación marca/proveedor guardada.');
+      const n = link.warranties_backfilled || 0;
+      setMessage(n > 0
+        ? `Relación guardada. Se completó el proveedor en ${n} garantía${n === 1 ? '' : 's'} histórica${n === 1 ? '' : 's'} de esa marca.`
+        : 'Relación marca/proveedor guardada.');
       await loadAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo vincular la marca.');
+    }
+  }
+
+  async function runBackfill() {
+    setError(''); setMessage('');
+    try {
+      const r = await backfillProviderNames();
+      setMessage(r.updated > 0
+        ? `Se completó el proveedor en ${r.updated} garantía${r.updated === 1 ? '' : 's'} histórica${r.updated === 1 ? '' : 's'}.`
+        : 'No quedaban garantías sin proveedor para completar (con marcas ya vinculadas).');
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo completar los proveedores.');
     }
   }
 
@@ -175,8 +192,13 @@ export function ProductCatalogPage() {
       <SectionHeader title="Relación marca / proveedor" description="Usá esta vinculación para que Garantías sugiera el proveedor correcto por marca. Una marca puede tener varios proveedores; marcá uno como predeterminado." />
       {unmatchedBrands.length > 0 && (
         <div className="mb-5 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
-          <div className="mb-2 text-sm font-black text-amber-200">
-            {unmatchedBrands.length} marca{unmatchedBrands.length === 1 ? '' : 's'} sin proveedor
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div className="text-sm font-black text-amber-200">
+              {unmatchedBrands.length} marca{unmatchedBrands.length === 1 ? '' : 's'} sin proveedor
+            </div>
+            <button onClick={runBackfill} className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-100 hover:bg-amber-500/20">
+              Completar garantías con marcas ya vinculadas
+            </button>
           </div>
           <p className="mb-3 text-xs text-slate-400">
             Estas marcas no tienen ningún proveedor vinculado. Se ordenan por cantidad de garantías para que vincules

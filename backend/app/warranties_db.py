@@ -1321,3 +1321,73 @@ def pg_reset_warranty_tables() -> None:
     with db_session() as session:
         session.execute(_text(f"TRUNCATE TABLE {tables_csv} RESTART IDENTITY CASCADE"))
         session.commit()
+
+
+# ── Backfill de proveedores en garantías (cruce de datos posventa) ───────────
+#
+# El proveedor se asigna solo al CREAR la garantía. Las garantías cargadas
+# cuando su marca todavía no estaba vinculada a un proveedor quedan con
+# provider_name vacío para siempre. Esta función las completa retroactivamente
+# usando el proveedor default de la marca de su primer item — así el trabajo
+# de matching marca→proveedor también arregla el histórico (y alimenta el
+# cruce de SLA por proveedor).
+
+def pg_backfill_provider_names(marca_filter: str | None = None) -> dict[str, Any]:
+    """Completa provider_name vacío en garantías usando el proveedor default
+    de su marca. Si `marca_filter` viene, solo toca garantías de esa marca
+    (caso: se acaba de vincular ESA marca a un proveedor).
+
+    Devuelve {"updated": int, "by_provider": {nombre: count}}.
+    """
+    from .warranty_helpers import normalize_text
+    from .models.products import BrandProvider, ProductBrand, Provider
+
+    norm_filter = normalize_text(marca_filter) if marca_filter else ""
+    updated = 0
+    by_provider: dict[str, int] = {}
+
+    with db_session() as session:
+        # Mapa marca_normalizada -> provider_name (el default por marca).
+        brand_to_provider: dict[str, str] = {}
+        prov_rows = session.execute(
+            select(ProductBrand.normalized_name, Provider.name, BrandProvider.is_default)
+            .join(BrandProvider, BrandProvider.brand_id == ProductBrand.id)
+            .join(Provider, Provider.id == BrandProvider.provider_id)
+            .where(ProductBrand.is_active.is_(True), Provider.is_active.is_(True))
+            .order_by(BrandProvider.is_default.desc())
+        ).all()
+        for norm_name, prov_name, _is_default in prov_rows:
+            key = str(norm_name or "")
+            if key and key not in brand_to_provider:  # primer match = default (orden desc)
+                brand_to_provider[key] = str(prov_name or "")
+
+        # Garantías sin proveedor + la marca de su primer item.
+        rows = session.execute(
+            select(Guarantee.id, GuaranteeItem.marca)
+            .join(GuaranteeItem, GuaranteeItem.guarantee_id == Guarantee.id)
+            .where(func.trim(func.coalesce(Guarantee.provider_name, "")) == "")
+            .order_by(Guarantee.id, GuaranteeItem.item_index)
+        ).all()
+        first_marca: dict[int, str] = {}
+        for gid, marca in rows:
+            m = str(marca or "").strip()
+            if m and gid not in first_marca:
+                first_marca[gid] = m
+
+        for gid, marca in first_marca.items():
+            mnorm = normalize_text(marca)
+            if norm_filter and mnorm != norm_filter:
+                continue
+            pname = brand_to_provider.get(mnorm, "")
+            if not pname:
+                continue
+            g = session.get(Guarantee, gid)
+            if g and not str(g.provider_name or "").strip():
+                g.provider_name = pname
+                g.updated_at = _utc_now()
+                g.synced_to_google_sheet = False
+                updated += 1
+                by_provider[pname] = by_provider.get(pname, 0) + 1
+        session.commit()
+
+    return {"updated": updated, "by_provider": by_provider}
