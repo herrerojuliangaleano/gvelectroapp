@@ -91,6 +91,7 @@ ALL_PERMISSIONS: dict[str, str] = {
     "tools.run.cer": "Ejecutar Limpiar Comprobantes",
     "tools.run.eb": "Ejecutar Limpiar Extractos Bancarios",
     "tools.run.gg": "Ejecutar Generar GFK",
+    "tools.run.gge": "Ejecutar Generar examenes de GFK (avanzado, solo superadmin)",
     "tools.run.ncm": "Ejecutar Normalizar Carpeta Mensual",
     "tools.run.ncmc": "Ejecutar Normalizar Carpeta Mensual con Cantidades",
     "tools.run.nvsc": "Ejecutar Normalizar Ventas VS Costos",

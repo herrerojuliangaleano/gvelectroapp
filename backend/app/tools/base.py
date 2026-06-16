@@ -119,6 +119,16 @@ def build_inputs(tool_id: str, payload: dict[str, Any], uploads: dict[str, list[
         return [""], [], []
     if tool_id == "gg":
         return [], [_date_to_ddmmyyyy(payload.get("fecha_inicio")), _date_to_ddmmyyyy(payload.get("fecha_fin"))], []
+    if tool_id == "gge":
+        args = [
+            "--source-url", str(payload.get("source_url", "")),
+            "--dest-url", str(payload.get("dest_url", "")),
+            "--marcas", str(payload.get("marcas", "")),
+            "--variantes", str(int(payload.get("variantes") or 1)),
+        ]
+        if str(payload.get("prefijo", "")).strip():
+            args += ["--prefijo", str(payload["prefijo"]).strip()]
+        return [], [], args
     if tool_id in {"ncm", "ncmc"}:
         return [str(payload.get("origen_url", "")), str(payload.get("master_url", "")), str(payload.get("destino_url", "")), str(payload.get("titulo", ""))], [], []
     if tool_id == "nvsc":
