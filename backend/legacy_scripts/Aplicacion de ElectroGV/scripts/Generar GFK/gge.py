@@ -19,7 +19,8 @@ Que hace:
 Uso (via web): se pasa por CLI (sys.argv):
   --source-url   URL/ID del GFK original en Drive
   --dest-url     URL/ID de la carpeta destino en Drive
-  --marcas       "WHIRLPOOL=15, DREAN=8"  (marca=cantidad de filas a agregar)
+  --marcas       "WHIRLPOOL=10, DREAN=15"  (marca=PORCENTAJE de inflado sobre
+                 las unidades reales de esa marca; ej 10 = +10%)
   --variantes    N (cantidad de examenes distintos a generar)
   --prefijo      nombre base de los archivos (ej "Examen GFK")
 """
@@ -98,22 +99,36 @@ def extraer_id_de_url(url: str) -> str:
     return url  # ya es un id
 
 
-def parse_marcas(spec: str) -> dict[str, int]:
-    """'WHIRLPOOL=15, DREAN=8' -> {'WHIRLPOOL': 15, 'DREAN': 8}."""
-    out: dict[str, int] = {}
+def parse_marcas(spec: str) -> dict[str, float]:
+    """'WHIRLPOOL=10, DREAN=15%' -> {'WHIRLPOOL': 10.0, 'DREAN': 15.0}.
+
+    El valor es el PORCENTAJE en que se infla esa marca sobre sus unidades
+    reales (cantidad vendida). Acepta con o sin '%'.
+    """
+    out: dict[str, float] = {}
     for parte in re.split(r"[,;\n]+", spec or ""):
         parte = parte.strip()
         if not parte or "=" not in parte:
             continue
-        marca, _, cant = parte.partition("=")
+        marca, _, pct = parte.partition("=")
         marca = marca.strip()
+        pct = str(pct).strip().replace("%", "").replace(",", ".")
         try:
-            n = int(str(cant).strip())
+            p = float(pct)
         except ValueError:
             continue
-        if marca and n > 0:
-            out[marca] = out.get(marca, 0) + n
+        if marca and p > 0:
+            out[marca] = out.get(marca, 0.0) + p
     return out
+
+
+def parse_cantidad(valor: Any) -> int:
+    """Unidades vendidas de una fila. Vacío/ilegible = 1."""
+    try:
+        n = int(round(float(str(valor or "").strip().replace(",", "."))))
+        return n if n > 0 else 1
+    except (ValueError, TypeError):
+        return 1
 
 
 def norm(value: Any) -> str:
@@ -183,13 +198,15 @@ def fecha_a_texto(d: date, muestra: str) -> str:
 def construir_variante(
     headers: list[str],
     filas: list[list[str]],
-    marcas_qty: dict[str, int],
+    marcas_pct: dict[str, float],
     rng: random.Random,
 ) -> tuple[list[list[str]], list[dict[str, Any]]]:
-    """Devuelve (filas_infladas, detalle_agregadas)."""
+    """Infla cada marca un % sobre sus UNIDADES reales (cantidad vendida).
+    Devuelve (filas_infladas, detalle)."""
     i_fecha = col_idx(headers, "Fecha de venta", "fecha")
     i_suc = col_idx(headers, "N°/Nombre de la sucursal", "Nombre / identificacion del vendedor", "sucursal")
     i_marca = col_idx(headers, "Marca del item", "marca")
+    i_cant = col_idx(headers, "Cantidad vendida", "cantidad")
     if i_fecha < 0 or i_marca < 0:
         raise ValueError("El GFK no tiene las columnas de Fecha y/o Marca esperadas.")
 
@@ -213,26 +230,47 @@ def construir_variante(
                     vistas.add(v.lower())
                     sucursales.append(v)
 
+    def unidades(fila: list[str]) -> int:
+        return parse_cantidad(fila[i_cant]) if (i_cant >= 0 and i_cant < len(fila)) else 1
+
     nuevas: list[list[str]] = []
     detalle: list[dict[str, Any]] = []
-    for marca, qty in marcas_qty.items():
+    for marca, pct in marcas_pct.items():
         candidatas = [f for f in filas if i_marca < len(f) and norm(f[i_marca]) == norm(marca)]
         if not candidatas:
-            detalle.append({"marca": marca, "pedidas": qty, "agregadas": 0, "nota": "sin ventas reales de esa marca en el GFK"})
+            detalle.append({"marca": marca, "pct": pct, "unid_reales": 0, "objetivo": 0,
+                            "unid_agregadas": 0, "filas_agregadas": 0,
+                            "nota": "sin ventas reales de esa marca en el GFK"})
             continue
-        agregadas = 0
-        for _ in range(qty):
+        unid_reales = sum(unidades(f) for f in candidatas)
+        objetivo = int(round(unid_reales * pct / 100.0))
+        if objetivo <= 0:
+            detalle.append({"marca": marca, "pct": pct, "unid_reales": unid_reales, "objetivo": 0,
+                            "unid_agregadas": 0, "filas_agregadas": 0,
+                            "nota": "el % aplicado da menos de 1 unidad"})
+            continue
+        agregadas_unid = 0
+        filas_agg = 0
+        guard = 0
+        while agregadas_unid < objetivo and guard < objetivo * 5 + 100:
+            guard += 1
             base = list(rng.choice(candidatas))  # clona una venta real de la marca
-            # fecha al azar dentro del periodo
             d = fmin + timedelta(days=rng.randint(0, span)) if span else fmin
             if i_fecha < len(base):
                 base[i_fecha] = fecha_a_texto(d, muestra_fecha)
-            # sucursal al azar de las presentes
             if i_suc >= 0 and sucursales and i_suc < len(base):
                 base[i_suc] = rng.choice(sucursales)
+            # Ajustar la cantidad de la última fila para caer EXACTO en el objetivo.
+            qty = unidades(base)
+            restante = objetivo - agregadas_unid
+            if i_cant >= 0 and i_cant < len(base) and qty > restante:
+                base[i_cant] = str(restante)
+                qty = restante
             nuevas.append(base)
-            agregadas += 1
-        detalle.append({"marca": marca, "pedidas": qty, "agregadas": agregadas, "nota": ""})
+            agregadas_unid += qty
+            filas_agg += 1
+        detalle.append({"marca": marca, "pct": pct, "unid_reales": unid_reales, "objetivo": objetivo,
+                        "unid_agregadas": agregadas_unid, "filas_agregadas": filas_agg, "nota": ""})
 
     # Mezcla las nuevas entre las reales para que no queden todas al final.
     infladas = filas + nuevas
@@ -300,9 +338,9 @@ def main() -> int:
     parser.add_argument("--prefijo", default="Examen GFK")
     args = parser.parse_args()
 
-    marcas_qty = parse_marcas(args.marcas)
-    if not marcas_qty:
-        print("[ERROR] No entendi el parametro de marcas. Formato: 'WHIRLPOOL=15, DREAN=8'.")
+    marcas_pct = parse_marcas(args.marcas)
+    if not marcas_pct:
+        print("[ERROR] No entendi el parametro de marcas. Formato: 'WHIRLPOOL=10, DREAN=15' (% sobre las unidades reales).")
         return 2
     n_variantes = max(1, int(args.variantes or 1))
 
@@ -325,13 +363,14 @@ def main() -> int:
         if any(cells):
             filas.append(cells + [""] * (ancho - len(cells)))
     print(f"GFK leido: {len(filas)} filas reales, {ancho} columnas.")
-    print(f"Marcas a inflar: {marcas_qty}")
+    print(f"Marcas a inflar (%): {marcas_pct}")
 
     generadas: list[str] = []
     for i in range(1, n_variantes + 1):
         rng = random.Random()  # cada variante distinta (sin semilla fija)
-        infladas, detalle = construir_variante(headers, filas, marcas_qty, rng)
-        agregadas_total = sum(d["agregadas"] for d in detalle)
+        infladas, detalle = construir_variante(headers, filas, marcas_pct, rng)
+        filas_total = sum(d["filas_agregadas"] for d in detalle)
+        unid_total = sum(d["unid_agregadas"] for d in detalle)
 
         params_rows = [
             ["EXAMEN GFK - PARAMETROS (hoja interna, no es parte del reporte real)"],
@@ -339,15 +378,19 @@ def main() -> int:
             ["GFK original (id)", source_id],
             ["Variante", f"{i} de {n_variantes}"],
             ["Filas reales", str(len(filas))],
-            ["Filas agregadas", str(agregadas_total)],
+            ["Filas agregadas", str(filas_total)],
+            ["Unidades agregadas", str(unid_total)],
             [],
-            ["Marca", "Pedidas", "Agregadas", "Nota"],
+            ["Marca", "% pedido", "Unid. reales", "Unid. objetivo", "Unid. agregadas", "Filas agregadas", "Nota"],
         ]
         for d in detalle:
-            params_rows.append([d["marca"], str(d["pedidas"]), str(d["agregadas"]), d["nota"]])
+            params_rows.append([
+                d["marca"], f"{d['pct']:g}%", str(d["unid_reales"]), str(d["objetivo"]),
+                str(d["unid_agregadas"]), str(d["filas_agregadas"]), d["nota"],
+            ])
 
         nombre = f"{args.prefijo} - Variante {i:02d}"
-        print(f"  Creando '{nombre}' (+{agregadas_total} filas)...")
+        print(f"  Creando '{nombre}' (+{unid_total} unid / {filas_total} filas)...")
         sid = crear_spreadsheet_en_carpeta(drive_service, sheets_service, nombre, dest_id)
         volcar_examen(sheets_service, sid, headers, infladas, params_rows)
         url = f"https://docs.google.com/spreadsheets/d/{sid}/edit"

@@ -125,7 +125,7 @@ TOOLS: dict[str, ToolDef] = {
         "fields": [
             {"name": "source_url", "label": "URL del GFK original (correcto)", "type": "text", "required": True, "help": "El GFK ya generado del que se parte. Las ventas reales quedan intactas."},
             {"name": "dest_url", "label": "Carpeta destino en Drive", "type": "text", "required": True},
-            {"name": "marcas", "label": "Marcas a inflar y cantidad", "type": "textarea", "required": True, "placeholder": "WHIRLPOOL=15\nDREAN=8", "help": "Una por línea: MARCA=cantidad de filas a agregar. Se toman productos reales de esa marca con fecha y sucursal al azar del período."},
+            {"name": "marcas", "label": "Marcas a inflar y porcentaje", "type": "textarea", "required": True, "placeholder": "WHIRLPOOL=10\nDREAN=15", "help": "Una por línea: MARCA=porcentaje de inflado sobre las unidades reales de esa marca (ej: 10 = +10%). Se agregan ventas tomando productos reales de la marca con fecha y sucursal al azar del período."},
             {"name": "variantes", "label": "Cantidad de exámenes (variantes)", "type": "number", "required": True, "default": 1, "help": "Una variante distinta por practicante."},
             {"name": "prefijo", "label": "Nombre base de los archivos", "type": "text", "required": False, "placeholder": "Examen GFK"},
         ],
