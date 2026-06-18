@@ -3,7 +3,7 @@
 // orden (▲▼), puede quitar los que no aplican y agregar detalles libres
 // (ej "LÍNEA 2022", "(PN)"). Preview en vivo (comercial + ERP con contador 50).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowDown, ArrowUp, Check, Loader2, Plus, Save, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, Check, Copy, Eye, Globe2, Loader2, PackageCheck, Plus, Save, Sparkles, X } from 'lucide-react';
 import {
   catalogPreview, createCatalogProduct, fetchCatalogOptions, fetchCatalogTemplate,
   normalizeCatalogProduct,
@@ -20,6 +20,14 @@ interface Props {
 const lbl = 'mb-1 block text-xs font-bold text-slate-400';
 const inp = 'w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm outline-none focus:border-indigo-400';
 const inpSm = 'w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-2 text-sm outline-none focus:border-indigo-400';
+
+function titleHealth(title: string) {
+  const len = title.trim().length;
+  if (!len) return { label: 'Pendiente', cls: 'border-slate-700 bg-slate-800/70 text-slate-300' };
+  if (len > 120) return { label: 'Muy largo', cls: 'border-amber-500/40 bg-amber-500/10 text-amber-100' };
+  if (len < 28) return { label: 'Muy corto', cls: 'border-sky-500/40 bg-sky-500/10 text-sky-100' };
+  return { label: 'Listo para web', cls: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100' };
+}
 
 export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
   const [options, setOptions] = useState<CatalogOptions | null>(null);
@@ -39,6 +47,7 @@ export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
   const [preview, setPreview] = useState<CatalogPreview | null>(null);
   const [activar, setActivar] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
   const [okMsg, setOkMsg] = useState('');
 
@@ -101,6 +110,19 @@ export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
   const rubros = useMemo(() => (familia && options ? options.rubros_por_familia[familia] || [] : []), [familia, options]);
   const erpLen = preview?.descripcion_erp_len ?? 0;
   const erpOver = erpLen > 50;
+  const commercialTitle = preview?.descripcion_comercial || '';
+  const health = titleHealth(commercialTitle);
+
+  async function copyCommercialName() {
+    if (!commercialTitle) return;
+    try {
+      await navigator.clipboard?.writeText(commercialTitle);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch {
+      setCopied(false);
+    }
+  }
 
   function move(i: number, dir: -1 | 1) {
     setOrden((o) => {
@@ -229,17 +251,68 @@ export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
       </div>
 
       <div className="rounded-2xl border border-indigo-500/30 bg-indigo-500/5 p-4">
-        <div className="mb-2 text-xs font-black uppercase tracking-wide text-indigo-300">Vista previa</div>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="inline-flex items-center gap-2 text-xs font-black uppercase tracking-wide text-indigo-300">
+            <Eye className="size-4" /> Vista previa
+          </div>
+          <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-black ${health.cls}`}>
+            <PackageCheck className="size-3.5" /> {health.label}
+          </span>
+        </div>
         {preview?.error ? <div className="text-sm text-amber-200">{preview.error}</div> : (
-          <div className="space-y-2 text-sm">
-            <div><span className="text-slate-400">SKU comercial: </span><b className="text-slate-100">{preview?.sku_comercial || '—'}</b></div>
-            <div><span className="text-slate-400">Comercial: </span><b className="text-slate-100">{preview?.descripcion_comercial || '—'}</b></div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-slate-400">ERP: </span><b className={erpOver ? 'text-red-300' : 'text-slate-100'}>{preview?.descripcion_erp || '—'}</b>
-              <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${erpOver ? 'bg-red-500/20 text-red-200' : 'bg-emerald-500/20 text-emerald-200'}`}>{erpLen}/50</span>
-              {preview?.estado_erp && preview.estado_erp !== 'OK_ERP_50' && <span className="text-[11px] text-amber-300">{preview.estado_erp}</span>}
+          <div className="space-y-4">
+            <div className="overflow-hidden rounded-2xl border border-slate-700/80 bg-slate-950 shadow-2xl shadow-indigo-950/20">
+              <div className="bg-gradient-to-r from-slate-900 via-blue-950/70 to-slate-900 p-4 sm:p-5">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1 rounded-full border border-blue-400/40 bg-blue-500/10 px-2 py-1 text-[11px] font-black uppercase tracking-wide text-blue-100">
+                    <Globe2 className="size-3.5" /> Nombre comercial
+                  </span>
+                  {marca && <span className="rounded-full bg-slate-800/80 px-2 py-1 text-[11px] font-bold text-slate-200">{marca}</span>}
+                  {rubro && <span className="rounded-full bg-slate-800/80 px-2 py-1 text-[11px] font-bold text-slate-200">{rubro}</span>}
+                  {condicion && <span className="rounded-full bg-slate-800/80 px-2 py-1 text-[11px] font-bold text-slate-200">{condicion}</span>}
+                </div>
+                <h3 className="min-h-[2.8rem] text-balance text-2xl font-black leading-tight text-white sm:text-3xl">
+                  {commercialTitle || 'El nombre comercial aparece aca'}
+                </h3>
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-300">
+                  <span className="rounded-lg bg-slate-950/70 px-2 py-1">SKU {preview?.sku_comercial || '---'}</span>
+                  <span className="rounded-lg bg-slate-950/70 px-2 py-1">{commercialTitle.length} caracteres</span>
+                  {preview?.subrubro && <span className="rounded-lg bg-slate-950/70 px-2 py-1">{preview.subrubro}</span>}
+                </div>
+              </div>
+              <div className="grid gap-0 border-t border-slate-800 bg-slate-900/70 sm:grid-cols-[1.2fr_0.8fr]">
+                <div className="p-4">
+                  <div className="mb-1 inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-wide text-slate-400">
+                    <Sparkles className="size-3.5" /> Ficha web
+                  </div>
+                  <div className="text-base font-black leading-snug text-slate-100">{commercialTitle || 'Sin nombre generado'}</div>
+                  <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-bold text-slate-300">
+                    {familia && <span className="rounded-full bg-slate-800 px-2 py-1">{familia}</span>}
+                    {rubro && <span className="rounded-full bg-slate-800 px-2 py-1">{rubro}</span>}
+                    {preview?.subrubro && <span className="rounded-full bg-slate-800 px-2 py-1">{preview.subrubro}</span>}
+                  </div>
+                </div>
+                <div className="border-t border-slate-800 p-4 sm:border-l sm:border-t-0">
+                  <div className="mb-1 text-[11px] font-black uppercase tracking-wide text-slate-400">ERP / Puma</div>
+                  <div className={`font-mono text-sm font-black ${erpOver ? 'text-red-300' : 'text-slate-100'}`}>{preview?.descripcion_erp || '---'}</div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${erpOver ? 'bg-red-500/20 text-red-200' : 'bg-emerald-500/20 text-emerald-200'}`}>{erpLen}/50</span>
+                    {preview?.estado_erp && preview.estado_erp !== 'OK_ERP_50' && <span className="text-[11px] text-amber-300">{preview.estado_erp}</span>}
+                  </div>
+                </div>
+              </div>
             </div>
-            <div><span className="text-slate-400">Subrubro: </span><span className="text-slate-300">{preview?.subrubro || '—'}</span></div>
+
+            <div className="flex flex-wrap items-center justify-end gap-2 text-sm">
+              <button
+                type="button"
+                onClick={copyCommercialName}
+                disabled={!commercialTitle}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-black text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+              >
+                <Copy className="size-4" /> {copied ? 'Copiado' : 'Copiar nombre'}
+              </button>
+            </div>
           </div>
         )}
       </div>

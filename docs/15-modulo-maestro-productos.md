@@ -69,6 +69,26 @@ ADMINISTRADOR + superadmin por `*`).
 - Validaciones de activación: no activar sin familia/rubro/sku/marca/condición/
   descripciones; ERP ≤ 50; SKU comercial y código Puma únicos entre activos.
 
+## Nombre comercial / ecommerce (decisión 2026-06-18)
+
+- El nombre público para vendedor, presupuestos, web, ecommerce y dashboards es
+  `catalog_products.descripcion_comercial`.
+- No crear un segundo campo tipo `nombre_ecommerce` mientras la regla de
+  descripción comercial alcance. La app debe mejorar la generación y la vista
+  previa de `descripcion_comercial`, no duplicar fuentes de verdad.
+- `catalog_products.descripcion_original` y `catalog_aliases.descripcion_anterior`
+  son solo trazabilidad de planillas/legacy. No deben alimentar la ficha pública
+  salvo como referencia durante la normalización.
+- La pantalla de alta/normalización debe mostrar `descripcion_comercial` como
+  título principal de producto, con preview visual tipo ficha web y control de
+  largo/legibilidad. La descripción ERP/Puma queda como dato técnico separado.
+- La marca en `descripcion_comercial` se muestra en formato legible (`Samsung`,
+  `Smart Life`, `Black and Decker`) y conserva siglas reales (`BGH`, `TCL`,
+  `LG`). La descripción ERP/Puma mantiene el formato técnico en mayúsculas.
+- Si más adelante se necesita SEO, ficha web extendida, atributos de marketplace
+  o copy comercial largo, eso debe vivir como una capa editorial adicional, sin
+  reemplazar `descripcion_comercial` como nombre canónico corto.
+
 ## Estado por etapas
 
 - **Etapa 1 — Modelo + migración**: ✅ HECHA (commit de esta tanda).

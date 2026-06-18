@@ -47,6 +47,34 @@ def norm_key(text: str) -> str:
     return collapse_spaces(strip_accents(text).upper())
 
 
+_BRAND_UPPER_WORDS = {
+    "ABC", "AIWA", "BGH", "DREAN", "GFK", "GV", "HP", "JBL", "LG", "NFC",
+    "RCA", "TCL", "TV", "USB", "WH", "XION",
+}
+_BRAND_LOWER_WORDS = {"AND", "DE", "DEL", "LA", "LAS", "LOS", "Y"}
+
+
+def commercial_brand(text: str) -> str:
+    """Formato de marca para descripcion comercial."""
+    raw = collapse_spaces(text)
+    if not raw:
+        return ""
+    parts = re.split(r"(\s+|-)", raw)
+    out: list[str] = []
+    for part in parts:
+        if not part or part.isspace() or part == "-":
+            out.append(part)
+            continue
+        key = norm_key(part)
+        if key in _BRAND_LOWER_WORDS:
+            out.append(key.lower())
+        elif key in _BRAND_UPPER_WORDS or (len(key) <= 3 and part.isupper()):
+            out.append(key)
+        else:
+            out.append(part[:1].upper() + part[1:].lower())
+    return collapse_spaces("".join(out))
+
+
 def apply_abbreviations(text: str, abbr_map: dict[str, str]) -> str:
     """Reemplaza palabras/frases largas por su abreviatura. abbr_map ya viene
     normalizado (clave norm_key → abreviatura). Aplica frases más largas
@@ -147,12 +175,13 @@ def generate_parts(
     field_defs = {f.get("name"): f for f in (template.get("campos_obligatorios") or [])}
     es_outlet = norm_key(condicion) == "OUTLET"
     marca = str(marca or "").strip()
+    marca_comercial = commercial_brand(marca)
     modelo = str(modelo or "").strip()
 
     rubro_com = _rubro_prefix(template.get("formato_descripcion_comercial", "")) or template.get("rubro_app", "")
     rubro_erp = _rubro_prefix(template.get("formato_descripcion_erp", "")) or template.get("rubro_app", "")
 
-    com_tokens: list[str] = [rubro_com, marca, modelo]
+    com_tokens: list[str] = [rubro_com, marca_comercial, modelo]
     erp_tokens: list[str] = [rubro_erp, marca, modelo]
     extras_idx: list[int] = []  # posiciones de extras en erp_tokens (para recorte)
     opt_idx: list[int] = []     # posiciones de campos opcionales en erp_tokens
@@ -241,7 +270,7 @@ def generate(
     es_outlet = norm_key(condicion) == "OUTLET"
 
     # ── valores comercial / erp por campo ──────────────────────────────
-    com_vals: dict[str, str] = {"marca": str(marca or "").strip(), "modelo": str(modelo or "").strip()}
+    com_vals: dict[str, str] = {"marca": commercial_brand(marca), "modelo": str(modelo or "").strip()}
     erp_vals: dict[str, str] = {"marca": str(marca or "").strip(), "modelo": str(modelo or "").strip()}
     for f in campos:
         name = f.get("name")
