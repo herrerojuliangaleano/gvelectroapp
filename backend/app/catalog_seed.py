@@ -321,6 +321,32 @@ TEMPLATES: list[dict[str, Any]] = [
 ]
 
 
+def _merge_template_fields(seed_fields: list[dict], existing_fields: list[dict] | None) -> list[dict]:
+    """Funde la plantilla del seed con lo que ya hay en la DB sin perder lo custom.
+
+    Preserva (a) los atributos que el operador agregó a mano (los que no están
+    en el seed) y (b) las opciones que sumó a campos `select` del seed. Así un
+    re-seed actualiza los rubros sin pisar la configuración cargada en uso.
+    """
+    from .catalog_generator import norm_key
+    existing_by_name = {norm_key(f.get("name")): f for f in (existing_fields or [])}
+    seed_names = {norm_key(f.get("name")) for f in seed_fields}
+    merged: list[dict] = []
+    for sf in seed_fields:
+        nf = dict(sf)
+        ex = existing_by_name.get(norm_key(sf.get("name")))
+        if ex and nf.get("type") == "select" and ex.get("type") == "select":
+            seed_opts = list(nf.get("opciones") or [])
+            seed_keys = {norm_key(o.get("valor")) for o in seed_opts}
+            extra = [dict(o) for o in (ex.get("opciones") or []) if norm_key(o.get("valor")) not in seed_keys]
+            nf["opciones"] = seed_opts + extra
+        merged.append(nf)
+    for ex in (existing_fields or []):
+        if norm_key(ex.get("name")) not in seed_names:
+            merged.append(dict(ex))
+    return merged
+
+
 def seed_catalog() -> dict[str, int]:
     """Carga abreviaturas y plantillas faltantes. Idempotente."""
     abbr_created = tpl_created = tpl_updated = 0
@@ -334,7 +360,7 @@ def seed_catalog() -> dict[str, int]:
             row = session.scalar(select(CatalogTemplate).where(
                 CatalogTemplate.familia_app == t["familia_app"], CatalogTemplate.rubro_app == t["rubro_app"]))
             if row:
-                row.campos_obligatorios = t["campos_obligatorios"]
+                row.campos_obligatorios = _merge_template_fields(t["campos_obligatorios"], row.campos_obligatorios)
                 row.formato_descripcion_base = t["formato_descripcion_comercial"]
                 row.formato_descripcion_comercial = t["formato_descripcion_comercial"]
                 row.formato_descripcion_erp = t["formato_descripcion_erp"]
