@@ -178,6 +178,24 @@ Bearer token salvo endpoints publicos como `/api/health` y login.
 | POST | `/api/sales-bi/commercial/export-pdf` | Exporta informe comercial a PDF. |
 | POST | `/api/sales-bi/commercial/export-xlsx` | Exporta informe comercial a Excel. |
 
+## Catalogo maestro
+
+| Metodo | Ruta | Uso |
+|---|---|---|
+| GET | `/api/catalog/options` | Opciones generales para alta/normalizacion. |
+| GET | `/api/catalog/template` | Plantilla por familia+rubro. |
+| POST | `/api/catalog/template-fields` | Agrega atributo reusable opcional a la plantilla del rubro. |
+| POST | `/api/catalog/template-field-options` | Agrega/actualiza opcion de un atributo `select` en la plantilla. |
+| POST | `/api/catalog/preview` | Genera descripcion comercial/ERP sin guardar producto. |
+| POST | `/api/catalog/products` | Crea producto nuevo en catalogo maestro. |
+| GET | `/api/catalog/products` | Lista productos del catalogo maestro. |
+| GET | `/api/catalog/products/{product_id}` | Detalle de producto maestro. |
+| PATCH | `/api/catalog/products/{product_id}` | Edita producto maestro. |
+| GET | `/api/catalog/legacy-pending` | Productos legacy pendientes de normalizar. |
+| POST | `/api/catalog/normalize` | Normaliza un producto legacy y lo vincula al maestro. |
+| GET | `/api/catalog/transition-status` | Estado de transicion legacy -> catalogo maestro. |
+| POST | `/api/catalog/seed` | Recarga plantillas/abreviaturas base. |
+
 ## Productos
 
 | Metodo | Ruta | Uso |

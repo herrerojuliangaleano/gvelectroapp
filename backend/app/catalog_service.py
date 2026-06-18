@@ -11,6 +11,7 @@ Regla de estado (decisión 2026-06): sin código Puma NO se activa.
 """
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Any
 
@@ -41,6 +42,42 @@ def _template_dict(t: CatalogTemplate) -> dict[str, Any]:
 def _get_template(session, familia: str, rubro: str) -> CatalogTemplate | None:
     return session.scalar(select(CatalogTemplate).where(
         CatalogTemplate.familia_app == familia, CatalogTemplate.rubro_app == rubro))
+
+
+def _template_with_order(t: CatalogTemplate) -> dict[str, Any]:
+    d = _template_dict(t)
+    d["orden_default"] = default_attr_order(d)
+    return d
+
+
+def _field_name_from_label(label: str) -> str:
+    base = norm_key(label).lower()
+    base = re.sub(r"[^a-z0-9]+", "_", base).strip("_")
+    if not base:
+        base = "detalle"
+    if base[0].isdigit():
+        base = f"detalle_{base}"
+    return base
+
+
+def _unique_field_name(label: str, fields: list[dict[str, Any]]) -> str:
+    base = _field_name_from_label(label)
+    used = {str(f.get("name") or "").strip() for f in fields}
+    if base not in used:
+        return base
+    i = 2
+    while f"{base}_{i}" in used:
+        i += 1
+    return f"{base}_{i}"
+
+
+def _clean_option(payload: dict[str, Any]) -> dict[str, str]:
+    valor = str(payload.get("valor") or payload.get("comercial") or payload.get("erp") or "").strip()
+    if not valor:
+        raise ValueError("Falta el valor de la opcion.")
+    comercial = str(payload.get("comercial") or valor).strip()
+    erp = str(payload.get("erp") or comercial or valor).strip()
+    return {"valor": valor, "comercial": comercial, "erp": erp}
 
 
 def _resolve_marca(session, marca_raw: str) -> str:
@@ -101,9 +138,99 @@ def get_template(familia: str, rubro: str) -> dict[str, Any] | None:
         t = _get_template(session, familia, rubro)
         if not t:
             return None
-        d = _template_dict(t)
-        d["orden_default"] = default_attr_order(d)  # orden inicial de atributos para el armador
-        return d
+        return _template_with_order(t)
+
+
+def add_template_field(payload: dict[str, Any]) -> dict[str, Any]:
+    """Agrega un atributo reutilizable a la plantilla familia+rubro.
+
+    No requiere migracion: se persiste dentro del JSONB `campos_obligatorios`.
+    Los campos nuevos son opcionales y no entran al orden default, pero quedan
+    disponibles en el armador para futuros productos del mismo rubro.
+    """
+    familia = str(payload.get("familia_app") or "").strip()
+    rubro = str(payload.get("rubro_app") or "").strip()
+    label = str(payload.get("label") or "").strip()
+    if not familia or not rubro or not label:
+        raise ValueError("Falta familia, rubro o nombre del atributo.")
+    ftype = str(payload.get("type") or "text").strip().lower()
+    if ftype not in {"text", "number", "select"}:
+        raise ValueError("Tipo de atributo invalido.")
+
+    with db_session() as session:
+        t = _get_template(session, familia, rubro)
+        if not t:
+            raise ValueError(f"No hay plantilla para {familia} / {rubro}.")
+        fields = [dict(f) for f in (t.campos_obligatorios or [])]
+        raw_name = str(payload.get("name") or "").strip()
+        name = _field_name_from_label(raw_name) if raw_name else _unique_field_name(label, fields)
+        if any(norm_key(f.get("name")) == norm_key(name) for f in fields):
+            raise ValueError("Ya existe un atributo con ese nombre en la plantilla.")
+
+        field: dict[str, Any] = {
+            "name": name,
+            "label": label,
+            "type": ftype,
+            "obligatorio": False,
+        }
+        if payload.get("sufijo_comercial"):
+            field["sufijo_comercial"] = str(payload.get("sufijo_comercial") or "").strip()
+        if payload.get("sufijo_erp"):
+            field["sufijo_erp"] = str(payload.get("sufijo_erp") or "").strip()
+        if ftype == "select":
+            option_payload = payload.get("initial_option")
+            field["opciones"] = [_clean_option(option_payload)] if isinstance(option_payload, dict) else []
+
+        fields.append(field)
+        t.campos_obligatorios = fields
+        session.commit()
+        result = _template_with_order(t)
+        result["created_field"] = field
+        return result
+
+
+def add_template_field_option(payload: dict[str, Any]) -> dict[str, Any]:
+    """Agrega/actualiza una opcion de un campo select dentro de la plantilla."""
+    familia = str(payload.get("familia_app") or "").strip()
+    rubro = str(payload.get("rubro_app") or "").strip()
+    field_name = str(payload.get("field_name") or "").strip()
+    if not familia or not rubro or not field_name:
+        raise ValueError("Falta familia, rubro o atributo.")
+    new_option = _clean_option(payload)
+
+    with db_session() as session:
+        t = _get_template(session, familia, rubro)
+        if not t:
+            raise ValueError(f"No hay plantilla para {familia} / {rubro}.")
+        fields = [dict(f) for f in (t.campos_obligatorios or [])]
+        target: dict[str, Any] | None = None
+        for f in fields:
+            if norm_key(f.get("name")) == norm_key(field_name):
+                target = f
+                break
+        if not target:
+            raise ValueError("Atributo no encontrado en la plantilla.")
+        if target.get("type") != "select":
+            raise ValueError("Solo se pueden agregar opciones a atributos de tipo select.")
+
+        options = [dict(o) for o in (target.get("opciones") or [])]
+        replaced = False
+        for idx, op in enumerate(options):
+            same_value = norm_key(op.get("valor")) == norm_key(new_option["valor"])
+            same_label = norm_key(op.get("comercial")) == norm_key(new_option["comercial"])
+            if same_value or same_label:
+                options[idx] = {**op, **new_option}
+                replaced = True
+                break
+        if not replaced:
+            options.append(new_option)
+        target["opciones"] = options
+        t.campos_obligatorios = fields
+        session.commit()
+        result = _template_with_order(t)
+        result["updated_field"] = target
+        result["saved_option"] = new_option
+        return result
 
 
 def _gen(tdict: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:

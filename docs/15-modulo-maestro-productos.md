@@ -100,9 +100,15 @@ ADMINISTRADOR + superadmin por `*`).
 - En ecommerce/web, esos detalles libres sirven para sumar atributos visibles
   como línea, serie, versión, tecnología, color comercial o aclaraciones tipo
   `(PN)` sin crear otro campo de nombre.
-- Mejora recomendada: convertir `Detalle libre` en "atributo adicional" con
-  etiqueta opcional (`Color`, `Tecnología`, `Línea`, `Versión`) para que la ficha
-  web pueda mostrar atributos ordenados sin ensuciar el nombre comercial.
+- Si el detalle debe quedar disponible para futuras altas del mismo rubro, usar
+  `Guardar atributo para este rubro`. Esto agrega un campo opcional a
+  `catalog_templates.campos_obligatorios` y luego aparece en `+ Agregar
+  atributo`.
+- Si un atributo de plantilla es `select`, el operador puede usar `+ opcion para
+  este atributo` para guardar una nueva opcion comercial/ERP dentro de
+  `opciones`. Esa opcion queda persistida para los siguientes productos.
+- `Detalle libre` sigue existiendo para casos puntuales que no conviene fijar
+  como regla reusable de plantilla.
 
 ## Estado por etapas
 

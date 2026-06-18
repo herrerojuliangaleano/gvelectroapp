@@ -2434,6 +2434,9 @@ export interface CatalogTemplate {
   formato_descripcion_erp: string;
   formato_subrubro: string;
   orden_default?: CatalogAttrToken[];
+  created_field?: CatalogField;
+  updated_field?: CatalogField;
+  saved_option?: CatalogFieldOption;
 }
 export interface CatalogOptions {
   familias: string[];

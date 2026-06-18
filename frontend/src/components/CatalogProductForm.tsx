@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowDown, ArrowUp, Check, Copy, Eye, Globe2, Loader2, PackageCheck, Plus, Save, Sparkles, X } from 'lucide-react';
 import {
+  addCatalogTemplateField, addCatalogTemplateFieldOption,
   catalogPreview, createCatalogProduct, fetchCatalogOptions, fetchCatalogTemplate,
   normalizeCatalogProduct,
 } from '../api/client';
@@ -50,6 +51,14 @@ export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
   const [okMsg, setOkMsg] = useState('');
+  const [templateSaving, setTemplateSaving] = useState(false);
+  const [newFieldOpen, setNewFieldOpen] = useState(false);
+  const [newFieldLabel, setNewFieldLabel] = useState('');
+  const [newFieldType, setNewFieldType] = useState<'text' | 'number' | 'select'>('text');
+  const [newFieldFirstOption, setNewFieldFirstOption] = useState('');
+  const [newOptionFor, setNewOptionFor] = useState<string | null>(null);
+  const [newOptionValue, setNewOptionValue] = useState('');
+  const [newOptionErp, setNewOptionErp] = useState('');
 
   useEffect(() => { fetchCatalogOptions().then(setOptions).catch((e) => setError(e.message)); }, []);
 
@@ -77,6 +86,13 @@ export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
       setOrden(def.length ? def : (t.campos_obligatorios || []).map((f) => f.name));
       setCampos({});
       setExtras([]);
+      setNewFieldOpen(false);
+      setNewFieldLabel('');
+      setNewFieldType('text');
+      setNewFieldFirstOption('');
+      setNewOptionFor(null);
+      setNewOptionValue('');
+      setNewOptionErp('');
     }).catch(() => { setFieldDefs([]); setOrden([]); });
   }, [familia, rubro]);
 
@@ -135,6 +151,66 @@ export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
   const removeAttr = (name: string) => setOrden((o) => o.filter((x) => x !== name));
   const addAttr = (name: string) => { if (name) setOrden((o) => [...o, name]); };
   const addExtra = () => setExtras((e) => [...e, { valor: '', en_erp: true }]);
+
+  async function saveTemplateField() {
+    if (!familia || !rubro || !newFieldLabel.trim()) return;
+    setTemplateSaving(true); setError(''); setOkMsg('');
+    try {
+      const initial = newFieldType === 'select' && newFieldFirstOption.trim()
+        ? { valor: newFieldFirstOption.trim(), comercial: newFieldFirstOption.trim(), erp: newFieldFirstOption.trim() }
+        : undefined;
+      const t = await addCatalogTemplateField({
+        familia_app: familia,
+        rubro_app: rubro,
+        label: newFieldLabel.trim(),
+        type: newFieldType,
+        initial_option: initial,
+      });
+      setFieldDefs(t.campos_obligatorios || []);
+      const createdName = t.created_field?.name;
+      if (createdName) {
+        setOrden((o) => o.includes(createdName) ? o : [...o, createdName]);
+        if (newFieldType === 'select' && newFieldFirstOption.trim()) {
+          setCampos((c) => ({ ...c, [createdName]: newFieldFirstOption.trim() }));
+        }
+      }
+      setNewFieldLabel('');
+      setNewFieldType('text');
+      setNewFieldFirstOption('');
+      setNewFieldOpen(false);
+      setOkMsg('Atributo guardado en la plantilla del rubro.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo guardar el atributo.');
+    } finally {
+      setTemplateSaving(false);
+    }
+  }
+
+  async function saveTemplateOption(fieldName: string) {
+    if (!familia || !rubro || !fieldName || !newOptionValue.trim()) return;
+    setTemplateSaving(true); setError(''); setOkMsg('');
+    try {
+      const value = newOptionValue.trim();
+      const t = await addCatalogTemplateFieldOption({
+        familia_app: familia,
+        rubro_app: rubro,
+        field_name: fieldName,
+        valor: value,
+        comercial: value,
+        erp: newOptionErp.trim() || value,
+      });
+      setFieldDefs(t.campos_obligatorios || []);
+      setCampos((c) => ({ ...c, [fieldName]: value }));
+      setNewOptionFor(null);
+      setNewOptionValue('');
+      setNewOptionErp('');
+      setOkMsg('Opcion guardada en la plantilla del rubro.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo guardar la opcion.');
+    } finally {
+      setTemplateSaving(false);
+    }
+  }
 
   async function save() {
     setSaving(true); setError(''); setOkMsg('');
@@ -206,9 +282,32 @@ export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
                   <span className="w-32 shrink-0 text-xs font-bold text-slate-300">{f.label}</span>
                   <div className="flex-1">
                     {f.type === 'select' ? (
+                      <>
                       <select className={inpSm} value={campos[name] || ''} onChange={(e) => setCampos((c) => ({ ...c, [name]: e.target.value }))}>
                         <option value="">—</option>{(f.opciones || []).map((o) => <option key={o.valor} value={o.valor}>{o.comercial || o.valor}</option>)}
                       </select>
+                      {newOptionFor === name ? (
+                        <div className="mt-2 grid gap-2 rounded-lg border border-blue-500/20 bg-blue-500/5 p-2 sm:grid-cols-[1fr_1fr_auto_auto]">
+                          <input className={inpSm} placeholder="Nueva opcion comercial" value={newOptionValue} onChange={(e) => setNewOptionValue(e.target.value)} />
+                          <input className={inpSm} placeholder="ERP/Puma (opcional)" value={newOptionErp} onChange={(e) => setNewOptionErp(e.target.value)} />
+                          <button type="button" disabled={templateSaving || !newOptionValue.trim()} onClick={() => saveTemplateOption(name)}
+                            className="rounded-lg bg-blue-500 px-3 py-2 text-xs font-black text-white disabled:opacity-50">
+                            Guardar
+                          </button>
+                          <button type="button" onClick={() => setNewOptionFor(null)} className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-bold text-slate-300">
+                            Cancelar
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => { setNewOptionFor(name); setNewOptionValue(''); setNewOptionErp(''); }}
+                          className="mt-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[11px] font-black text-blue-100 hover:bg-blue-500/20"
+                        >
+                          + opcion para este atributo
+                        </button>
+                      )}
+                      </>
                     ) : (
                       <input className={inpSm} type={f.type === 'number' ? 'number' : 'text'} value={campos[name] || ''} onChange={(e) => setCampos((c) => ({ ...c, [name]: e.target.value }))} />
                     )}
@@ -240,7 +339,37 @@ export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
               </select>
             )}
             <button onClick={addExtra} className="inline-flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-xs font-bold text-amber-100"><Plus size={13} /> Detalle libre</button>
+            <button
+              type="button"
+              onClick={() => setNewFieldOpen((v) => !v)}
+              className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-bold text-emerald-100"
+            >
+              <Plus size={13} /> Guardar atributo para este rubro
+            </button>
           </div>
+
+          {newFieldOpen && (
+            <div className="mt-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3">
+              <div className="mb-2 text-[11px] font-black uppercase tracking-wide text-emerald-200">Atributo reusable de plantilla</div>
+              <div className="grid gap-2 lg:grid-cols-[1.4fr_0.8fr_1fr_auto_auto]">
+                <input className={inpSm} placeholder="Nombre: Color comercial, Linea, Tecnologia..." value={newFieldLabel} onChange={(e) => setNewFieldLabel(e.target.value)} />
+                <select className={inpSm} value={newFieldType} onChange={(e) => setNewFieldType(e.target.value as 'text' | 'number' | 'select')}>
+                  <option value="text">Texto</option>
+                  <option value="number">Numero</option>
+                  <option value="select">Opciones</option>
+                </select>
+                <input className={inpSm} disabled={newFieldType !== 'select'} placeholder="Primera opcion (si aplica)" value={newFieldFirstOption} onChange={(e) => setNewFieldFirstOption(e.target.value)} />
+                <button type="button" disabled={templateSaving || !newFieldLabel.trim()} onClick={saveTemplateField}
+                  className="rounded-lg bg-emerald-500 px-3 py-2 text-xs font-black text-white disabled:opacity-50">
+                  Guardar
+                </button>
+                <button type="button" onClick={() => setNewFieldOpen(false)} className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-bold text-slate-300">
+                  Cancelar
+                </button>
+              </div>
+              <p className="mt-2 text-[11px] text-slate-500">Queda disponible para futuras altas del mismo rubro. Si es de tipo Opciones, despues podes sumar nuevas opciones desde el combo.</p>
+            </div>
+          )}
         </div>
       )}
 

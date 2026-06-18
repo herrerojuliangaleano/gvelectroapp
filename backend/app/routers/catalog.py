@@ -45,6 +45,30 @@ def template(_user: Annotated[CurrentUser, Depends(require_permission("catalog.v
     return t
 
 
+@router.post("/template-fields")
+def add_template_field(payload: dict[str, Any], user: Annotated[CurrentUser, Depends(require_permission("catalog.manage"))]):
+    try:
+        res = catalog_service.add_template_field(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit("catalog.template_field.create", user=user, resource_type="catalog_template",
+          resource_id=f"{payload.get('familia_app')}/{payload.get('rubro_app')}",
+          details={"field": res.get("created_field")})
+    return res
+
+
+@router.post("/template-field-options")
+def add_template_field_option(payload: dict[str, Any], user: Annotated[CurrentUser, Depends(require_permission("catalog.manage"))]):
+    try:
+        res = catalog_service.add_template_field_option(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit("catalog.template_option.upsert", user=user, resource_type="catalog_template",
+          resource_id=f"{payload.get('familia_app')}/{payload.get('rubro_app')}",
+          details={"field_name": payload.get("field_name"), "option": res.get("saved_option")})
+    return res
+
+
 @router.post("/preview")
 def preview(payload: dict[str, Any], _user: Annotated[CurrentUser, Depends(require_permission("catalog.view"))]):
     return catalog_service.preview(payload)
