@@ -51,6 +51,8 @@ ALL_PERMISSIONS: dict[str, str] = {
     "products.sync": "Sincronizar productos desde Planilla Madre",
     "products.manage": "Administrar catálogo de productos",
     "products.providers.manage": "Administrar proveedores y marcas",
+    "catalog.view": "Ver el catalogo maestro nuevo (modulo Maestro/Normalizacion)",
+    "catalog.manage": "Crear y normalizar productos en el catalogo maestro",
 
     "sales_web.view": "Ver ventas",
     "sales_web.create": "Crear ventas",
@@ -158,7 +160,7 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
             "dashboard.view", "profile.view", "employees.photo.upload_own", "payroll_receipts.view_own", "payroll_receipts.sign_own", "payroll_receipts.observe_own", "about.view", "system.status.view", "system.diagnostics.view", "system.diagnostics.repair",
             "warranties.view", "warranties.create", "warranties.dashboard", "warranties.manage", "warranties.review", "warranties.mark_incomplete", "warranties.approve_review", "warranties.manage_provider", "warranties.change_status", "warranties.register_provider_response", "warranties.register_claim", "warranties.export", "warranties.sync_to_sheet", "warranties.sync_from_sheet", "warranties.sync_logs", "warranties.config", "warranties.edit_dates", "warranties.reset_data", "warranties.cancel", "warranties.delete", "warranties.update", "warranties.counters", "warranties.remitos.view", "warranties.remitos.generate", "warranties.remitos.dispatch", "warranties.remitos.receive", "warranties.remitos.deposit_transfer", "warranties.remitos.provider_delivery", "warranties.remitos.delete",
             "budgets.view", "budgets.create", "budgets.save", "budgets.manage", "budgets.price_override",
-            "products.view", "products.sync", "products.manage", "products.providers.manage",
+            "products.view", "products.sync", "products.manage", "products.providers.manage", "catalog.view", "catalog.manage",
             "sales_web.view", "sales_web.create", "sales_web.take", "sales_web.complete", "sales_web.send", "sales_web.cancel", "sales_web.cancel_own", "sales_web.branch_manage", "sales_web.manage", "sales_web.delete", "notifications.view", "push.subscribe",
             "price_updates.view", "price_updates.create", "price_updates.check", "price_updates.check.web", "price_updates.check.puma", "price_updates.check.master", "price_updates.edit", "price_updates.delete",
             "cost_updates.view", "cost_updates.create", "cost_updates.check", "cost_updates.check.puma", "cost_updates.check.master", "cost_updates.edit", "cost_updates.delete",
@@ -181,7 +183,7 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
             # BI Comercial existente
             "sales_bi.view", "sales_bi.import", "sales_bi.aliases.manage", "sales_bi.export", "sales_bi.view_costs", "sales_bi.view_margin",
             # Catálogo (necesita para crear productos no catalogados que aparezcan en PSI)
-            "products.view", "products.sync", "products.manage", "products.providers.manage",
+            "products.view", "products.sync", "products.manage", "products.providers.manage", "catalog.view", "catalog.manage",
             # Herramientas legacy comerciales (Ventas/Costos, GFK, normalizadores)
             "tools.view", "tools.run.gg", "tools.run.nvsc", "tools.run.vsc", "tools.run.ncm", "tools.run.ncmc", "tools.run.cf",
             # Jobs (para ver salida de herramientas)
@@ -198,7 +200,7 @@ DEFAULT_ROLES: dict[str, dict[str, object]] = {
             "dashboard.view", "profile.view", "employees.photo.upload_own", "payroll_receipts.view_own", "payroll_receipts.sign_own", "payroll_receipts.observe_own", "about.view", "system.status.view", "system.diagnostics.view", "system.diagnostics.repair",
             "warranties.view", "warranties.create", "warranties.dashboard", "warranties.manage", "warranties.review", "warranties.mark_incomplete", "warranties.approve_review", "warranties.manage_provider", "warranties.change_status", "warranties.register_provider_response", "warranties.register_claim", "warranties.export", "warranties.sync_to_sheet", "warranties.sync_from_sheet", "warranties.sync_logs", "warranties.config", "warranties.edit_dates", "warranties.reset_data", "warranties.cancel", "warranties.delete", "warranties.update", "warranties.counters", "warranties.remitos.view", "warranties.remitos.generate", "warranties.remitos.dispatch", "warranties.remitos.receive", "warranties.remitos.deposit_transfer", "warranties.remitos.provider_delivery", "warranties.remitos.delete",
             "budgets.view", "budgets.create", "budgets.save",
-            "products.view", "products.sync", "products.manage", "products.providers.manage",
+            "products.view", "products.sync", "products.manage", "products.providers.manage", "catalog.view", "catalog.manage",
             "sales_web.view", "sales_web.create", "sales_web.take", "sales_web.complete", "sales_web.send", "sales_web.cancel", "sales_web.cancel_own", "sales_web.branch_manage", "sales_web.manage", "notifications.view", "push.subscribe",
             "price_updates.view", "price_updates.create", "price_updates.check", "price_updates.check.web", "price_updates.check.puma", "price_updates.check.master", "price_updates.edit", "price_updates.delete",
             "cost_updates.view", "cost_updates.check", "cost_updates.check.puma", "cost_updates.check.master",
@@ -359,7 +361,7 @@ PERMISSION_GROUPS: dict[str, list[str]] = {
         "tools.run.gg", "tools.run.ncm", "tools.run.ncmc", "tools.run.nvsc", "tools.run.vsc",
     ],
     "Administración": [
-        "jobs.view", "jobs.cancel", "settings.view", "ops_config.view", "ops_config.manage", "products.view", "products.sync", "products.manage", "products.providers.manage", "companies.view", "companies.manage", "branches.view", "branches.manage", "google.manage",
+        "jobs.view", "jobs.cancel", "settings.view", "ops_config.view", "ops_config.manage", "products.view", "products.sync", "products.manage", "products.providers.manage", "catalog.view", "catalog.manage", "companies.view", "companies.manage", "branches.view", "branches.manage", "google.manage",
         "users.view", "users.manage", "users.assign_roles", "employees.view", "employees.manage", "employees.photo.upload_own", "employees.photo.request", "employees.photo.approve", "employees.photo.reject", "payroll_receipts.view_own", "payroll_receipts.sign_own", "payroll_receipts.observe_own", "payroll_receipts.view_all", "payroll_receipts.upload", "payroll_receipts.bulk_upload", "payroll_receipts.cancel", "payroll_receipts.respond_observation", "roles.view", "roles.manage", "audit.view", "backups.view", "backups.manage",
     ],
 }

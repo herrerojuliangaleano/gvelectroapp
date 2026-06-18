@@ -46,6 +46,14 @@ class Product(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
     last_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Link al catálogo maestro nuevo (módulo Maestro/Normalización). NULL = este
+    # producto legacy todavía no fue normalizado/migrado. Cuando TODOS los
+    # products activos tienen este campo, la transición está completa y se puede
+    # decidir el corte. Es el único cambio en la tabla legacy.
+    catalog_product_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("catalog_products.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 

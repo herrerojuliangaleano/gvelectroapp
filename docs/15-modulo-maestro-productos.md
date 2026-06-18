@@ -1,0 +1,89 @@
+# 15 — Módulo Maestro / Alta / Normalización de Productos
+
+> Registro de integración y decisiones. La spec funcional completa la
+> escribió Victor (junio 2026); este doc mapea esa spec contra el código
+> real y registra las decisiones de arquitectura + el estado por etapas.
+
+## Decisiones de arquitectura (acordadas 2026-06)
+
+1. **Catálogo nuevo = tabla separada**, no se extiende `products` legacy en
+   su lugar. El maestro nuevo vive en `catalog_products`; la tabla
+   `products` legacy queda intacta salvo **una** columna nueva:
+   `catalog_product_id` (FK nullable → `catalog_products.id`).
+
+2. **Transición producto por producto con detector.** Cada `products` legacy
+   se vincula a un `catalog_products` cuando se normaliza. El endpoint
+   `GET /api/products/catalog/transition-status` cuenta cuántos legacy
+   activos ya tienen link. Cuando `legacy_faltan == 0` → `transicion_completa
+   = true` y recién ahí se decide el corte. Hasta entonces, los **16
+   consumidores** de `products` siguen leyendo legacy sin enterarse.
+
+3. **Código Puma manual.** No hay importación automática de fuentes (Planilla
+   con Puma / Existencias ERP). Se carga y matchea a mano para evitar errores
+   de auto-matching. (Se descartó la Etapa 2 "importación de fuentes" de la
+   spec original.)
+
+4. **Reusar la taxonomía existente, no crear una paralela.**
+   - `familia_app` = los 6 buckets de `_classify` (LÍNEA BLANCA / COCINA /
+     CLIMATIZACIÓN / TV-AUDIO / PEQUEÑOS / OTROS) que ya usa el BI comercial.
+   - `rubro_app` = el `tipo` granular (HELADERA, LAVARROPAS, ...) que en el
+     dashboard llamamos "Línea".
+   - La clasificación ERP (`familia_erp`/`rubro_erp`/`subrubro_erp`) se guarda
+     solo como referencia; la comercial manda para reportes.
+
+5. **Solapamientos con lo existente (no duplicar):**
+   - Aliases: ya existe `psi_product_aliases`. El catálogo nuevo usa
+     `catalog_aliases`. A futuro evaluar unificar; por ahora coexisten.
+   - Precio/costo: ya existe `price_cost_updates` (avisos con checks por
+     canal). El catálogo usa `catalog_price_history` / `catalog_cost_history`
+     (línea de tiempo from-to). Propósitos distintos, conviven.
+   - Marcas: ya existe `product_brands` + `marca_normalized` + brand↔proveedor.
+
+## Modelo de datos (Etapa 1 — HECHA)
+
+Migración `20260613_0001`. Todo aditivo (riesgo cero para los consumidores).
+
+| Tabla | Rol |
+|---|---|
+| `catalog_products` | maestro nuevo (sku_base/comercial, 4 descripciones, familia/rubro/subrubro app+erp, condicion, estado, activo) |
+| `catalog_aliases` | equivalencias históricas (SKU/desc/puma viejos → producto) |
+| `catalog_price_history` | historial PVP from-to |
+| `catalog_cost_history` | historial costo from-to |
+| `catalog_templates` | plantillas de descripción + campos obligatorios por familia+rubro |
+| `catalog_abbreviations` | diccionario de abreviaturas ERP |
+| `catalog_change_log` | auditoría campo a campo |
+| `products.catalog_product_id` | (legacy) único link al maestro nuevo |
+
+Permisos: `catalog.view`, `catalog.manage` (GERENTE, GERENTE_COMERCIAL,
+ADMINISTRADOR + superadmin por `*`).
+
+## Reglas de negocio clave (de la spec)
+
+- El usuario NO escribe la descripción final: carga datos estructurados y la
+  app genera SKU comercial, descripción comercial, descripción ERP y subrubro.
+- **Descripción ERP**: máx 50 chars, MAYÚSCULAS, sin tildes, abreviaturas de
+  `catalog_abbreviations`, **sin "OUTLET"**.
+- **OUTLET**: `condicion=OUTLET` → `sku_comercial = sku_base + " (O)"`,
+  `descripcion_comercial = base + " (OUTLET)"`, `descripcion_erp` sin OUTLET.
+  La app agrega "(O)" y "(OUTLET)" automáticamente, el usuario no los tipea.
+- Validaciones de activación: no activar sin familia/rubro/sku/marca/condición/
+  descripciones; ERP ≤ 50; SKU comercial y código Puma únicos entre activos.
+
+## Estado por etapas
+
+- **Etapa 1 — Modelo + migración**: ✅ HECHA (commit de esta tanda).
+  7 tablas + columna link + detector de transición + permisos.
+- **Etapa 2 — Importación de fuentes**: ❌ DESCARTADA (código Puma manual).
+- **Etapa 3 — Normalización diaria** (pantalla de tandas 20-50/día): pendiente.
+- **Etapa 4 — Alta guiada** (form + generación descripción comercial/ERP desde
+  templates + abreviaturas): pendiente.
+- **Etapa 5 — Exportaciones** (nueva Planilla Madre + salida ERP): pendiente.
+- **Etapa 6 — Corte** (planillas diarias consumen la salida de la app): cuando
+  `transicion_completa = true`.
+
+## Próximo paso sugerido
+
+La lógica de **generación de descripciones** (comercial + ERP desde
+`catalog_templates` + `catalog_abbreviations`, con el manejo de OUTLET y el
+límite de 50) es el corazón del módulo y conviene hacerla antes que las
+pantallas, porque tanto Alta guiada como Normalización diaria la consumen.
