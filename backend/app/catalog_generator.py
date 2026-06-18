@@ -75,7 +75,12 @@ def _field_comercial(field: dict[str, Any], value: Any) -> str:
         return str(value)
     if ftype == "number":
         suf = field.get("sufijo_comercial", "")
-        return f"{str(value).strip()} {suf}".strip() if suf else str(value).strip()
+        if not suf:
+            return str(value).strip()
+        # Las unidades simbólicas/de letra pegan sin espacio (50", 3500W);
+        # las de palabra van con espacio (385 litros, 8 kg, 56 cm).
+        sep = "" if suf in ('"', "W") else " "
+        return f"{str(value).strip()}{sep}{suf}"
     return str(value).strip()
 
 
