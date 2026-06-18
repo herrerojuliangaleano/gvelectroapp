@@ -74,6 +74,12 @@ def preview(payload: dict[str, Any], _user: Annotated[CurrentUser, Depends(requi
     return catalog_service.preview(payload)
 
 
+@router.post("/suggest")
+def suggest(payload: dict[str, Any], _user: Annotated[CurrentUser, Depends(require_permission("catalog.manage"))]):
+    """Sugerencias para precargar el armador desde una descripción legacy."""
+    return catalog_service.suggest_from_legacy(payload)
+
+
 @router.post("/products")
 def create_product(payload: dict[str, Any], user: Annotated[CurrentUser, Depends(require_permission("catalog.manage"))]):
     try:

@@ -2455,6 +2455,14 @@ export interface CatalogPreview {
   subrubro: string;
   error?: string;
 }
+export interface CatalogSuggestion {
+  condicion: string;
+  sku_base: string;
+  modelo: string;
+  campos: Record<string, string>;
+  typos: { de: string; a: string }[];
+  es_outlet: boolean;
+}
 export interface CatalogProduct {
   id: number;
   codigo_puma: string;

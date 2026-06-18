@@ -141,6 +141,28 @@ def get_template(familia: str, rubro: str) -> dict[str, Any] | None:
         return _template_with_order(t)
 
 
+def suggest_from_legacy(payload: dict[str, Any]) -> dict[str, Any]:
+    """Carril A: precarga el armador desde una descripción legacy.
+
+    Acepta {descripcion, sku, familia_app, rubro_app} (lo que tiene la pantalla
+    de normalización). Si hay plantilla del rubro, extrae campos numéricos y
+    select; siempre detecta OUTLET y corrige typos conocidos."""
+    from . import catalog_normalizer
+    familia = str(payload.get("familia_app") or "")
+    rubro = str(payload.get("rubro_app") or "")
+    tdict: dict[str, Any] | None = None
+    if familia and rubro:
+        with db_session() as session:
+            t = _get_template(session, familia, rubro)
+            if t:
+                tdict = _template_dict(t)
+    return catalog_normalizer.suggest(
+        descripcion=str(payload.get("descripcion") or ""),
+        sku=str(payload.get("sku") or ""),
+        template=tdict,
+    )
+
+
 def add_template_field(payload: dict[str, Any]) -> dict[str, Any]:
     """Agrega un atributo reutilizable a la plantilla familia+rubro.
 

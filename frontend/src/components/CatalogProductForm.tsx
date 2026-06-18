@@ -7,7 +7,7 @@ import { AlertTriangle, ArrowDown, ArrowUp, Check, Copy, Eye, Globe2, Loader2, P
 import {
   addCatalogTemplateField, addCatalogTemplateFieldOption,
   catalogPreview, createCatalogProduct, fetchCatalogOptions, fetchCatalogTemplate,
-  normalizeCatalogProduct,
+  normalizeCatalogProduct, suggestCatalogFromLegacy,
 } from '../api/client';
 import type { CatalogField, CatalogOptions, CatalogPreview, CatalogProduct, LegacyPendingItem } from '../types';
 
@@ -45,6 +45,7 @@ export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
   const [costo, setCosto] = useState('');
   const [campos, setCampos] = useState<Record<string, string>>({});
   const [extras, setExtras] = useState<Extra[]>([]);
+  const [typos, setTypos] = useState<{ de: string; a: string }[]>([]);
   const [preview, setPreview] = useState<CatalogPreview | null>(null);
   const [activar, setActivar] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -77,14 +78,16 @@ export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
     }
   }, [mode, legacy, options]);
 
-  // template → defs + orden por defecto
+  // template → defs + orden por defecto (+ autocompletado desde legacy)
   useEffect(() => {
     if (!familia || !rubro) { setFieldDefs([]); setOrden([]); return; }
-    fetchCatalogTemplate(familia, rubro).then((t) => {
-      setFieldDefs(t.campos_obligatorios || []);
+    let cancelled = false;
+    fetchCatalogTemplate(familia, rubro).then(async (t) => {
+      if (cancelled) return;
+      const defs = t.campos_obligatorios || [];
+      setFieldDefs(defs);
       const def = (t.orden_default || []).map((o) => o.name).filter(Boolean) as string[];
-      setOrden(def.length ? def : (t.campos_obligatorios || []).map((f) => f.name));
-      setCampos({});
+      let baseOrden = def.length ? def : defs.map((f) => f.name);
       setExtras([]);
       setNewFieldOpen(false);
       setNewFieldLabel('');
@@ -93,8 +96,26 @@ export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
       setNewOptionFor(null);
       setNewOptionValue('');
       setNewOptionErp('');
-    }).catch(() => { setFieldDefs([]); setOrden([]); });
-  }, [familia, rubro]);
+      // Carril A: en normalización, precargar campos desde la descripción vieja
+      if (mode === 'normalizacion' && legacy) {
+        try {
+          const s = await suggestCatalogFromLegacy({ descripcion: legacy.descripcion || '', sku: legacy.sku || '', familia_app: familia, rubro_app: rubro });
+          if (cancelled) return;
+          const valid = new Set(defs.map((f) => f.name));
+          for (const n of Object.keys(s.campos || {})) if (valid.has(n) && !baseOrden.includes(n)) baseOrden = [...baseOrden, n];
+          setOrden(baseOrden);
+          setCampos(s.campos || {});
+          if (s.condicion) setCondicion(s.condicion);
+          setTypos(s.typos || []);
+          return;
+        } catch { /* sin sugerencia: seguir con form vacío */ }
+      }
+      setOrden(baseOrden);
+      setCampos({});
+      setTypos([]);
+    }).catch(() => { if (!cancelled) { setFieldDefs([]); setOrden([]); } });
+    return () => { cancelled = true; };
+  }, [familia, rubro, mode, legacy]);
 
   const defByName = useMemo(() => Object.fromEntries(fieldDefs.map((f) => [f.name, f])), [fieldDefs]);
   const disponibles = useMemo(() => fieldDefs.filter((f) => !orden.includes(f.name)), [fieldDefs, orden]);
@@ -151,6 +172,23 @@ export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
   const removeAttr = (name: string) => setOrden((o) => o.filter((x) => x !== name));
   const addAttr = (name: string) => { if (name) setOrden((o) => [...o, name]); };
   const addExtra = () => setExtras((e) => [...e, { valor: '', en_erp: true }]);
+
+  async function autocomplete() {
+    if (!familia || !rubro) return;
+    const desc = legacy?.descripcion || '';
+    const sku = legacy?.sku || modelo || skuBase;
+    if (!desc && !sku) return;
+    try {
+      const s = await suggestCatalogFromLegacy({ descripcion: desc, sku, familia_app: familia, rubro_app: rubro });
+      const valid = new Set(fieldDefs.map((f) => f.name));
+      setOrden((o) => { const n = [...o]; for (const k of Object.keys(s.campos || {})) if (valid.has(k) && !n.includes(k)) n.push(k); return n; });
+      setCampos((c) => ({ ...c, ...(s.campos || {}) }));
+      if (s.condicion) setCondicion(s.condicion);
+      setTypos(s.typos || []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo autocompletar.');
+    }
+  }
 
   async function saveTemplateField() {
     if (!familia || !rubro || !newFieldLabel.trim()) return;
@@ -267,8 +305,22 @@ export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
       {/* ARMADOR: atributos en orden, reordenables, removibles + extras */}
       {(orden.length > 0 || fieldDefs.length > 0) && (
         <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
-          <div className="mb-1 text-xs font-black uppercase tracking-wide text-slate-400">Cómo se arma la descripción</div>
+          <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-black uppercase tracking-wide text-slate-400">Cómo se arma la descripción</span>
+            {mode === 'normalizacion' && legacy && (
+              <button type="button" onClick={autocomplete}
+                className="inline-flex items-center gap-1 rounded-lg border border-violet-500/40 bg-violet-500/10 px-2.5 py-1.5 text-[11px] font-black text-violet-100 hover:bg-violet-500/20">
+                <Sparkles size={13} /> Autocompletar desde la descripción
+              </button>
+            )}
+          </div>
           <p className="mb-3 text-[11px] text-slate-500">Reordená con ▲▼, quitá lo que no aplica (✕) y agregá detalles libres. La descripción se arma en este orden.</p>
+          {typos.length > 0 && (
+            <div className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-[11px] text-amber-100">
+              <b>Typos corregidos automáticamente:</b>{' '}
+              {typos.map((t, i) => <span key={i} className="mr-2 whitespace-nowrap"><s className="opacity-70">{t.de}</s> → {t.a}</span>)}
+            </div>
+          )}
           <div className="space-y-2">
             {orden.map((name, i) => {
               const f = defByName[name];

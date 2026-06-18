@@ -452,13 +452,14 @@ export async function fetchBrandsWithoutProvider(): Promise<import('../types').B
 // ── Módulo Maestro de Productos (catálogo nuevo) ──────────────────────────
 import type {
   CatalogOptions, CatalogTemplate, CatalogPreview, CatalogProduct,
-  LegacyPendingResponse, CatalogTransition,
+  LegacyPendingResponse, CatalogTransition, CatalogSuggestion,
 } from '../types';
 export async function fetchCatalogOptions(): Promise<CatalogOptions> { return request('/api/catalog/options'); }
 export async function fetchCatalogTemplate(familia: string, rubro: string): Promise<CatalogTemplate> { return request(`/api/catalog/template?familia=${encodeURIComponent(familia)}&rubro=${encodeURIComponent(rubro)}`); }
 export async function addCatalogTemplateField(payload: Record<string, unknown>): Promise<CatalogTemplate> { return request('/api/catalog/template-fields', { method: 'POST', body: JSON.stringify(payload) }); }
 export async function addCatalogTemplateFieldOption(payload: Record<string, unknown>): Promise<CatalogTemplate> { return request('/api/catalog/template-field-options', { method: 'POST', body: JSON.stringify(payload) }); }
 export async function catalogPreview(payload: Record<string, unknown>): Promise<CatalogPreview> { return request('/api/catalog/preview', { method: 'POST', body: JSON.stringify(payload) }); }
+export async function suggestCatalogFromLegacy(payload: Record<string, unknown>): Promise<CatalogSuggestion> { return request('/api/catalog/suggest', { method: 'POST', body: JSON.stringify(payload) }); }
 export async function createCatalogProduct(payload: Record<string, unknown>): Promise<CatalogProduct> { return request('/api/catalog/products', { method: 'POST', body: JSON.stringify(payload) }); }
 export async function listCatalogProducts(params: Record<string, string | number | boolean> = {}): Promise<CatalogProduct[]> { return request(`/api/catalog/products${buildQs(params)}`); }
 export async function getCatalogProduct(id: number): Promise<CatalogProduct> { return request(`/api/catalog/products/${id}`); }
