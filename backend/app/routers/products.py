@@ -518,6 +518,14 @@ def provider_by_brand(_user: Annotated[Any, Depends(require_permission("products
     return {"found": bool(provider), "provider": provider}
 
 
+@router.post("/catalog/seed")
+def catalog_seed_endpoint(_user: Annotated[Any, Depends(require_permission("catalog.manage"))]):
+    """Carga/actualiza abreviaturas + plantillas del catalogo desde el seed
+    (docs/16). Idempotente."""
+    from ..catalog_seed import seed_catalog
+    return seed_catalog()
+
+
 @router.get("/catalog/transition-status")
 def catalog_transition_status(_user: Annotated[Any, Depends(require_permission("catalog.view"))]):
     """Detector de transicion del modulo Maestro: cuantos products legacy ya
