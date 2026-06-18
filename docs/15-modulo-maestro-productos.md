@@ -81,9 +81,47 @@ ADMINISTRADOR + superadmin por `*`).
 - **Etapa 6 — Corte** (planillas diarias consumen la salida de la app): cuando
   `transicion_completa = true`.
 
+## Exportación a Google Sheets (spec de Victor + realineación)
+
+Victor escribió una spec detallada de la estructura del Sheet generado
+(`Productos PVP` + hojas por marca + hojas técnicas CONFIG_SYNC /
+CAMBIOS_SHEET / ERRORES_SYNC). Esa spec describe el **estado final
+(post-corte)**, no la transición. Realineación con la arquitectura actual:
+
+**Conflicto a evitar:** hoy el flujo es `Planilla Madre (Sheet) → sync
+nocturno 3:30 → products legacy → 16 consumidores`. Si la app publica
+`Productos PVP` desde `catalog_products` con la transición incompleta
+(hoy 0/1219), deja ciegas a las planillas diarias. El publisher NO se
+activa a mitad de transición.
+
+**Regla de oro:** una sola dirección canónica por vez. Nunca tener vivos
+a la vez Sheet→products (sync), app→Sheet (publish) y Sheet→app (read).
+
+**Secuencia segura (la marca el detector `transition-status`):**
+
+| Fase | Estado | Flujo Productos PVP | Construir |
+|---|---|---|---|
+| A — Normalización (ahora) | catálogo 0→100% | legacy Sheet→products | nada de publisher; solo normalizar |
+| B — Validación (cerca 100%) | casi completo | app → COPIA/staging | publisher a sheet de prueba + comparar vs Planilla Madre real |
+| C — Corte (`transicion_completa`) | completo | app→Sheet canónico; se retira el sync Sheet→products | apuntar planillas diarias a la hoja de la app |
+
+**Notas:**
+- El read-back (Sheet→app, sección 14 de la spec) es puente TEMPORAL de
+  Fase B, no función permanente (si no, vuelve el loop). Durante la
+  transición los cambios de precio van por `price_cost_updates`.
+- `ID_PRODUCTO` (= `catalog_products.id`) como clave de fórmula es lo
+  correcto, pero migrar las planillas diarias de SKU→ID_PRODUCTO es
+  trabajo de Fase C (reescribir BUSCARX/IMPORTRANGE), no gratis.
+- Lo impecable de la spec y que se mantiene: esquema de columnas
+  (compat legacy + nuevas), OUTLET visible "(O)"/"(OUTLET)", hojas por
+  marca como vistas filtradas (no fuente de fórmulas), Productos PVP
+  como única fuente para las planillas diarias.
+
 ## Próximo paso sugerido
 
 La lógica de **generación de descripciones** (comercial + ERP desde
 `catalog_templates` + `catalog_abbreviations`, con el manejo de OUTLET y el
 límite de 50) es el corazón del módulo y conviene hacerla antes que las
 pantallas, porque tanto Alta guiada como Normalización diaria la consumen.
+El publisher a Sheets es Fase B/C — no se construye hasta que la
+normalización esté cerca del 100%.
