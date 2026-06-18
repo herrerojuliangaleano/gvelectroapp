@@ -181,6 +181,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
       ] },
       { title: 'Gestión interna', items: [
         { to: '/productos', icon: <FileSpreadsheet size={16} />, label: 'Productos y proveedores', permission: 'products.view' },
+        { to: '/catalogo/alta', icon: <FileSpreadsheet size={16} />, label: 'Alta de producto', permission: 'catalog.manage' },
+        { to: '/catalogo/normalizar', icon: <FileSpreadsheet size={16} />, label: 'Normalización', permission: 'catalog.manage' },
         { to: '/precios-costos', icon: <CircleDollarSign size={16} />, label: 'Precios y costos', anyPermission: ['price_updates.view', 'cost_updates.view'] },
         { to: '/recibos', icon: <FileText size={16} />, label: 'Recibos de sueldo', anyPermission: ['payroll_receipts.view_own', 'payroll_receipts.view_all', 'payroll_receipts.upload'] },
       ] },

@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .routers import (
-    admin, auth, backups, budgets, config, employees, google_admin,
+    admin, auth, backups, budgets, catalog, config, employees, google_admin,
     jobs, notifications, operational_config, organization, payroll,
     price_cost_updates, products, remitos, sales_bi, sales_web, system, tools, warranties,
 )
@@ -93,6 +93,7 @@ app.include_router(sales_web.router)
 app.include_router(notifications.router)
 app.include_router(price_cost_updates.router)
 app.include_router(products.router)
+app.include_router(catalog.router)
 app.include_router(sales_bi.router)
 app.include_router(psi.router)
 app.include_router(organization.router)

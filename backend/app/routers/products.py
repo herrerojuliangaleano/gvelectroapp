@@ -518,38 +518,5 @@ def provider_by_brand(_user: Annotated[Any, Depends(require_permission("products
     return {"found": bool(provider), "provider": provider}
 
 
-@router.post("/catalog/seed")
-def catalog_seed_endpoint(_user: Annotated[Any, Depends(require_permission("catalog.manage"))]):
-    """Carga/actualiza abreviaturas + plantillas del catalogo desde el seed
-    (docs/16). Idempotente."""
-    from ..catalog_seed import seed_catalog
-    return seed_catalog()
-
-
-@router.get("/catalog/transition-status")
-def catalog_transition_status(_user: Annotated[Any, Depends(require_permission("catalog.view"))]):
-    """Detector de transicion del modulo Maestro: cuantos products legacy ya
-    estan vinculados al catalogo nuevo. Cuando faltan=0 la transicion esta
-    completa y se puede decidir el corte."""
-    from ..models.products import Product as _Product
-    from ..models.catalog import CatalogProduct as _CatalogProduct
-    with db_session() as session:
-        total = session.scalar(select(func.count()).select_from(_Product).where(_Product.is_active.is_(True))) or 0
-        migrados = session.scalar(
-            select(func.count()).select_from(_Product)
-            .where(_Product.is_active.is_(True), _Product.catalog_product_id.is_not(None))
-        ) or 0
-        catalogo_total = session.scalar(select(func.count()).select_from(_CatalogProduct)) or 0
-        catalogo_activos = session.scalar(
-            select(func.count()).select_from(_CatalogProduct).where(_CatalogProduct.activo.is_(True))
-        ) or 0
-    faltan = int(total) - int(migrados)
-    return {
-        "legacy_total": int(total),
-        "legacy_migrados": int(migrados),
-        "legacy_faltan": faltan,
-        "porcentaje": round(migrados * 100.0 / total, 1) if total else 0.0,
-        "transicion_completa": bool(total > 0 and faltan == 0),
-        "catalogo_total": int(catalogo_total),
-        "catalogo_activos": int(catalogo_activos),
-    }
+# NOTA: el detector de transición y el seed se movieron al router dedicado
+# /api/catalog (routers/catalog.py) — namespace único del módulo Maestro.

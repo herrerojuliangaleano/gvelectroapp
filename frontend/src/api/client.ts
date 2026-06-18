@@ -448,6 +448,22 @@ export async function updateWarrantyDates(id: string, payload: import('../types'
   return request(`/api/warranties/${encodeURIComponent(id)}/dates`, { method: 'PATCH', body: JSON.stringify(payload) });
 }
 export async function fetchBrandsWithoutProvider(): Promise<import('../types').BrandWithoutProviderInfo[]> { return request('/api/products/brands/without-provider'); }
+
+// ── Módulo Maestro de Productos (catálogo nuevo) ──────────────────────────
+import type {
+  CatalogOptions, CatalogTemplate, CatalogPreview, CatalogProduct,
+  LegacyPendingResponse, CatalogTransition,
+} from '../types';
+export async function fetchCatalogOptions(): Promise<CatalogOptions> { return request('/api/catalog/options'); }
+export async function fetchCatalogTemplate(familia: string, rubro: string): Promise<CatalogTemplate> { return request(`/api/catalog/template?familia=${encodeURIComponent(familia)}&rubro=${encodeURIComponent(rubro)}`); }
+export async function catalogPreview(payload: Record<string, unknown>): Promise<CatalogPreview> { return request('/api/catalog/preview', { method: 'POST', body: JSON.stringify(payload) }); }
+export async function createCatalogProduct(payload: Record<string, unknown>): Promise<CatalogProduct> { return request('/api/catalog/products', { method: 'POST', body: JSON.stringify(payload) }); }
+export async function listCatalogProducts(params: Record<string, string | number | boolean> = {}): Promise<CatalogProduct[]> { return request(`/api/catalog/products${buildQs(params)}`); }
+export async function getCatalogProduct(id: number): Promise<CatalogProduct> { return request(`/api/catalog/products/${id}`); }
+export async function updateCatalogProduct(id: number, payload: Record<string, unknown>): Promise<CatalogProduct> { return request(`/api/catalog/products/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }); }
+export async function fetchLegacyPending(q = '', limit = 50): Promise<LegacyPendingResponse> { return request(`/api/catalog/legacy-pending?q=${encodeURIComponent(q)}&limit=${limit}`); }
+export async function normalizeCatalogProduct(payload: Record<string, unknown>): Promise<CatalogProduct> { return request('/api/catalog/normalize', { method: 'POST', body: JSON.stringify(payload) }); }
+export async function fetchCatalogTransition(): Promise<CatalogTransition> { return request('/api/catalog/transition-status'); }
 export async function updateWarrantyEntryBase(id: string, payload: WarrantyEntryBaseUpdatePayload): Promise<WarrantyDetailResponse> {
   return request(`/api/warranties/${encodeURIComponent(id)}/entry-base`, { method: 'PATCH', body: JSON.stringify(payload) });
 }

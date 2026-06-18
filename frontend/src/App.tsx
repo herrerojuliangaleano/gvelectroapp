@@ -27,6 +27,8 @@ import { PayrollReceiptsPage } from './pages/PayrollReceiptsPage';
 import { PriceCostUpdatesPage } from './pages/PriceCostUpdatesPage';
 import { PriceAnnouncementsPage } from './pages/PriceAnnouncementsPage';
 import { ProductCatalogPage } from './pages/ProductCatalogPage';
+import { CatalogAltaPage } from './pages/CatalogAltaPage';
+import { CatalogNormalizacionPage } from './pages/CatalogNormalizacionPage';
 import { OperationalConfigPage } from './pages/OperationalConfigPage';
 import { PSIPage } from './pages/PSIPage';
 import { SalesWebCreatePage } from './pages/SalesWebCreatePage';
@@ -201,6 +203,8 @@ export default function App() {
       <Route path="/notificaciones" element={<ProtectedLayout permission="notifications.view"><NotificationsPage /></ProtectedLayout>} />
       <Route path="/productos" element={<ProtectedLayout permission="products.view"><ProductCatalogPage /></ProtectedLayout>} />
       <Route path="/admin/productos" element={<Navigate to="/productos" replace />} />
+      <Route path="/catalogo/alta" element={<ProtectedLayout permission="catalog.manage"><CatalogAltaPage /></ProtectedLayout>} />
+      <Route path="/catalogo/normalizar" element={<ProtectedLayout permission="catalog.manage"><CatalogNormalizacionPage /></ProtectedLayout>} />
       <Route path="/precios-costos" element={<ProtectedLayout anyPermission={["price_updates.view", "cost_updates.view"]}><PriceCostUpdatesPage /></ProtectedLayout>} />
       <Route path="/comercial/anuncios-precios" element={<ProtectedLayout allowed={() => canUsePriceAnnouncements(getCurrentUserFromStorage())}><PriceAnnouncementsPage /></ProtectedLayout>} />
       <Route path="/recibos" element={<ProtectedLayout anyPermission={["payroll_receipts.view_own", "payroll_receipts.view_all"]}><PayrollReceiptsPage /></ProtectedLayout>} />

@@ -2413,3 +2413,88 @@ export interface PSIRevertResponse {
   status:  string;
   message: string;
 }
+
+// ── Módulo Maestro de Productos (catálogo nuevo) ──────────────────────────
+export interface CatalogFieldOption { valor: string; comercial: string; erp: string; }
+export interface CatalogField {
+  name: string;
+  label: string;
+  type: 'text' | 'number' | 'select';
+  obligatorio: boolean;
+  sufijo_comercial?: string;
+  sufijo_erp?: string;
+  opciones?: CatalogFieldOption[];
+}
+export interface CatalogTemplate {
+  familia_app: string;
+  rubro_app: string;
+  campos_obligatorios: CatalogField[];
+  formato_descripcion_comercial: string;
+  formato_descripcion_erp: string;
+  formato_subrubro: string;
+}
+export interface CatalogOptions {
+  familias: string[];
+  rubros_por_familia: Record<string, string[]>;
+  marcas: string[];
+  condiciones: string[];
+  estados: string[];
+}
+export interface CatalogPreview {
+  sku_comercial: string;
+  descripcion_base: string;
+  descripcion_comercial: string;
+  descripcion_erp: string;
+  descripcion_erp_len: number;
+  estado_erp: string;
+  subrubro: string;
+  error?: string;
+}
+export interface CatalogProduct {
+  id: number;
+  codigo_puma: string;
+  sku_base: string;
+  sku_comercial: string;
+  descripcion_base: string;
+  descripcion_comercial: string;
+  descripcion_erp: string;
+  descripcion_erp_len: number;
+  descripcion_original: string;
+  marca: string;
+  familia_app: string;
+  rubro_app: string;
+  subrubro_app: string;
+  condicion: string;
+  estado: string;
+  activo: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+  errores?: string[];
+  aliases?: { sku_anterior: string; descripcion_anterior: string; origen: string; tipo_equivalencia: string }[];
+}
+export interface LegacyPendingItem {
+  legacy_id: number;
+  sku: string;
+  marca: string;
+  tipo: string;
+  descripcion: string;
+  pvp?: number | null;
+  pvp_text?: string;
+  costo_vigente?: number | null;
+  costo_text?: string;
+  condicion_producto?: string;
+}
+export interface LegacyPendingResponse {
+  total_pendientes: number;
+  mostrados: number;
+  items: LegacyPendingItem[];
+}
+export interface CatalogTransition {
+  legacy_total: number;
+  legacy_migrados: number;
+  legacy_faltan: number;
+  porcentaje: number;
+  transicion_completa: boolean;
+  catalogo_total: number;
+  catalogo_activos: number;
+}
