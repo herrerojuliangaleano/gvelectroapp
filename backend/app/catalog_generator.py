@@ -108,6 +108,122 @@ def _render(formato: str, values: dict[str, str]) -> str:
     return collapse_spaces(re.sub(r"\{(\w+)\}", repl, formato or ""))
 
 
+def _rubro_prefix(formato: str) -> str:
+    """Texto literal antes del primer {placeholder} (el rubro). Ej:
+    'Heladera {marca}...' → 'Heladera'; 'A/A {marca}...' → 'A/A'."""
+    m = re.search(r"\{", formato or "")
+    return (formato[: m.start()].strip() if m else (formato or "").strip())
+
+
+def default_attr_order(template: dict[str, Any]) -> list[dict[str, Any]]:
+    """Orden de atributos por defecto = los {placeholders} del patrón comercial,
+    salteando marca/modelo (que van fijos al inicio). Cada uno es un token
+    {kind:'campo', name}."""
+    com = template.get("formato_descripcion_comercial", "")
+    names = [n for n in re.findall(r"\{(\w+)\}", com) if n not in ("marca", "modelo")]
+    return [{"kind": "campo", "name": n} for n in names]
+
+
+def generate_parts(
+    template: dict[str, Any],
+    attr_parts: list[dict[str, Any]],
+    field_values: dict[str, Any],
+    *,
+    marca: str,
+    modelo: str,
+    sku_base: str,
+    condicion: str,
+    abbr_map: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Arma comercial + ERP desde un orden de atributos elegido por el operador
+    + detalles libres (extras). Prefijo fijo: rubro + marca + modelo.
+
+    attr_parts: lista ordenada de tokens:
+      {"kind":"campo","name":<field>}                         → valor del campo
+      {"kind":"extra","valor":"LÍNEA 2022","en_erp":bool}     → detalle libre
+    Quitar un campo de la lista = "no aplica".
+    """
+    abbr_map = abbr_map or {}
+    field_defs = {f.get("name"): f for f in (template.get("campos_obligatorios") or [])}
+    es_outlet = norm_key(condicion) == "OUTLET"
+    marca = str(marca or "").strip()
+    modelo = str(modelo or "").strip()
+
+    rubro_com = _rubro_prefix(template.get("formato_descripcion_comercial", "")) or template.get("rubro_app", "")
+    rubro_erp = _rubro_prefix(template.get("formato_descripcion_erp", "")) or template.get("rubro_app", "")
+
+    com_tokens: list[str] = [rubro_com, marca, modelo]
+    erp_tokens: list[str] = [rubro_erp, marca, modelo]
+    extras_idx: list[int] = []  # posiciones de extras en erp_tokens (para recorte)
+    opt_idx: list[int] = []     # posiciones de campos opcionales en erp_tokens
+
+    for part in (attr_parts or []):
+        kind = part.get("kind")
+        if kind == "campo":
+            f = field_defs.get(part.get("name"))
+            if not f:
+                continue
+            cv = _field_comercial(f, field_values.get(part.get("name")))
+            ev = _field_erp(f, field_values.get(part.get("name")))
+            if cv:
+                com_tokens.append(cv)
+            if ev:
+                erp_tokens.append(ev)
+                if not f.get("obligatorio", True):
+                    opt_idx.append(len(erp_tokens) - 1)
+        elif kind == "extra":
+            txt = str(part.get("valor") or "").strip()
+            if not txt:
+                continue
+            com_tokens.append(txt)
+            if part.get("en_erp", True):
+                erp_tokens.append(norm_erp_text(txt))
+                extras_idx.append(len(erp_tokens) - 1)
+
+    descripcion_base = collapse_spaces(" ".join(t for t in com_tokens if t))
+    if descripcion_base:
+        descripcion_base = descripcion_base[0].upper() + descripcion_base[1:]
+    descripcion_comercial = descripcion_base + (" (OUTLET)" if es_outlet else "")
+
+    # ── ERP con cascada de 50 ──────────────────────────────────────────
+    def _join(tokens: list[str], drop: set[int]) -> str:
+        return norm_erp_text(" ".join(t for i, t in enumerate(tokens) if t and i not in drop))
+
+    drop: set[int] = set()
+    erp = apply_abbreviations(_join(erp_tokens, drop), abbr_map)
+    estado_erp = "OK_ERP_50"
+    if len(erp) > ERP_MAX:
+        estado_erp = "AJUSTADO_AUTOMATICO"
+        # 1) soltar extras del final hacia el inicio
+        for i in reversed(extras_idx):
+            drop.add(i)
+            erp = apply_abbreviations(_join(erp_tokens, drop), abbr_map)
+            if len(erp) <= ERP_MAX:
+                break
+    if len(erp) > ERP_MAX:
+        # 2) soltar campos opcionales
+        for i in reversed(opt_idx):
+            drop.add(i)
+            erp = apply_abbreviations(_join(erp_tokens, drop), abbr_map)
+            if len(erp) <= ERP_MAX:
+                break
+    if len(erp) > ERP_MAX:
+        erp = erp[:ERP_MAX]
+        estado_erp = "REQUIERE_REVISION_ERP"
+
+    return {
+        "sku_comercial": (sku_base.strip() + " (O)") if es_outlet else sku_base.strip(),
+        "descripcion_base": descripcion_base,
+        "descripcion_comercial": descripcion_comercial,
+        "descripcion_erp": erp,
+        "descripcion_erp_len": len(erp),
+        "estado_erp": estado_erp,
+        "subrubro": _render(template.get("formato_subrubro", ""), {
+            **{f.get("name"): _field_comercial(f, field_values.get(f.get("name"))) for f in field_defs.values()},
+        }),
+    }
+
+
 def generate(
     template: dict[str, Any],
     field_values: dict[str, Any],

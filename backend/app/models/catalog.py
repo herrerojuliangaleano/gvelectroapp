@@ -74,6 +74,11 @@ class CatalogProduct(Base):
         ForeignKey("catalog_products.id", ondelete="SET NULL"), nullable=True
     )
 
+    # Armado de la descripción por producto: orden de atributos elegido por el
+    # operador + detalles libres (ej "(PN)", "LÍNEA 2022"). Permite reconstruir
+    # el armador al editar. {"orden":[...], "campos":{...}, "extras":[...]}.
+    datos: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
     # ── Auditoría ──────────────────────────────────────────────────────
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)

@@ -2425,6 +2425,7 @@ export interface CatalogField {
   sufijo_erp?: string;
   opciones?: CatalogFieldOption[];
 }
+export interface CatalogAttrToken { kind: 'campo' | 'extra'; name?: string; valor?: string; en_erp?: boolean; }
 export interface CatalogTemplate {
   familia_app: string;
   rubro_app: string;
@@ -2432,6 +2433,7 @@ export interface CatalogTemplate {
   formato_descripcion_comercial: string;
   formato_descripcion_erp: string;
   formato_subrubro: string;
+  orden_default?: CatalogAttrToken[];
 }
 export interface CatalogOptions {
   familias: string[];
@@ -2470,6 +2472,7 @@ export interface CatalogProduct {
   created_at?: string | null;
   updated_at?: string | null;
   errores?: string[];
+  datos?: { orden?: CatalogAttrToken[]; campos?: Record<string, string>; extras?: ({ valor: string; en_erp: boolean } | string)[] };
   aliases?: { sku_anterior: string; descripcion_anterior: string; origen: string; tipo_equivalencia: string }[];
 }
 export interface LegacyPendingItem {

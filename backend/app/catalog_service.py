@@ -16,7 +16,7 @@ from typing import Any
 
 from sqlalchemy import func, or_, select
 
-from .catalog_generator import generate, norm_key, validate_for_activation
+from .catalog_generator import default_attr_order, generate, generate_parts, norm_key, validate_for_activation
 from .catalog_seed import abbreviations_map
 from .db import db_session
 from .models.catalog import (
@@ -68,6 +68,7 @@ def _public(p: CatalogProduct) -> dict[str, Any]:
         "subrubro_app": p.subrubro_app, "condicion": p.condicion, "estado": p.estado,
         "activo": p.activo, "created_at": p.created_at.isoformat() if p.created_at else None,
         "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+        "datos": dict(p.datos or {}),
     }
 
 
@@ -98,7 +99,31 @@ def build_options() -> dict[str, Any]:
 def get_template(familia: str, rubro: str) -> dict[str, Any] | None:
     with db_session() as session:
         t = _get_template(session, familia, rubro)
-        return _template_dict(t) if t else None
+        if not t:
+            return None
+        d = _template_dict(t)
+        d["orden_default"] = default_attr_order(d)  # orden inicial de atributos para el armador
+        return d
+
+
+def _gen(tdict: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    """Genera usando el armador por partes si vino 'orden'; si no, el orden por
+    defecto del template (compat)."""
+    attr_parts = payload.get("orden")
+    if attr_parts is None:
+        attr_parts = default_attr_order(tdict)
+    # los extras pueden venir aparte o ya intercalados en 'orden'
+    for ex in (payload.get("extras") or []):
+        if isinstance(ex, str):
+            attr_parts = attr_parts + [{"kind": "extra", "valor": ex, "en_erp": True}]
+        elif isinstance(ex, dict):
+            attr_parts = attr_parts + [{"kind": "extra", "valor": ex.get("valor", ""), "en_erp": ex.get("en_erp", True)}]
+    return generate_parts(
+        tdict, attr_parts, payload.get("campos") or {},
+        marca=payload.get("marca", ""), modelo=payload.get("modelo", ""),
+        sku_base=payload.get("sku_base", ""), condicion=payload.get("condicion", "PRIMERA"),
+        abbr_map=abbreviations_map(),
+    )
 
 
 # ── Preview (generación en vivo, sin guardar) ───────────────────────────
@@ -111,12 +136,7 @@ def preview(payload: dict[str, Any]) -> dict[str, Any]:
         if not t:
             return {"error": f"No hay plantilla para {familia} / {rubro}."}
         tdict = _template_dict(t)
-    return generate(
-        tdict, payload.get("campos") or {},
-        marca=payload.get("marca", ""), modelo=payload.get("modelo", ""),
-        sku_base=payload.get("sku_base", ""), condicion=payload.get("condicion", "PRIMERA"),
-        abbr_map=abbreviations_map(),
-    )
+    return _gen(tdict, payload)
 
 
 # ── Crear / Normalizar ──────────────────────────────────────────────────
@@ -130,12 +150,8 @@ def _build_and_validate(session, payload: dict[str, Any]) -> tuple[dict[str, Any
     if not t:
         raise ValueError(f"No hay plantilla para {familia} / {rubro}.")
     marca = _resolve_marca(session, payload.get("marca", ""))
-    gen = generate(
-        _template_dict(t), payload.get("campos") or {},
-        marca=marca, modelo=payload.get("modelo", ""),
-        sku_base=payload.get("sku_base", ""), condicion=payload.get("condicion", "PRIMERA"),
-        abbr_map=abbreviations_map(),
-    )
+    tdict = _template_dict(t)
+    gen = _gen(tdict, {**payload, "marca": marca})
     prod = {
         "codigo_puma": str(payload.get("codigo_puma") or "").strip(),
         "sku_base": str(payload.get("sku_base") or "").strip(),
@@ -151,6 +167,11 @@ def _build_and_validate(session, payload: dict[str, Any]) -> tuple[dict[str, Any
         "rubro_erp": str(payload.get("rubro_erp") or "").strip(),
         "subrubro_erp": str(payload.get("subrubro_erp") or "").strip(),
         "condicion": str(payload.get("condicion") or "PRIMERA").strip().upper(),
+        "datos": {
+            "orden": payload.get("orden"),
+            "campos": payload.get("campos") or {},
+            "extras": payload.get("extras") or [],
+        },
     }
     errs = validate_for_activation(prod)
     # Unicidad SKU comercial / código Puma entre activos.

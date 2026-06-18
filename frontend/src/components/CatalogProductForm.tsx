@@ -1,29 +1,32 @@
 // Formulario compartido de Alta / Normalización del catálogo maestro.
-// - Campos dinámicos según rubro (template del backend).
-// - "No aplica" por campo (omite el campo de la generación, sin que la app lo exija).
-// - Preview en vivo (descripción comercial + ERP con contador de 50).
+// "Armador" de descripción: el operador elige QUÉ atributos cargar, en QUÉ
+// orden (▲▼), puede quitar los que no aplican y agregar detalles libres
+// (ej "LÍNEA 2022", "(PN)"). Preview en vivo (comercial + ERP con contador 50).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Check, Loader2, Save } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, Check, Loader2, Plus, Save, X } from 'lucide-react';
 import {
   catalogPreview, createCatalogProduct, fetchCatalogOptions, fetchCatalogTemplate,
   normalizeCatalogProduct,
 } from '../api/client';
 import type { CatalogField, CatalogOptions, CatalogPreview, CatalogProduct, LegacyPendingItem } from '../types';
 
+interface Extra { valor: string; en_erp: boolean; }
 interface Props {
   mode: 'alta' | 'normalizacion';
-  legacy?: LegacyPendingItem | null;   // sólo en normalización
+  legacy?: LegacyPendingItem | null;
   onSaved?: (p: CatalogProduct) => void;
 }
 
 const lbl = 'mb-1 block text-xs font-bold text-slate-400';
 const inp = 'w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm outline-none focus:border-indigo-400';
+const inpSm = 'w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-2 text-sm outline-none focus:border-indigo-400';
 
 export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
   const [options, setOptions] = useState<CatalogOptions | null>(null);
   const [familia, setFamilia] = useState('');
   const [rubro, setRubro] = useState('');
-  const [fields, setFields] = useState<CatalogField[]>([]);
+  const [fieldDefs, setFieldDefs] = useState<CatalogField[]>([]);
+  const [orden, setOrden] = useState<string[]>([]);     // nombres de campos en orden (los activos)
   const [marca, setMarca] = useState('');
   const [modelo, setModelo] = useState('');
   const [skuBase, setSkuBase] = useState('');
@@ -32,17 +35,16 @@ export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
   const [pvp, setPvp] = useState('');
   const [costo, setCosto] = useState('');
   const [campos, setCampos] = useState<Record<string, string>>({});
-  const [noAplica, setNoAplica] = useState<Record<string, boolean>>({});
+  const [extras, setExtras] = useState<Extra[]>([]);
   const [preview, setPreview] = useState<CatalogPreview | null>(null);
   const [activar, setActivar] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [okMsg, setOkMsg] = useState('');
 
-  // cargar opciones
   useEffect(() => { fetchCatalogOptions().then(setOptions).catch((e) => setError(e.message)); }, []);
 
-  // prefill en normalización desde el legacy
+  // prefill normalización
   useEffect(() => {
     if (mode !== 'normalizacion' || !legacy || !options) return;
     setMarca(legacy.marca || '');
@@ -51,33 +53,44 @@ export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
     setCondicion(/\(O\)/i.test(legacy.sku || '') || /outlet/i.test(legacy.descripcion || '') ? 'OUTLET' : 'PRIMERA');
     if (legacy.pvp != null) setPvp(String(legacy.pvp));
     if (legacy.costo_vigente != null) setCosto(String(legacy.costo_vigente));
-    // intentar adivinar rubro por el tipo del legacy
     const tipoUp = (legacy.tipo || '').toUpperCase().trim();
     for (const [fam, rubros] of Object.entries(options.rubros_por_familia)) {
       if (rubros.includes(tipoUp)) { setFamilia(fam); setRubro(tipoUp); break; }
     }
   }, [mode, legacy, options]);
 
-  // al cambiar rubro, traer template
+  // template → defs + orden por defecto
   useEffect(() => {
-    if (!familia || !rubro) { setFields([]); return; }
-    fetchCatalogTemplate(familia, rubro)
-      .then((t) => { setFields(t.campos_obligatorios || []); })
-      .catch(() => setFields([]));
+    if (!familia || !rubro) { setFieldDefs([]); setOrden([]); return; }
+    fetchCatalogTemplate(familia, rubro).then((t) => {
+      setFieldDefs(t.campos_obligatorios || []);
+      const def = (t.orden_default || []).map((o) => o.name).filter(Boolean) as string[];
+      setOrden(def.length ? def : (t.campos_obligatorios || []).map((f) => f.name));
+      setCampos({});
+      setExtras([]);
+    }).catch(() => { setFieldDefs([]); setOrden([]); });
   }, [familia, rubro]);
 
-  // preview en vivo (debounce)
+  const defByName = useMemo(() => Object.fromEntries(fieldDefs.map((f) => [f.name, f])), [fieldDefs]);
+  const disponibles = useMemo(() => fieldDefs.filter((f) => !orden.includes(f.name)), [fieldDefs, orden]);
+
+  // preview en vivo
   const debRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const buildPayload = useCallback(() => {
+    const camposEnviar: Record<string, string> = {};
+    for (const name of orden) if (campos[name]) camposEnviar[name] = campos[name];
+    return {
+      familia_app: familia, rubro_app: rubro, marca, modelo, sku_base: skuBase, condicion,
+      campos: camposEnviar,
+      orden: orden.map((name) => ({ kind: 'campo', name })),
+      extras: extras.filter((e) => e.valor.trim()).map((e) => ({ valor: e.valor.trim(), en_erp: e.en_erp })),
+    };
+  }, [familia, rubro, marca, modelo, skuBase, condicion, orden, campos, extras]);
+
   const runPreview = useCallback(() => {
     if (!familia || !rubro) { setPreview(null); return; }
-    const camposEnviar: Record<string, string> = {};
-    for (const f of fields) {
-      if (noAplica[f.name]) continue;            // "no aplica" → se omite
-      if (campos[f.name]) camposEnviar[f.name] = campos[f.name];
-    }
-    catalogPreview({ familia_app: familia, rubro_app: rubro, marca, modelo, sku_base: skuBase, condicion, campos: camposEnviar })
-      .then(setPreview).catch(() => setPreview(null));
-  }, [familia, rubro, fields, campos, noAplica, marca, modelo, skuBase, condicion]);
+    catalogPreview(buildPayload()).then(setPreview).catch(() => setPreview(null));
+  }, [familia, rubro, buildPayload]);
 
   useEffect(() => {
     if (debRef.current) clearTimeout(debRef.current);
@@ -89,31 +102,30 @@ export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
   const erpLen = preview?.descripcion_erp_len ?? 0;
   const erpOver = erpLen > 50;
 
+  function move(i: number, dir: -1 | 1) {
+    setOrden((o) => {
+      const n = [...o]; const j = i + dir;
+      if (j < 0 || j >= n.length) return o;
+      [n[i], n[j]] = [n[j], n[i]];
+      return n;
+    });
+  }
+  const removeAttr = (name: string) => setOrden((o) => o.filter((x) => x !== name));
+  const addAttr = (name: string) => { if (name) setOrden((o) => [...o, name]); };
+  const addExtra = () => setExtras((e) => [...e, { valor: '', en_erp: true }]);
+
   async function save() {
     setSaving(true); setError(''); setOkMsg('');
-    const camposEnviar: Record<string, string> = {};
-    for (const f of fields) {
-      if (noAplica[f.name]) continue;
-      if (campos[f.name]) camposEnviar[f.name] = campos[f.name];
-    }
-    const payload: Record<string, unknown> = {
-      familia_app: familia, rubro_app: rubro, marca, modelo, sku_base: skuBase,
-      condicion, codigo_puma: codigoPuma, campos: camposEnviar,
-      pvp: pvp || undefined, costo: costo || undefined, activar,
-    };
     try {
       let res: CatalogProduct;
+      const payload: Record<string, unknown> = { ...buildPayload(), codigo_puma: codigoPuma, pvp: pvp || undefined, costo: costo || undefined, activar };
       if (mode === 'normalizacion') {
         if (!legacy) throw new Error('No hay producto legacy seleccionado.');
         res = await normalizeCatalogProduct({ ...payload, legacy_product_id: legacy.legacy_id });
       } else {
         res = await createCatalogProduct(payload);
       }
-      if (res.errores && res.errores.length) {
-        setOkMsg(`Guardado como ${res.estado}. Pendiente: ${res.errores.join(' ')}`);
-      } else {
-        setOkMsg(`Guardado como ${res.estado}.`);
-      }
+      setOkMsg(res.errores && res.errores.length ? `Guardado como ${res.estado}. Pendiente: ${res.errores.join(' ')}` : `Guardado como ${res.estado}.`);
       onSaved?.(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo guardar.');
@@ -127,23 +139,19 @@ export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
       {error && <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>}
       {okMsg && <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-100 flex items-center gap-2"><Check className="size-4" />{okMsg}</div>}
 
-      {/* clasificación */}
       <div className="grid gap-3 sm:grid-cols-2">
         <label><span className={lbl}>Familia</span>
           <select className={inp} value={familia} onChange={(e) => { setFamilia(e.target.value); setRubro(''); }}>
-            <option value="">Elegí familia</option>
-            {options.familias.map((f) => <option key={f} value={f}>{f}</option>)}
+            <option value="">Elegí familia</option>{options.familias.map((f) => <option key={f} value={f}>{f}</option>)}
           </select>
         </label>
         <label><span className={lbl}>Rubro</span>
           <select className={inp} value={rubro} onChange={(e) => setRubro(e.target.value)} disabled={!familia}>
-            <option value="">Elegí rubro</option>
-            {rubros.map((r) => <option key={r} value={r}>{r}</option>)}
+            <option value="">Elegí rubro</option>{rubros.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
         </label>
       </div>
 
-      {/* identificación */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <label><span className={lbl}>Marca</span>
           <input className={inp} list="catalog-marcas" value={marca} onChange={(e) => setMarca(e.target.value)} placeholder="Elegí o escribí" />
@@ -158,61 +166,78 @@ export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
         </label>
       </div>
 
-      {/* campos dinámicos del rubro con "No aplica" */}
-      {fields.length > 0 && (
+      {/* ARMADOR: atributos en orden, reordenables, removibles + extras */}
+      {(orden.length > 0 || fieldDefs.length > 0) && (
         <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
-          <div className="mb-3 text-xs font-black uppercase tracking-wide text-slate-400">Datos del rubro</div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {fields.map((f) => {
-              const off = !!noAplica[f.name];
+          <div className="mb-1 text-xs font-black uppercase tracking-wide text-slate-400">Cómo se arma la descripción</div>
+          <p className="mb-3 text-[11px] text-slate-500">Reordená con ▲▼, quitá lo que no aplica (✕) y agregá detalles libres. La descripción se arma en este orden.</p>
+          <div className="space-y-2">
+            {orden.map((name, i) => {
+              const f = defByName[name];
+              if (!f) return null;
               return (
-                <div key={f.name} className={`rounded-xl border p-3 ${off ? 'border-slate-800 bg-slate-950/40 opacity-60' : 'border-slate-800 bg-slate-950/60'}`}>
-                  <div className="mb-1 flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-300">{f.label}{f.obligatorio && !off && <span className="text-amber-400"> *</span>}</span>
-                    <label className="flex items-center gap-1.5 text-[11px] text-slate-400">
-                      <input type="checkbox" checked={off} onChange={(e) => setNoAplica((n) => ({ ...n, [f.name]: e.target.checked }))} />
-                      No aplica
-                    </label>
+                <div key={name} className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/60 p-2">
+                  <div className="flex flex-col">
+                    <button onClick={() => move(i, -1)} disabled={i === 0} className="text-slate-500 hover:text-slate-200 disabled:opacity-30"><ArrowUp size={14} /></button>
+                    <button onClick={() => move(i, 1)} disabled={i === orden.length - 1} className="text-slate-500 hover:text-slate-200 disabled:opacity-30"><ArrowDown size={14} /></button>
                   </div>
-                  {f.type === 'select' ? (
-                    <select className={inp} disabled={off} value={campos[f.name] || ''} onChange={(e) => setCampos((c) => ({ ...c, [f.name]: e.target.value }))}>
-                      <option value="">—</option>
-                      {(f.opciones || []).map((o) => <option key={o.valor} value={o.valor}>{o.comercial || o.valor}</option>)}
-                    </select>
-                  ) : (
-                    <input className={inp} disabled={off} type={f.type === 'number' ? 'number' : 'text'}
-                      value={campos[f.name] || ''} onChange={(e) => setCampos((c) => ({ ...c, [f.name]: e.target.value }))} />
-                  )}
+                  <span className="w-32 shrink-0 text-xs font-bold text-slate-300">{f.label}</span>
+                  <div className="flex-1">
+                    {f.type === 'select' ? (
+                      <select className={inpSm} value={campos[name] || ''} onChange={(e) => setCampos((c) => ({ ...c, [name]: e.target.value }))}>
+                        <option value="">—</option>{(f.opciones || []).map((o) => <option key={o.valor} value={o.valor}>{o.comercial || o.valor}</option>)}
+                      </select>
+                    ) : (
+                      <input className={inpSm} type={f.type === 'number' ? 'number' : 'text'} value={campos[name] || ''} onChange={(e) => setCampos((c) => ({ ...c, [name]: e.target.value }))} />
+                    )}
+                  </div>
+                  <button onClick={() => removeAttr(name)} title="No aplica / quitar" className="shrink-0 rounded-lg p-1.5 text-slate-500 hover:bg-rose-500/10 hover:text-rose-400"><X size={15} /></button>
                 </div>
               );
             })}
+
+            {/* extras */}
+            {extras.map((ex, idx) => (
+              <div key={`ex${idx}`} className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/5 p-2">
+                <span className="w-32 shrink-0 text-xs font-bold text-amber-300">Detalle libre</span>
+                <input className={inpSm} placeholder="LÍNEA 2022, (PN)…" value={ex.valor}
+                  onChange={(e) => setExtras((arr) => arr.map((x, i) => i === idx ? { ...x, valor: e.target.value } : x))} />
+                <label className="flex shrink-0 items-center gap-1 text-[11px] text-slate-400">
+                  <input type="checkbox" checked={ex.en_erp} onChange={(e) => setExtras((arr) => arr.map((x, i) => i === idx ? { ...x, en_erp: e.target.checked } : x))} /> en ERP
+                </label>
+                <button onClick={() => setExtras((arr) => arr.filter((_, i) => i !== idx))} className="shrink-0 rounded-lg p-1.5 text-slate-500 hover:bg-rose-500/10 hover:text-rose-400"><X size={15} /></button>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {disponibles.length > 0 && (
+              <select className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-300" value="" onChange={(e) => addAttr(e.target.value)}>
+                <option value="">+ Agregar atributo…</option>
+                {disponibles.map((f) => <option key={f.name} value={f.name}>{f.label}</option>)}
+              </select>
+            )}
+            <button onClick={addExtra} className="inline-flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-xs font-bold text-amber-100"><Plus size={13} /> Detalle libre</button>
           </div>
         </div>
       )}
 
-      {/* puma + precio/costo */}
       <div className="grid gap-3 sm:grid-cols-3">
         <label><span className={lbl}>Código Puma {activar && <span className="text-amber-400">(necesario para activar)</span>}</span><input className={inp} value={codigoPuma} onChange={(e) => setCodigoPuma(e.target.value)} /></label>
         <label><span className={lbl}>PVP</span><input className={inp} type="number" value={pvp} onChange={(e) => setPvp(e.target.value)} /></label>
         <label><span className={lbl}>Costo</span><input className={inp} type="number" value={costo} onChange={(e) => setCosto(e.target.value)} /></label>
       </div>
 
-      {/* PREVIEW en vivo */}
       <div className="rounded-2xl border border-indigo-500/30 bg-indigo-500/5 p-4">
         <div className="mb-2 text-xs font-black uppercase tracking-wide text-indigo-300">Vista previa</div>
-        {preview?.error ? (
-          <div className="text-sm text-amber-200">{preview.error}</div>
-        ) : (
+        {preview?.error ? <div className="text-sm text-amber-200">{preview.error}</div> : (
           <div className="space-y-2 text-sm">
             <div><span className="text-slate-400">SKU comercial: </span><b className="text-slate-100">{preview?.sku_comercial || '—'}</b></div>
             <div><span className="text-slate-400">Comercial: </span><b className="text-slate-100">{preview?.descripcion_comercial || '—'}</b></div>
-            <div className="flex items-center gap-2">
-              <span className="text-slate-400">ERP: </span>
-              <b className={erpOver ? 'text-red-300' : 'text-slate-100'}>{preview?.descripcion_erp || '—'}</b>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-slate-400">ERP: </span><b className={erpOver ? 'text-red-300' : 'text-slate-100'}>{preview?.descripcion_erp || '—'}</b>
               <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${erpOver ? 'bg-red-500/20 text-red-200' : 'bg-emerald-500/20 text-emerald-200'}`}>{erpLen}/50</span>
-              {preview?.estado_erp && preview.estado_erp !== 'OK_ERP_50' && (
-                <span className="text-[11px] text-amber-300">{preview.estado_erp}</span>
-              )}
+              {preview?.estado_erp && preview.estado_erp !== 'OK_ERP_50' && <span className="text-[11px] text-amber-300">{preview.estado_erp}</span>}
             </div>
             <div><span className="text-slate-400">Subrubro: </span><span className="text-slate-300">{preview?.subrubro || '—'}</span></div>
           </div>
@@ -220,19 +245,14 @@ export function CatalogProductForm({ mode, legacy, onSaved }: Props) {
       </div>
 
       <div className="flex items-center justify-between">
-        <label className="flex items-center gap-2 text-sm text-slate-300">
-          <input type="checkbox" checked={activar} onChange={(e) => setActivar(e.target.checked)} />
-          Activar (requiere código Puma y datos completos)
-        </label>
+        <label className="flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={activar} onChange={(e) => setActivar(e.target.checked)} /> Activar (requiere Puma y datos completos)</label>
         <button onClick={save} disabled={saving || !familia || !rubro || !marca || !skuBase}
           className="inline-flex items-center gap-2 rounded-xl bg-indigo-500 px-5 py-2.5 text-sm font-black text-white disabled:opacity-50">
           {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
           {mode === 'normalizacion' ? 'Normalizar y vincular' : 'Guardar producto'}
         </button>
       </div>
-      {(activar && !codigoPuma) && (
-        <div className="flex items-center gap-2 text-xs text-amber-300"><AlertTriangle className="size-3.5" /> Sin código Puma el producto no se activa; queda pendiente.</div>
-      )}
+      {(activar && !codigoPuma) && <div className="flex items-center gap-2 text-xs text-amber-300"><AlertTriangle className="size-3.5" /> Sin código Puma el producto no se activa; queda pendiente.</div>}
     </div>
   );
 }
