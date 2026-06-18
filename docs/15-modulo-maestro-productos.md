@@ -89,6 +89,21 @@ ADMINISTRADOR + superadmin por `*`).
   o copy comercial largo, eso debe vivir como una capa editorial adicional, sin
   reemplazar `descripcion_comercial` como nombre canónico corto.
 
+### Armador de atributos
+
+- Los atributos definidos por plantilla se pueden reordenar, completar, quitar y
+  volver a agregar si estaban omitidos. Cada atributo estructurado de plantilla
+  se usa una sola vez para evitar duplicar piezas técnicas por error.
+- Para datos comerciales adicionales que no existen en la plantilla se usan
+  `Detalle libre`. Se pueden agregar múltiples detalles libres y cada uno puede
+  marcarse como `en ERP` cuando también deba viajar a la descripción técnica.
+- En ecommerce/web, esos detalles libres sirven para sumar atributos visibles
+  como línea, serie, versión, tecnología, color comercial o aclaraciones tipo
+  `(PN)` sin crear otro campo de nombre.
+- Mejora recomendada: convertir `Detalle libre` en "atributo adicional" con
+  etiqueta opcional (`Color`, `Tecnología`, `Línea`, `Versión`) para que la ficha
+  web pueda mostrar atributos ordenados sin ensuciar el nombre comercial.
+
 ## Estado por etapas
 
 - **Etapa 1 — Modelo + migración**: ✅ HECHA (commit de esta tanda).
