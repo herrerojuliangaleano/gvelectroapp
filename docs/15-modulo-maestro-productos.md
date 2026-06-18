@@ -117,11 +117,53 @@ a la vez Sheet→products (sync), app→Sheet (publish) y Sheet→app (read).
   marca como vistas filtradas (no fuente de fórmulas), Productos PVP
   como única fuente para las planillas diarias.
 
+## Generador de descripciones — diseño derivado del análisis de patrones
+
+Fuente: `docs/16-patrones-descripcion-productos.md` (análisis de Victor sobre
+54 rubros, 1212 productos Madre + 1192 Existencias). Es el seed de
+`catalog_templates` + `catalog_abbreviations` y especifica el algoritmo.
+
+**Ajuste de modelo necesario (vs Etapa 1):** el `campos_obligatorios` JSONB de
+`catalog_templates` NO puede ser una lista plana de nombres. Cada campo
+necesita: `name`, `label`, `type` (text/number/select) y, para selects, las
+`opciones` con `{valor, comercial, abrev_erp}`. Es lo que permite que el mismo
+campo genere a la vez el texto comercial ("frío/calor") y la abreviatura ERP
+("F/C"). Sin esto el generador no puede armar las dos descripciones. (No
+requiere migración: la columna ya es JSONB; solo definimos la estructura del
+contenido.)
+
+**Algoritmo de descripción ERP (cascada de 50 chars, doc §5 regla 6 + por rubro):**
+1. Armar ERP completo con el patrón del rubro.
+2. Normalizar: MAYÚSCULAS, sin tildes, sin dobles espacios.
+3. Si >50: aplicar diccionario de abreviaturas.
+4. Si sigue >50: quitar campos opcionales.
+5. Si sigue >50: mantener rubro+marca+modelo+dato clave.
+6. Si sigue >50: estado `REQUIERE_REVISION_ERP`.
+
+**Normalización de acentos antes de abreviar:** el diccionario trae variantes
+con/sin tilde (FRÍO/CALOR y FRIO/CALOR, ELÉCTRICO/ELECTRICO). El generador
+normaliza (strip acentos + upper) antes de buscar en el diccionario, así no
+hace falta duplicar entradas.
+
+**Lo que alimenta el flujo de NORMALIZACIÓN (no el alta nueva):** doc §11
+cataloga los typos reales a auto-corregir (FREZEER→FREEZER, ORNALLAS→
+HORNALLAS, 2O LTS→20 LTS, ELCETRICO→ELÉCTRICO, CONDESACIÓN→CONDENSACIÓN) y la
+detección de OUTLET (985 productos por "(O)"). La pantalla de normalización
+usa esto para auto-sugerir correcciones.
+
+**Decisiones pendientes (de §11):**
+- Rubros fuera del mapa: ESTUFA (3), FRIGOBAR (1), SARTEN (1). ¿Se agregan
+  como rubros nuevos o van a OTROS?
+- MULTIROCESADORA → MULTIPROCESADORA (typo de rubro; el doc ya lo corrige).
+
+**Seed:** al construir la Etapa 4, cargar `catalog_templates` (1 fila por
+familia+rubro con campos+patrones) y `catalog_abbreviations` (~55 entradas)
+desde el doc 16, vía un script de seed idempotente.
+
 ## Próximo paso sugerido
 
 La lógica de **generación de descripciones** (comercial + ERP desde
-`catalog_templates` + `catalog_abbreviations`, con el manejo de OUTLET y el
-límite de 50) es el corazón del módulo y conviene hacerla antes que las
-pantallas, porque tanto Alta guiada como Normalización diaria la consumen.
-El publisher a Sheets es Fase B/C — no se construye hasta que la
-normalización esté cerca del 100%.
+`catalog_templates` + `catalog_abbreviations`, con OUTLET y la cascada de 50)
+es el corazón del módulo y va antes que las pantallas, porque Alta guiada y
+Normalización diaria la consumen. El publisher a Sheets es Fase B/C — no se
+construye hasta que la normalización esté cerca del 100%.
