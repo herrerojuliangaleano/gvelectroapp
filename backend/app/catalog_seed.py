@@ -104,6 +104,15 @@ OPT_ENERGIA = [
 
 
 def _t(familia: str, rubro: str, campos: list[dict], com: str, erp: str, sub: str) -> dict[str, Any]:
+    # El color diferencia mucho el producto para los vendedores: si el rubro
+    # tiene campo color, asegurar que aparezca en AMBAS descripciones (la ERP
+    # usa la abreviatura BCO/NGO/INOX...). El motor lo omite solo si el
+    # producto no carga color (o marca "no aplica").
+    if any(c.get("name") == "color" for c in campos):
+        if "{color}" not in com:
+            com = f"{com} {{color}}".strip()
+        if "{color}" not in erp:
+            erp = f"{erp} {{color}}".strip()
     return {
         "familia_app": familia, "rubro_app": rubro, "campos_obligatorios": campos,
         "formato_descripcion_comercial": com, "formato_descripcion_erp": erp, "formato_subrubro": sub,
