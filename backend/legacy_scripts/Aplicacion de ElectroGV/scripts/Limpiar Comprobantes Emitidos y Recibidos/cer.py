@@ -130,6 +130,16 @@ def to_numero(serie: pd.Series) -> pd.Series:
     return pd.to_numeric(s, errors="coerce")
 
 
+def extraer_tipo_num(valor: object) -> int | None:
+    """Saca el número del tipo de comprobante, sirva venir como '3',
+    '3 - Nota de Crédito A' o '8 - Nota de Crédito B'. Las notas de crédito
+    son los tipos 3 y 8 (y restan a los demás)."""
+    if pd.isna(valor):
+        return None
+    m = re.search(r"\d+", str(valor))
+    return int(m.group()) if m else None
+
+
 def df_a_valores(df: pd.DataFrame) -> list[list[Any]]:
     def convertir(v: Any) -> Any:
         if pd.isna(v):
@@ -293,6 +303,23 @@ def leer_emitidos(ruta: Path) -> pd.DataFrame:
     return _normalizar_emitidos(raw, ruta.name)
 
 
+def _seleccionar_recibidos(df: pd.DataFrame) -> pd.DataFrame | None:
+    """De un DataFrame ya normalizado, extrae tipo + total IVA + proveedor
+    (Denominación Emisor). Devuelve None si faltan tipo/IVA."""
+    col_tipo = buscar_columna_flexible(df, ["tipo_de_comprobante", "tipo"])
+    col_iva = buscar_columna_flexible(df, ["total_iva", "total iva", "iva"])
+    if not col_tipo or not col_iva:
+        return None
+    # Proveedor = quien emite el comprobante recibido. Candidatos específicos
+    # primero para no agarrar "Denominación Receptor" ni "Tipo Doc. Emisor".
+    col_prov = buscar_columna_flexible(df, ["denominacion_emisor", "denominacionemisor", "razon_social_emisor", "denominacion"])
+    return pd.DataFrame({
+        "tipo": df[col_tipo],
+        "total_iva": df[col_iva],
+        "proveedor": df[col_prov] if col_prov else "",
+    })
+
+
 def leer_recibidos(ruta: Path) -> pd.DataFrame:
     """Lee un archivo de recibidos (compras) en CSV o Excel, unificando todas las hojas."""
     ext = ruta.suffix.lower()
@@ -302,11 +329,9 @@ def leer_recibidos(ruta: Path) -> pd.DataFrame:
     if ext == ".csv":
         raw = leer_csv_robusto(ruta)
         raw = normalizar_columnas(raw)
-        col_tipo = buscar_columna_flexible(raw, ["tipo"])
-        col_iva = buscar_columna_flexible(raw, ["total_iva", "total iva", "iva"])
-        if not col_tipo or not col_iva:
+        df = _seleccionar_recibidos(raw)
+        if df is None:
             raise ValueError(f"Recibidos CSV: no se encontraron columnas 'Tipo' y 'Total IVA' en {ruta.name}.")
-        df = raw.rename(columns={col_tipo: "tipo", col_iva: "total_iva"})[["tipo", "total_iva"]].copy()
         partes.append(df)
         hojas_usadas.append("(csv)")
     elif ext in {".xlsx", ".xls"}:
@@ -322,12 +347,10 @@ def leer_recibidos(ruta: Path) -> pd.DataFrame:
                 bruto.columns = bruto.iloc[header_row]
                 df = bruto.iloc[header_row + 1:].copy().reset_index(drop=True)
                 df = normalizar_columnas(df)
-                col_tipo = buscar_columna_flexible(df, ["tipo"])
-                col_iva = buscar_columna_flexible(df, ["total_iva", "total iva", "iva"])
-                if not col_tipo or not col_iva:
+                df = _seleccionar_recibidos(df)
+                if df is None:
                     print(f"[INFO] Hoja ignorada: {hoja} (faltan columnas tipo/iva)")
                     continue
-                df = df.rename(columns={col_tipo: "tipo", col_iva: "total_iva"})[["tipo", "total_iva"]].copy()
                 partes.append(df)
                 hojas_usadas.append(hoja)
             except Exception as e:
@@ -419,22 +442,22 @@ def calcular_compras(df: pd.DataFrame) -> pd.DataFrame:
 
     compras = df.copy()
 
-    compras["tipo"] = compras["tipo"].astype(str).str.strip()
+    # El tipo puede venir como número ('3') o como texto ('3 - Nota de Crédito A').
+    # Las notas de crédito son los tipos 3 y 8 y restan al resto (igual que ventas).
+    compras["tipo_num"] = compras["tipo"].apply(extraer_tipo_num)
     compras["total_iva"] = to_numero(compras["total_iva"])
 
-    valor_especial = "3 - Nota de Crédito A"
-
-    mask_b = compras["tipo"] == valor_especial
-    mask_a = compras["tipo"].notna() & (compras["tipo"] != "") & ~mask_b
+    mask_b = compras["tipo_num"].isin([3, 8])
+    mask_a = compras["tipo_num"].notna() & ~mask_b
 
     iva_a = compras.loc[mask_a, "total_iva"].sum(skipna=True)
     iva_b = compras.loc[mask_b, "total_iva"].sum(skipna=True)
 
     resultado = pd.DataFrame({
         "Concepto": [
-            "Resto de tipos",
-            valor_especial,
-            "Diferencia (resto - nota crédito)",
+            "Resto de comprobantes",
+            "Notas de crédito (3 y 8)",
+            "Diferencia (resto - notas crédito)",
         ],
         "Total IVA": [
             iva_a,
@@ -444,9 +467,52 @@ def calcular_compras(df: pd.DataFrame) -> pd.DataFrame:
     })
 
     print(f"[INFO] Compras: filas resto = {mask_a.sum()}")
-    print(f"[INFO] Compras: filas tipo especial = {mask_b.sum()}")
+    print(f"[INFO] Compras: filas notas de crédito (3 y 8) = {mask_b.sum()}")
 
     return resultado.round(2)
+
+
+def calcular_compras_por_proveedor(df: pd.DataFrame) -> pd.DataFrame:
+    """Desglosa las compras por proveedor (Denominación Emisor), con las notas
+    de crédito (tipos 3 y 8) ya restadas en la columna 'Total IVA neto'."""
+    columnas = {"tipo", "total_iva"}
+    faltantes = columnas - set(df.columns)
+    if faltantes:
+        raise ValueError(
+            f"Compras por proveedor: faltan columnas requeridas: {sorted(faltantes)}\n"
+            f"Columnas encontradas: {list(df.columns)}"
+        )
+
+    compras = df.copy()
+    if "proveedor" not in compras.columns:
+        compras["proveedor"] = ""
+
+    compras["tipo_num"] = compras["tipo"].apply(extraer_tipo_num)
+    compras["total_iva"] = to_numero(compras["total_iva"])
+    compras["proveedor"] = compras["proveedor"].astype(str).str.strip()
+    compras.loc[compras["proveedor"].isin(["", "nan", "none", "None"]), "proveedor"] = "(sin proveedor)"
+
+    filas = []
+    for proveedor, sub in compras.groupby("proveedor", sort=False):
+        es_nc = sub["tipo_num"].isin([3, 8])
+        iva_normal = sub.loc[~es_nc, "total_iva"].sum(skipna=True)
+        iva_nc = sub.loc[es_nc, "total_iva"].sum(skipna=True)
+        filas.append({
+            "Proveedor": proveedor,
+            "Total IVA comprobantes": iva_normal,
+            "Total IVA notas crédito (3 y 8)": iva_nc,
+            "Total IVA neto": iva_normal - iva_nc,
+        })
+
+    cols = ["Proveedor", "Total IVA comprobantes", "Total IVA notas crédito (3 y 8)", "Total IVA neto"]
+    resultado = pd.DataFrame(filas, columns=cols)
+    if not resultado.empty:
+        resultado = resultado.sort_values("Total IVA neto", ascending=False, kind="stable").reset_index(drop=True)
+        for c in cols[1:]:
+            resultado[c] = resultado[c].round(2)
+
+    print(f"[INFO] Compras por proveedor: {len(resultado)} proveedores")
+    return resultado
 
 # =========================================================
 # GOOGLE SHEETS
@@ -749,6 +815,7 @@ def procesar_sucursal(
         hojas_a_crear.append("Ventas")
     if compras_path:
         hojas_a_crear.append("Compras")
+        hojas_a_crear.append("Compras por proveedor")
 
     # Renombrar la hoja inicial a la primera que necesitamos
     requests: list[dict] = [
@@ -782,6 +849,12 @@ def procesar_sucursal(
         escribir_hoja(sheets_service, spreadsheet_id, "Compras", resumen_compras)
         aplicar_formato_hoja(sheets_service, spreadsheet_id, mapa["Compras"], len(resumen_compras.columns), len(resumen_compras) + 1)
         hojas_generadas.append("Compras")
+
+        # Desglose por proveedor (Denominación Emisor), con NC ya restadas.
+        por_proveedor = calcular_compras_por_proveedor(compras_raw)
+        escribir_hoja(sheets_service, spreadsheet_id, "Compras por proveedor", por_proveedor)
+        aplicar_formato_hoja(sheets_service, spreadsheet_id, mapa["Compras por proveedor"], len(por_proveedor.columns), len(por_proveedor) + 1)
+        hojas_generadas.append("Compras por proveedor")
 
     url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit"
     print(f"[OK] Generado en Drive ({' + '.join(hojas_generadas)}): {url}")
