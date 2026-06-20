@@ -425,6 +425,7 @@ def _seleccionar_recibidos(df: pd.DataFrame) -> pd.DataFrame | None:
     # Imp. Neto Gravado Total (candidatos específicos primero para no agarrar
     # "Imp. Neto No Gravado").
     col_neto = buscar_columna_flexible(df, ["imp_neto_gravado_total", "imp_neto_gravado", "neto_gravado_total", "neto_gravado"])
+    col_total = buscar_columna_flexible(df, ["imp_total", "importe_total"])
     # Proveedor = quien emite el comprobante recibido. Candidatos específicos
     # primero para no agarrar "Denominación Receptor" ni "Tipo Doc. Emisor".
     col_prov = buscar_columna_flexible(df, ["denominacion_emisor", "denominacionemisor", "razon_social_emisor", "denominacion"])
@@ -434,6 +435,7 @@ def _seleccionar_recibidos(df: pd.DataFrame) -> pd.DataFrame | None:
         "tipo": df[col_tipo],
         "total_iva": df[col_iva],
         "imp_neto_gravado": df[col_neto] if col_neto else "",
+        "imp_total": df[col_total] if col_total else "",
         "proveedor": df[col_prov] if col_prov else "",
     })
 
@@ -567,6 +569,9 @@ def calcular_compras(df: pd.DataFrame) -> pd.DataFrame:
     if "imp_neto_gravado" not in compras.columns:
         compras["imp_neto_gravado"] = 0
     compras["imp_neto_gravado"] = to_numero(compras["imp_neto_gravado"])
+    if "imp_total" not in compras.columns:
+        compras["imp_total"] = 0
+    compras["imp_total"] = to_numero(compras["imp_total"])
 
     mask_b = compras["tipo_num"].isin([3, 8])
     mask_a = compras["tipo_num"].notna() & ~mask_b
@@ -575,6 +580,8 @@ def calcular_compras(df: pd.DataFrame) -> pd.DataFrame:
     iva_b = compras.loc[mask_b, "total_iva"].sum(skipna=True)
     neto_a = compras.loc[mask_a, "imp_neto_gravado"].sum(skipna=True)
     neto_b = compras.loc[mask_b, "imp_neto_gravado"].sum(skipna=True)
+    total_a = compras.loc[mask_a, "imp_total"].sum(skipna=True)
+    total_b = compras.loc[mask_b, "imp_total"].sum(skipna=True)
 
     resultado = pd.DataFrame({
         "Concepto": [
@@ -591,6 +598,11 @@ def calcular_compras(df: pd.DataFrame) -> pd.DataFrame:
             iva_a,
             iva_b,
             iva_a - iva_b,
+        ],
+        "Imp. Total": [
+            total_a,
+            total_b,
+            total_a - total_b,
         ],
     })
 
@@ -614,40 +626,34 @@ def calcular_compras_por_proveedor(df: pd.DataFrame) -> pd.DataFrame:
     compras = df.copy()
     if "proveedor" not in compras.columns:
         compras["proveedor"] = ""
-    if "imp_neto_gravado" not in compras.columns:
-        compras["imp_neto_gravado"] = 0
+    for col in ("imp_neto_gravado", "imp_total"):
+        if col not in compras.columns:
+            compras[col] = 0
 
     compras["tipo_num"] = compras["tipo"].apply(extraer_tipo_num)
     compras["total_iva"] = to_numero(compras["total_iva"])
     compras["imp_neto_gravado"] = to_numero(compras["imp_neto_gravado"])
+    compras["imp_total"] = to_numero(compras["imp_total"])
     compras["proveedor"] = compras["proveedor"].astype(str).str.strip()
     compras.loc[compras["proveedor"].isin(["", "nan", "none", "None"]), "proveedor"] = "(sin proveedor)"
 
-    filas = []
-    for proveedor, sub in compras.groupby("proveedor", sort=False):
-        es_nc = sub["tipo_num"].isin([3, 8])
-        neto_normal = sub.loc[~es_nc, "imp_neto_gravado"].sum(skipna=True)
-        neto_nc = sub.loc[es_nc, "imp_neto_gravado"].sum(skipna=True)
-        iva_normal = sub.loc[~es_nc, "total_iva"].sum(skipna=True)
-        iva_nc = sub.loc[es_nc, "total_iva"].sum(skipna=True)
-        filas.append({
-            "Proveedor": proveedor,
-            "Neto gravado comprobantes": neto_normal,
-            "Neto gravado notas crédito (3 y 8)": neto_nc,
-            "Imp. Neto Gravado Total (neto)": neto_normal - neto_nc,
-            "Total IVA comprobantes": iva_normal,
-            "Total IVA notas crédito (3 y 8)": iva_nc,
-            "Total IVA neto": iva_normal - iva_nc,
-        })
+    # Tabla compacta: una fila por proveedor con los netos (NC 3 y 8 ya restadas).
+    signo = compras["tipo_num"].isin([3, 8]).map({True: -1, False: 1})
+    compras["_neto"] = compras["imp_neto_gravado"] * signo
+    compras["_iva"] = compras["total_iva"] * signo
+    compras["_total"] = compras["imp_total"] * signo
 
-    cols = [
-        "Proveedor",
-        "Neto gravado comprobantes", "Neto gravado notas crédito (3 y 8)", "Imp. Neto Gravado Total (neto)",
-        "Total IVA comprobantes", "Total IVA notas crédito (3 y 8)", "Total IVA neto",
-    ]
-    resultado = pd.DataFrame(filas, columns=cols)
+    agrupado = compras.groupby("proveedor", sort=False)[["_neto", "_iva", "_total"]].sum(min_count=1)
+    agrupado = agrupado.reset_index().rename(columns={
+        "proveedor": "Proveedor",
+        "_neto": "Imp. Neto Gravado Total",
+        "_iva": "Total IVA",
+        "_total": "Imp. Total",
+    })
+    cols = ["Proveedor", "Imp. Neto Gravado Total", "Total IVA", "Imp. Total"]
+    resultado = agrupado[cols]
     if not resultado.empty:
-        resultado = resultado.sort_values("Imp. Neto Gravado Total (neto)", ascending=False, kind="stable").reset_index(drop=True)
+        resultado = resultado.sort_values("Imp. Neto Gravado Total", ascending=False, kind="stable").reset_index(drop=True)
         for c in cols[1:]:
             resultado[c] = resultado[c].round(2)
 
@@ -1141,6 +1147,146 @@ def aplicar_formato_tablas_periodo(
 
 
 # =========================================================
+# RENDER — FORMATO DE FICHAS (Bruto / NC / Neto por métrica)
+# =========================================================
+FMT_MONEDA = '"$" #,##0.00'
+COLOR_TITULO = {"red": 0.94, "green": 0.85, "blue": 0.94}   # lila/rosa
+COLOR_MES = {"red": 0.85, "green": 0.85, "blue": 0.85}      # gris
+COLOR_ETIQUETA = {"red": 0.90, "green": 0.90, "blue": 0.90} # gris claro (Bruto/NC/Neto)
+COLOR_HEADER = {"red": 0.78, "green": 0.88, "blue": 1.0}    # azul (headers tabla)
+
+
+def _bloques_metricas(resumen_df: pd.DataFrame, sufijo: str) -> list[tuple[str, float, float, float]]:
+    """De un resumen (filas Resto/NC/Diferencia) arma las fichas por métrica:
+    (titulo, bruto, nc, neto)."""
+    orden = [("IVA", "Total IVA"), ("Neto", "Imp. Neto Gravado Total"), ("Total", "Imp. Total")]
+    bloques: list[tuple[str, float, float, float]] = []
+    for nombre, col in orden:
+        if col not in resumen_df.columns:
+            continue
+        vals = [float(x) for x in resumen_df[col].tolist()]
+        bruto = vals[0] if len(vals) > 0 else 0.0
+        nc = vals[1] if len(vals) > 1 else 0.0
+        neto = vals[2] if len(vals) > 2 else (bruto - nc)
+        bloques.append((f"{nombre} {sufijo}", bruto, nc, neto))
+    return bloques
+
+
+def escribir_hoja_bloques(sheets_service, spreadsheet_id: str, sheet_id: int, nombre_hoja: str,
+                          periodos_bloques: list[tuple[str, list[tuple[str, float, float, float]]]]) -> None:
+    """Escribe una hoja con fichas Bruto/NC/Neto por métrica (IVA/Neto/Total),
+    una fila de fichas por período (lado a lado)."""
+    max_blocks = max((len(b) for _, b in periodos_bloques), default=1) or 1
+    total_cols = max(1, max_blocks * 3 - 1)  # 2 cols por ficha + 1 separador
+
+    valores: list[list[Any]] = []
+    titulos: list[tuple[int, int]] = []   # (fila, col_inicio)
+    meses: list[tuple[int, int]] = []
+    bloque_areas: list[tuple[int, int]] = []  # (fila_titulo, col_inicio) — ficha de 5 filas
+    neto_rows: list[int] = []
+    etiqueta_cols: list[tuple[int, int]] = []  # (fila_bruto, col_inicio)
+
+    for label, bloques in periodos_bloques:
+        fila_t = [""] * total_cols
+        fila_m = [""] * total_cols
+        row_title = len(valores)
+        for i, (titulo, *_r) in enumerate(bloques):
+            cs = i * 3
+            fila_t[cs] = titulo
+            fila_m[cs] = label
+            titulos.append((row_title, cs))
+            meses.append((row_title + 1, cs))
+            bloque_areas.append((row_title, cs))
+        valores.append(fila_t)
+        valores.append(fila_m)
+
+        row_bruto = len(valores)
+        for j, et in enumerate(["Bruto", "NC", "Neto"]):
+            fila = [""] * total_cols
+            for i, (_t, bruto, nc, neto) in enumerate(bloques):
+                cs = i * 3
+                fila[cs] = et
+                fila[cs + 1] = [bruto, nc, neto][j]
+            valores.append(fila)
+        for i in range(len(bloques)):
+            etiqueta_cols.append((row_bruto, i * 3))
+        neto_rows.append(len(valores) - 1)
+        valores.append([""] * total_cols)
+
+    valores_a_hoja(sheets_service, spreadsheet_id, nombre_hoja, valores)
+    n_rows = len(valores)
+
+    req: list[dict[str, Any]] = [
+        {"updateSheetProperties": {"properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 0}}, "fields": "gridProperties.frozenRowCount"}},
+    ]
+    # Anchos de columna: etiqueta / valor / separador
+    for i in range(max_blocks):
+        for col, w in ((i * 3, 95), (i * 3 + 1, 165), (i * 3 + 2, 26)):
+            if col < total_cols:
+                req.append({"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": col, "endIndex": col + 1}, "properties": {"pixelSize": w}, "fields": "pixelSize"}})
+        # Formato moneda en la columna de valores de cada ficha
+        vcol = i * 3 + 1
+        if vcol < total_cols:
+            req.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": n_rows, "startColumnIndex": vcol, "endColumnIndex": vcol + 1}, "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": FMT_MONEDA}, "horizontalAlignment": "RIGHT"}}, "fields": "userEnteredFormat(numberFormat,horizontalAlignment)"}})
+
+    for (r, cs) in titulos:
+        req.append({"mergeCells": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": cs, "endColumnIndex": cs + 2}, "mergeType": "MERGE_ALL"}})
+        req.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": cs, "endColumnIndex": cs + 2}, "cell": {"userEnteredFormat": {"backgroundColor": COLOR_TITULO, "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE", "textFormat": {"bold": True, "italic": True, "fontSize": 11}}}, "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)"}})
+    for (r, cs) in meses:
+        req.append({"mergeCells": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": cs, "endColumnIndex": cs + 2}, "mergeType": "MERGE_ALL"}})
+        req.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": cs, "endColumnIndex": cs + 2}, "cell": {"userEnteredFormat": {"backgroundColor": COLOR_MES, "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE", "textFormat": {"bold": True}}}, "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)"}})
+    for (r, cs) in etiqueta_cols:
+        req.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 3, "startColumnIndex": cs, "endColumnIndex": cs + 1}, "cell": {"userEnteredFormat": {"backgroundColor": COLOR_ETIQUETA, "horizontalAlignment": "CENTER", "textFormat": {"bold": True, "italic": True}}}, "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,textFormat)"}})
+    for r in neto_rows:
+        req.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": 0, "endColumnIndex": total_cols}, "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}}, "fields": "userEnteredFormat.textFormat.bold"}})
+    for (r, cs) in bloque_areas:
+        req.append({"updateBorders": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 5, "startColumnIndex": cs, "endColumnIndex": cs + 2}, "top": {"style": "SOLID", "color": {"red": 0.6, "green": 0.6, "blue": 0.6}}, "bottom": {"style": "SOLID", "color": {"red": 0.6, "green": 0.6, "blue": 0.6}}, "left": {"style": "SOLID", "color": {"red": 0.6, "green": 0.6, "blue": 0.6}}, "right": {"style": "SOLID", "color": {"red": 0.6, "green": 0.6, "blue": 0.6}}, "innerHorizontal": {"style": "SOLID", "color": {"red": 0.85, "green": 0.85, "blue": 0.85}}}})
+
+    if req:
+        sheets_service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": req}).execute()
+
+
+def escribir_hoja_proveedores(sheets_service, spreadsheet_id: str, sheet_id: int, nombre_hoja: str,
+                              periodos_prov: list[tuple[str, pd.DataFrame]]) -> None:
+    """Tabla compacta por proveedor (Proveedor | Neto Gravado | IVA | Total),
+    una sección por período."""
+    total_cols = 4
+    valores: list[list[Any]] = []
+    titulos: list[int] = []
+    headers: list[int] = []
+    for label, prov_df in periodos_prov:
+        titulos.append(len(valores))
+        valores.append([f"Compras por proveedor — {label}"] + [""] * (total_cols - 1))
+        headers.append(len(valores))
+        columnas = list(prov_df.columns) if not prov_df.empty else ["Proveedor", "Imp. Neto Gravado Total", "Total IVA", "Imp. Total"]
+        valores.append(columnas)
+        if prov_df.empty:
+            valores.append(["(sin movimientos)"] + [""] * (total_cols - 1))
+        else:
+            for _, r in prov_df.iterrows():
+                valores.append(list(r))
+        valores.append([""] * total_cols)
+
+    padded = [row + [""] * (total_cols - len(row)) for row in valores]
+    valores_a_hoja(sheets_service, spreadsheet_id, nombre_hoja, padded)
+    n_rows = len(padded)
+
+    req: list[dict[str, Any]] = [
+        {"updateSheetProperties": {"properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 0}}, "fields": "gridProperties.frozenRowCount"}},
+        {"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 1}, "properties": {"pixelSize": 320}, "fields": "pixelSize"}},
+        {"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 1, "endIndex": total_cols}, "properties": {"pixelSize": 175}, "fields": "pixelSize"}},
+        {"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": n_rows, "startColumnIndex": 1, "endColumnIndex": total_cols}, "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": FMT_MONEDA}}}, "fields": "userEnteredFormat.numberFormat"}},
+    ]
+    for r in titulos:
+        req.append({"mergeCells": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": 0, "endColumnIndex": total_cols}, "mergeType": "MERGE_ALL"}})
+        req.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": 0, "endColumnIndex": total_cols}, "cell": {"userEnteredFormat": {"backgroundColor": COLOR_MES, "horizontalAlignment": "CENTER", "textFormat": {"bold": True, "italic": True, "fontSize": 11}}}, "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,textFormat)"}})
+    for r in headers:
+        req.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": 0, "endColumnIndex": total_cols}, "cell": {"userEnteredFormat": {"backgroundColor": COLOR_HEADER, "horizontalAlignment": "CENTER", "wrapStrategy": "WRAP", "textFormat": {"bold": True}}}, "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,wrapStrategy,textFormat)"}})
+
+    sheets_service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": req}).execute()
+
+
+# =========================================================
 # PROCESAMIENTO
 # =========================================================
 def procesar_sucursal(
@@ -1150,6 +1296,7 @@ def procesar_sucursal(
     drive_service,
     sheets_service,
     titulo_drive: str,
+    period_label: str = "Período",
 ) -> str:
     if sucursal not in DRIVE_FOLDER_IDS:
         raise ValueError(f"No hay carpeta de Drive configurada para la sucursal '{sucursal}'.")
@@ -1163,16 +1310,6 @@ def procesar_sucursal(
     print(f"[INFO] Compras: {compras_path.name if compras_path else '(no encontrado)'}")
     print(f"[INFO] Título Drive: {titulo_drive}")
 
-    spreadsheet_id = crear_google_sheet_en_drive(drive_service=drive_service, titulo=titulo_drive, folder_id=folder_id)
-
-    # El spreadsheet nuevo trae una hoja en blanco por defecto.
-    # La renombramos a la primera hoja útil y agregamos las demás si corresponde.
-    meta_inicial = sheets_service.spreadsheets().get(
-        spreadsheetId=spreadsheet_id,
-        fields="sheets.properties.sheetId",
-    ).execute()
-    hoja_inicial_id = meta_inicial["sheets"][0]["properties"]["sheetId"]
-
     hojas_a_crear: list[str] = []
     if ventas_path:
         hojas_a_crear.append("Ventas")
@@ -1180,43 +1317,24 @@ def procesar_sucursal(
         hojas_a_crear.append("Compras")
         hojas_a_crear.append("Compras por proveedor")
 
-    # Renombrar la hoja inicial a la primera que necesitamos
-    requests: list[dict] = [
-        {"updateSheetProperties": {
-            "properties": {"sheetId": hoja_inicial_id, "title": hojas_a_crear[0]},
-            "fields": "title",
-        }}
-    ]
-    # Agregar hojas adicionales
-    for nombre in hojas_a_crear[1:]:
-        requests.append({"addSheet": {"properties": {"title": nombre}}})
-
-    sheets_service.spreadsheets().batchUpdate(
-        spreadsheetId=spreadsheet_id, body={"requests": requests}
-    ).execute()
-
-    mapa = obtener_mapas_hojas(sheets_service, spreadsheet_id)
+    spreadsheet_id = crear_google_sheet_en_drive(drive_service=drive_service, titulo=titulo_drive, folder_id=folder_id)
+    mapa = preparar_hojas_dinamicas(sheets_service, spreadsheet_id, hojas_a_crear)
     hojas_generadas: list[str] = []
 
     if ventas_path:
         # IMPORTANTE: no se filtran filas por fecha. Se procesa el archivo completo.
-        ventas_raw = leer_emitidos(ventas_path)
-        resumen_ventas = calcular_ventas(ventas_raw)
-        escribir_hoja(sheets_service, spreadsheet_id, "Ventas", resumen_ventas)
-        aplicar_formato_hoja(sheets_service, spreadsheet_id, mapa["Ventas"], len(resumen_ventas.columns), len(resumen_ventas) + 1)
+        resumen_ventas = calcular_ventas(leer_emitidos(ventas_path))
+        escribir_hoja_bloques(sheets_service, spreadsheet_id, mapa["Ventas"], "Ventas",
+                              [(period_label, _bloques_metricas(resumen_ventas, "Ventas"))])
         hojas_generadas.append("Ventas")
 
     if compras_path:
         compras_raw = leer_recibidos(compras_path)
-        resumen_compras = calcular_compras(compras_raw)
-        escribir_hoja(sheets_service, spreadsheet_id, "Compras", resumen_compras)
-        aplicar_formato_hoja(sheets_service, spreadsheet_id, mapa["Compras"], len(resumen_compras.columns), len(resumen_compras) + 1)
+        escribir_hoja_bloques(sheets_service, spreadsheet_id, mapa["Compras"], "Compras",
+                              [(period_label, _bloques_metricas(calcular_compras(compras_raw), "Compras"))])
         hojas_generadas.append("Compras")
-
-        # Desglose por proveedor (Denominación Emisor), con NC ya restadas.
-        por_proveedor = calcular_compras_por_proveedor(compras_raw)
-        escribir_hoja(sheets_service, spreadsheet_id, "Compras por proveedor", por_proveedor)
-        aplicar_formato_hoja(sheets_service, spreadsheet_id, mapa["Compras por proveedor"], len(por_proveedor.columns), len(por_proveedor) + 1)
+        escribir_hoja_proveedores(sheets_service, spreadsheet_id, mapa["Compras por proveedor"], "Compras por proveedor",
+                                  [(period_label, calcular_compras_por_proveedor(compras_raw))])
         hojas_generadas.append("Compras por proveedor")
 
     url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit"
@@ -1262,65 +1380,32 @@ def procesar_sucursal_rango_mensual(
     mapa = preparar_hojas_dinamicas(sheets_service, spreadsheet_id, hojas_a_crear)
     hojas_generadas: list[str] = []
 
-    def periodos_del_reporte() -> list[tuple[str, date, date]]:
-        items: list[tuple[str, date, date]] = [("TOTAL", range_start, range_end)]
-        for mes in meses:
-            mes_desde, mes_hasta = rango_mes_en_periodo(mes, range_start, range_end)
-            items.append((etiqueta_mes(mes), mes_desde, mes_hasta))
-        return items
-
-    def escribir_tablas_por_periodo(nombre_hoja: str, raw: pd.DataFrame, etiqueta: str, calcular, numeric_start_col: int = 1) -> None:
-        valores: list[list[Any]] = []
-        section_rows: list[int] = []
-        header_rows: list[int] = []
-        highlight_rows: list[int] = []
-        max_cols = 1
-
-        for periodo, desde, hasta in periodos_del_reporte():
-            df = calcular(filtrar_por_rango_fecha(raw, desde, hasta, f"{etiqueta} {periodo}"))
-            max_cols = max(max_cols, len(df.columns))
-
-            section_rows.append(len(valores))
-            valores.append([periodo])
-
-            header_rows.append(len(valores))
-            valores.append(list(df.columns))
-
-            if df.empty:
-                valores.append(["(sin movimientos)"])
-            else:
-                for _, row in df.iterrows():
-                    output_row = row.tolist()
-                    if "Concepto" in df.columns and "diferencia" in texto_compacto(row.get("Concepto", "")):
-                        highlight_rows.append(len(valores))
-                    valores.append(output_row)
-
-            valores.append([""])
-
-        padded = [row + [""] * (max_cols - len(row)) for row in valores]
-        valores_a_hoja(sheets_service, spreadsheet_id, nombre_hoja, padded)
-        aplicar_formato_tablas_periodo(
-            sheets_service,
-            spreadsheet_id,
-            mapa[nombre_hoja],
-            max_cols,
-            len(padded),
-            section_rows,
-            header_rows,
-            highlight_rows,
-            numeric_start_col=numeric_start_col,
-        )
-        hojas_generadas.append(nombre_hoja)
+    # Períodos: TOTAL del rango + cada mes (si el rango cruza más de un mes).
+    periodos: list[tuple[str, date, date]] = []
+    if len(meses) > 1:
+        periodos.append(("TOTAL", range_start, range_end))
+    for mes in meses:
+        mes_desde, mes_hasta = rango_mes_en_periodo(mes, range_start, range_end)
+        periodos.append((etiqueta_mes(mes), mes_desde, mes_hasta))
 
     if ventas_raw is not None:
-        escribir_tablas_por_periodo("Ventas", ventas_raw, f"Ventas {sucursal}", calcular_ventas, numeric_start_col=1)
+        pv = [(lab, _bloques_metricas(calcular_ventas(filtrar_por_rango_fecha(ventas_raw, d, h, f"Ventas {lab}")), "Ventas"))
+              for lab, d, h in periodos]
+        escribir_hoja_bloques(sheets_service, spreadsheet_id, mapa["Ventas"], "Ventas", pv)
+        hojas_generadas.append("Ventas")
 
     if compras_raw is not None:
-        escribir_tablas_por_periodo("Compras", compras_raw, f"Compras {sucursal}", calcular_compras, numeric_start_col=1)
-        escribir_tablas_por_periodo("Compras por proveedor", compras_raw, f"Compras por proveedor {sucursal}", calcular_compras_por_proveedor, numeric_start_col=1)
+        pc = [(lab, _bloques_metricas(calcular_compras(filtrar_por_rango_fecha(compras_raw, d, h, f"Compras {lab}")), "Compras"))
+              for lab, d, h in periodos]
+        escribir_hoja_bloques(sheets_service, spreadsheet_id, mapa["Compras"], "Compras", pc)
+        hojas_generadas.append("Compras")
+        pp = [(lab, calcular_compras_por_proveedor(filtrar_por_rango_fecha(compras_raw, d, h, f"Proveedores {lab}")))
+              for lab, d, h in periodos]
+        escribir_hoja_proveedores(sheets_service, spreadsheet_id, mapa["Compras por proveedor"], "Compras por proveedor", pp)
+        hojas_generadas.append("Compras por proveedor")
 
     url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit"
-    print(f"[OK] Generado en Drive ({' + '.join(hojas_generadas)} con tablas por periodo + total): {url}")
+    print(f"[OK] Generado en Drive ({' + '.join(hojas_generadas)} con fichas por período): {url}")
     return url
 
 
@@ -1355,6 +1440,7 @@ def procesar_periodo(ctx: dict[str, Any], fecha_ref: date, cantidad_periodos: in
                 drive_service=drive_service,
                 sheets_service=sheets_service,
                 titulo_drive=titulo_reporte(sucursal, ctx, fecha_ref),
+                period_label=etiqueta_mes(ctx.get("date") or fecha_ref),
             )
         except HttpError as e:
             print(f"[ERROR GOOGLE API] {sucursal} {ctx['label']}: {e}")
@@ -1407,6 +1493,7 @@ def procesar_periodo_mensualizado(ctx: dict[str, Any], fecha_ref: date, cantidad
                     drive_service=drive_service,
                     sheets_service=sheets_service,
                     titulo_drive=titulo_reporte(sucursal, ctx, fecha_ref),
+                    period_label=etiqueta_mes(ctx.get("date") or fecha_ref),
                 )
         except HttpError as e:
             print(f"[ERROR GOOGLE API] {sucursal} {ctx['label']}: {e}")
