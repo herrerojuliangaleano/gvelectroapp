@@ -331,7 +331,10 @@ export function SalesBISellersPage() {
             <ProfileTab
               sellers={report.sellers}
               sellerId={profileSellerId} onChangeSeller={setProfileSellerId}
-              filters={{ desde, hasta, empresa, sucursales: [...selectedSucursales].join(','), tipo }}
+              filters={{
+                desde, hasta, empresa, sucursales: [...selectedSucursales].join(','), tipo,
+                compareEnabled, compareDesde, compareHasta,
+              }}
             />
           )}
           {tab === 'compare' && (
@@ -1052,29 +1055,31 @@ function CoachingColumn({
   );
 }
 
-// Tira "vos vs promedio de la sucursal" para las métricas de foco.
-function BenchmarkStrip({ rows }: { rows: Array<{ label: string; val: number; ref: number; fmt: (n: number) => string; refLabel: string }> }) {
+// KPI compacto (sin sparkline): valor + delta vs período anterior (opcional) +
+// nota chica (ej. promedio de la sucursal). Ahorra mucho espacio vertical.
+function MiniKpi({ label, value, deltaPct, note, invert = false }: {
+  label: string;
+  value: string;
+  deltaPct?: number | null;
+  note?: string;
+  invert?: boolean;
+}) {
+  const has = typeof deltaPct === 'number' && Number.isFinite(deltaPct);
+  const up = (deltaPct ?? 0) >= 0;
+  const good = invert ? !up : up;
+  const color = good ? 'var(--chart-positive)' : 'var(--chart-negative)';
   return (
-    <div className="grid gap-2.5 sm:grid-cols-3">
-      {rows.map((r) => {
-        const diff = r.ref ? (r.val - r.ref) / Math.abs(r.ref) * 100 : 0;
-        const up = diff >= 0;
-        const color = up ? 'var(--chart-positive)' : 'var(--chart-negative)';
-        return (
-          <div key={r.label} className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3">
-            <div className="text-[10px] font-bold uppercase tracking-wide text-[color:var(--text-3)]">{r.label}</div>
-            <div className="mt-1 flex items-baseline gap-2">
-              <span className="text-lg font-black text-[color:var(--text)]">{r.fmt(r.val)}</span>
-              {r.ref > 0 && (
-                <span className="inline-flex items-center gap-0.5 text-xs font-bold" style={{ color }}>
-                  {up ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}{Math.abs(diff).toFixed(0)}%
-                </span>
-              )}
-            </div>
-            <div className="text-[10px] text-[color:var(--text-3)]">{r.refLabel}: {r.fmt(r.ref)}</div>
-          </div>
-        );
-      })}
+    <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface)]/60 p-3">
+      <div className="flex items-center justify-between gap-1">
+        <span className="truncate text-[10px] font-semibold uppercase tracking-wide text-[color:var(--text-3)]">{label}</span>
+        {has && (
+          <span className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-bold tabular-nums" style={{ color }}>
+            {up ? <ArrowUpRight size={11} /> : <ArrowDownRight size={11} />}{up ? '+' : ''}{deltaPct!.toFixed(0)}%
+          </span>
+        )}
+      </div>
+      <div className="mt-1 text-xl font-black tracking-tight tabular-nums text-[color:var(--text)]">{value}</div>
+      {note && <div className="mt-0.5 truncate text-[10px] text-[color:var(--text-3)]">{note}</div>}
     </div>
   );
 }
@@ -1086,7 +1091,7 @@ function ClickableKpi({ onClick, disabled, children }: { onClick: () => void; di
     <button type="button" onClick={onClick} title="Ver detalle"
       className="group relative block w-full rounded-2xl text-left outline-none transition hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-[color:var(--chart-blue)]">
       {children}
-      <span className="pointer-events-none absolute right-2 top-2 inline-flex items-center gap-0.5 rounded-full bg-[color:var(--surface-2)]/90 px-1.5 py-0.5 text-[9px] font-bold text-[color:var(--text-3)] opacity-0 transition group-hover:opacity-100">
+      <span className="pointer-events-none absolute bottom-1.5 right-1.5 inline-flex items-center gap-0.5 rounded-full bg-[color:var(--surface-2)]/90 px-1.5 py-0.5 text-[9px] font-bold text-[color:var(--text-3)] opacity-0 transition group-hover:opacity-100">
         <Search size={9} /> detalle
       </span>
     </button>
@@ -1099,14 +1104,23 @@ function ProfileTab({
   sellers: SalesBISellerMetric[];
   sellerId: string;
   onChangeSeller: (id: string) => void;
-  filters: { desde: string; hasta: string; empresa: string; sucursales: string; tipo: string };
+  filters: {
+    desde: string; hasta: string; empresa: string; sucursales: string; tipo: string;
+    compareEnabled: boolean; compareDesde: string; compareHasta: string;
+  };
 }) {
   const [profile, setProfile] = useState<SalesBISellerProfile | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [showSenas, setShowSenas] = useState(false);
-  // El perfil SIEMPRE compara contra el período anterior del mismo largo.
-  const cmp = useMemo(() => previousRange(filters.desde, filters.hasta), [filters.desde, filters.hasta]);
+  // La comparación vs período anterior respeta el toggle global "Comparar contra
+  // otro período". Si está activo, usa el rango que eligió el usuario (o el
+  // período anterior del mismo largo como fallback).
+  const compareOn = filters.compareEnabled;
+  const cmp = useMemo(() => {
+    const fb = previousRange(filters.desde, filters.hasta);
+    return { desde: filters.compareDesde || fb.desde, hasta: filters.compareHasta || fb.hasta };
+  }, [filters.desde, filters.hasta, filters.compareDesde, filters.compareHasta]);
 
   useEffect(() => {
     if (!sellerId) { setProfile(null); return; }
@@ -1120,14 +1134,14 @@ function ProfileTab({
       empresa: filters.empresa || undefined,
       sucursales: filters.sucursales || undefined,
       tipo: filters.tipo || undefined,
-      compare_desde: cmp.desde,
-      compare_hasta: cmp.hasta,
+      compare_desde: compareOn ? cmp.desde : undefined,
+      compare_hasta: compareOn ? cmp.hasta : undefined,
     })
       .then((p) => { if (!cancelled) setProfile(p); })
       .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : 'No se pudo cargar el perfil.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [sellerId, filters.desde, filters.hasta, filters.empresa, filters.sucursales, filters.tipo, cmp.desde, cmp.hasta]);
+  }, [sellerId, filters.desde, filters.hasta, filters.empresa, filters.sucursales, filters.tipo, compareOn, cmp.desde, cmp.hasta]);
 
   const SellerSwitcher = (
     <div className="w-64 max-w-full">
@@ -1164,7 +1178,7 @@ function ProfileTab({
   const rankCompany = seller.rank_empresa || 0;
   const branchParticipation = seller.sucursal_participacion_pct ?? seller.participacion_pct;
   const companyParticipation = seller.empresa_participacion_pct ?? seller.participacion_pct;
-  const prevOf = (m: string) => profile.previous?.delta?.[m]?.comparado;
+  const dpct = (m: string): number | null => profile.previous?.delta?.[m]?.delta_pct ?? null;
   const hasPrev = !!profile.previous;
   const insights = profile.insights;
   const totalInsights = insights.fortalezas.length + insights.oportunidades.length + insights.alertas.length;
@@ -1228,7 +1242,7 @@ function ProfileTab({
         <div className="mb-2 flex items-center gap-2">
           <Lightbulb size={15} className="text-[color:var(--chart-amber)]" />
           <h3 className="text-sm font-black uppercase tracking-wide text-[color:var(--text-2)]">Para la charla — qué está pasando</h3>
-          <span className="text-xs text-[color:var(--text-3)]">vs período anterior y vs su sucursal</span>
+          <span className="text-xs text-[color:var(--text-3)]">{hasPrev ? 'vs período anterior y vs su sucursal' : 'vs el promedio de su sucursal'}</span>
         </div>
         {totalInsights === 0 ? (
           <div className="rounded-2xl border border-dashed border-[color:var(--border)] p-6 text-center text-xs text-[color:var(--text-3)]">
@@ -1243,31 +1257,26 @@ function ProfileTab({
         )}
       </div>
 
-      {/* vs promedio de la sucursal — métricas de foco */}
-      <div>
-        <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.18em] text-[color:var(--text-3)]">Cómo viene vs el promedio de {branchName}</div>
-        <BenchmarkStrip rows={[
-          { label: 'Cobrado', val: seller.total_cobrado, ref: benchSuc.total_cobrado, fmt: money, refLabel: 'Promedio vendedor' },
-          { label: 'Ticket promedio', val: seller.ticket_promedio, ref: benchSuc.ticket_promedio, fmt: money, refLabel: 'Promedio sucursal' },
-          { label: 'Unidades por ticket', val: seller.unidades_por_ticket, ref: benchSuc.unidades_por_ticket, fmt: (n) => n.toFixed(2), refLabel: 'Promedio sucursal' },
-        ]} />
-      </div>
-
-      {/* KPIs personales — con delta vs período anterior */}
-      <div className="grid gap-2.5 grid-cols-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4 xl:grid-cols-8">
-        <KpiCard label="Cobrado"         accent="positive" value={seller.total_cobrado} prev={prevOf('total_cobrado')} format={money} />
-        <KpiCard label="Unidades"        accent="blue"     value={seller.unidades}      prev={prevOf('unidades')}      format={num} />
-        <KpiCard label="Tickets"         accent="amber"    value={seller.tickets}       prev={prevOf('tickets')}       format={num} />
-        <KpiCard label="Ticket promedio" accent="teal"     value={seller.ticket_promedio} prev={prevOf('ticket_promedio')} format={money} />
-        <KpiCard label="U. por ticket"   accent="violet"   value={seller.unidades_por_ticket} format={(n) => n.toFixed(2)} />
-        <KpiCard label="Part. sucursal"  accent="blue"     value={branchParticipation} format={(n) => `${n.toFixed(1)}%`} />
-        <ClickableKpi onClick={() => setShowSenas(true)} disabled={!profile.senas_detail.length}>
-          <KpiCard label="Señas" accent="amber" value={seller.sena_tickets || 0} prev={prevOf('sena_tickets')} format={num} />
+      {/* KPIs compactos — nota = promedio de su sucursal. El % vs período
+          anterior solo aparece si está activo "Comparar contra otro período". */}
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
+        <MiniKpi label="Cobrado" value={money(seller.total_cobrado)} deltaPct={dpct('total_cobrado')} note={`Prom. ${branchName}: ${money(benchSuc.total_cobrado)}`} />
+        <MiniKpi label="Unidades" value={num(seller.unidades)} deltaPct={dpct('unidades')} />
+        <MiniKpi label="Tickets" value={num(seller.tickets)} deltaPct={dpct('tickets')} />
+        <MiniKpi label="Ticket promedio" value={money(seller.ticket_promedio)} deltaPct={dpct('ticket_promedio')} note={`Prom. suc: ${money(benchSuc.ticket_promedio)}`} />
+        <MiniKpi label="U. por ticket" value={seller.unidades_por_ticket.toFixed(2)} note={`Prom. suc: ${benchSuc.unidades_por_ticket.toFixed(2)}`} />
+        <ClickableKpi onClick={() => setShowSenas(true)} disabled={!senas.length}>
+          <MiniKpi label="Señas" value={num(seller.sena_tickets || 0)} deltaPct={dpct('sena_tickets')} />
         </ClickableKpi>
-        <ClickableKpi onClick={() => setShowSenas(true)} disabled={!profile.senas_detail.length}>
-          <KpiCard label="Saldo señas" accent="negative" value={seller.sena_saldo_pendiente || 0} prev={prevOf('sena_saldo_pendiente')} format={money} invertDelta />
+        <ClickableKpi onClick={() => setShowSenas(true)} disabled={!senas.length}>
+          <MiniKpi label="Saldo señas" value={money(seller.sena_saldo_pendiente || 0)} deltaPct={dpct('sena_saldo_pendiente')} invert />
         </ClickableKpi>
       </div>
+      {!hasPrev && (
+        <p className="-mt-2 text-[11px] text-[color:var(--text-3)]">
+          Activá <b className="text-[color:var(--text-2)]">“Comparar contra otro período”</b> arriba para ver cómo viene vs el período anterior.
+        </p>
+      )}
 
       {/* Evolución triple — datos REALES del vendedor */}
       <div className="grid gap-4 lg:grid-cols-3">
