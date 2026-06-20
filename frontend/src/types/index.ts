@@ -727,6 +727,14 @@ export interface SalesBICoachingItem {
   detalle: string;
   metric: string;
 }
+export interface SalesBISenaTicket {
+  remito: string;
+  fecha: string;
+  total_vendido: number;
+  monto_cobrado: number;
+  saldo: number;
+  productos: { producto: string; marca: string; cantidad: number; total_cobrado: number }[];
+}
 export interface SalesBISellerProfile {
   found: boolean;
   filters: SalesBISellersReport['filters'];
@@ -739,6 +747,7 @@ export interface SalesBISellerProfile {
   };
   daily_series: SalesBIProfileDailyPoint[];
   benchmarks: { sucursal: SalesBISellerBenchmark; empresa: SalesBISellerBenchmark };
+  senas_detail: SalesBISenaTicket[];
   previous: {
     filters: SalesBISellersReport['filters'];
     seller: SalesBISellerMetric | null;

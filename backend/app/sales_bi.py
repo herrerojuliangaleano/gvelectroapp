@@ -2516,6 +2516,32 @@ def build_seller_profile(
     breakdowns = _breakdowns_from_rows(seller_rows, total_cob)
     seller_daily = {d["fecha"]: d for d in breakdowns["daily_series"]}
 
+    # Detalle de señas (cómo se compone la métrica): remitos con cobro parcial.
+    ticket_map: dict[str, dict[str, Any]] = {}
+    for record, imp in seller_rows:
+        rk = str(record.remito or "").strip() or f"linea-{record.id}"
+        t = ticket_map.setdefault(rk, {
+            "remito": str(record.remito or "").strip(), "fecha": _fmt_date(imp.fecha),
+            "total_vendido": 0.0, "monto_cobrado": 0.0, "saldo": 0.0, "productos": [],
+        })
+        cantidad = int(record.cantidad or 0)
+        t["total_vendido"] += _num(record.pvp) * cantidad
+        t["monto_cobrado"] += _num(record.total_cobrado)
+        t["saldo"] += _num(record.saldo)
+        t["productos"].append({
+            "producto": str(record.producto or ""), "marca": str(record.marca or ""),
+            "cantidad": cantidad, "total_cobrado": round(_num(record.total_cobrado), 2),
+        })
+    senas_detail = []
+    for t in ticket_map.values():
+        saldo = max(float(t["saldo"]), float(t["total_vendido"]) - float(t["monto_cobrado"]))
+        if float(t["monto_cobrado"]) > 0.01 and saldo > 0.01:
+            t["total_vendido"] = round(float(t["total_vendido"]), 2)
+            t["monto_cobrado"] = round(float(t["monto_cobrado"]), 2)
+            t["saldo"] = round(saldo, 2)
+            senas_detail.append(t)
+    senas_detail.sort(key=lambda x: x["saldo"], reverse=True)
+
     # Benchmarks reales: una pasada sobre todo el dataset del período.
     all_rows = _sales_rows_for_report(
         filters["fecha_desde"], filters["fecha_hasta"], sucursal, tipo, None,
@@ -2608,6 +2634,7 @@ def build_seller_profile(
         "breakdowns": {k: v for k, v in breakdowns.items() if k != "daily_series"},
         "daily_series": daily_series,
         "benchmarks": benchmarks,
+        "senas_detail": senas_detail,
         "previous": previous,
         "insights": insights,
     }

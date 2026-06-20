@@ -42,6 +42,7 @@ import {
   KpiCard, ParticipationBar, SellerAvatar, Tabs, cn, money, num, pct,
   useIsDesktop,
 } from '../components/SalesBIWidgets';
+import { ErpModal } from '../components/ProUI';
 
 // Paleta para gráficos categóricos (donuts, barras agrupadas, etc.).
 // El orden importa: índice 0 = serie principal del overview / vendedor A.
@@ -1078,6 +1079,20 @@ function BenchmarkStrip({ rows }: { rows: Array<{ label: string; val: number; re
   );
 }
 
+// Envuelve un KpiCard para hacerlo clickeable (abre el modal de detalle).
+function ClickableKpi({ onClick, disabled, children }: { onClick: () => void; disabled?: boolean; children: React.ReactNode }) {
+  if (disabled) return <>{children}</>;
+  return (
+    <button type="button" onClick={onClick} title="Ver detalle"
+      className="group relative block w-full rounded-2xl text-left outline-none transition hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-[color:var(--chart-blue)]">
+      {children}
+      <span className="pointer-events-none absolute right-2 top-2 inline-flex items-center gap-0.5 rounded-full bg-[color:var(--surface-2)]/90 px-1.5 py-0.5 text-[9px] font-bold text-[color:var(--text-3)] opacity-0 transition group-hover:opacity-100">
+        <Search size={9} /> detalle
+      </span>
+    </button>
+  );
+}
+
 function ProfileTab({
   sellers, sellerId, onChangeSeller, filters,
 }: {
@@ -1089,6 +1104,7 @@ function ProfileTab({
   const [profile, setProfile] = useState<SalesBISellerProfile | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showSenas, setShowSenas] = useState(false);
   // El perfil SIEMPRE compara contra el período anterior del mismo largo.
   const cmp = useMemo(() => previousRange(filters.desde, filters.hasta), [filters.desde, filters.hasta]);
 
@@ -1152,6 +1168,10 @@ function ProfileTab({
   const hasPrev = !!profile.previous;
   const insights = profile.insights;
   const totalInsights = insights.fortalezas.length + insights.oportunidades.length + insights.alertas.length;
+  const senas = profile.senas_detail;
+  const senasSumVendido = senas.reduce((a, s) => a + s.total_vendido, 0);
+  const senasSumCobrado = senas.reduce((a, s) => a + s.monto_cobrado, 0);
+  const senasSumSaldo = senas.reduce((a, s) => a + s.saldo, 0);
 
   const dailyData = profile.daily_series.map((d) => ({
     fecha: d.fecha, vendedor: d.total_cobrado, sucursal: d.sucursal_promedio, empresa: d.empresa_promedio,
@@ -1241,8 +1261,12 @@ function ProfileTab({
         <KpiCard label="Ticket promedio" accent="teal"     value={seller.ticket_promedio} prev={prevOf('ticket_promedio')} format={money} />
         <KpiCard label="U. por ticket"   accent="violet"   value={seller.unidades_por_ticket} format={(n) => n.toFixed(2)} />
         <KpiCard label="Part. sucursal"  accent="blue"     value={branchParticipation} format={(n) => `${n.toFixed(1)}%`} />
-        <KpiCard label="Señas"           accent="amber"    value={seller.sena_tickets || 0} prev={prevOf('sena_tickets')} format={num} />
-        <KpiCard label="Saldo señas"     accent="negative" value={seller.sena_saldo_pendiente || 0} prev={prevOf('sena_saldo_pendiente')} format={money} invertDelta />
+        <ClickableKpi onClick={() => setShowSenas(true)} disabled={!profile.senas_detail.length}>
+          <KpiCard label="Señas" accent="amber" value={seller.sena_tickets || 0} prev={prevOf('sena_tickets')} format={num} />
+        </ClickableKpi>
+        <ClickableKpi onClick={() => setShowSenas(true)} disabled={!profile.senas_detail.length}>
+          <KpiCard label="Saldo señas" accent="negative" value={seller.sena_saldo_pendiente || 0} prev={prevOf('sena_saldo_pendiente')} format={money} invertDelta />
+        </ClickableKpi>
       </div>
 
       {/* Evolución triple — datos REALES del vendedor */}
@@ -1306,6 +1330,55 @@ function ProfileTab({
           </div>
         </ChartCard>
       )}
+
+      {/* Modal de detalle de señas — cómo se compone la métrica */}
+      <ErpModal open={showSenas} onClose={() => setShowSenas(false)} size="lg" title={`Señas de ${seller.vendedor}`}>
+        {senas.length === 0 ? (
+          <p className="text-sm text-[color:var(--text-3)]">No hay señas en este período.</p>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs text-[color:var(--text-3)]">
+              {senas.length} señas · cobrado {money(senasSumCobrado)} · saldo pendiente{' '}
+              <b className="text-[color:var(--chart-negative)]">{money(senasSumSaldo)}</b>
+            </p>
+            <div className="max-h-[60vh] overflow-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-[color:var(--surface)]">
+                  <tr className="border-b border-[color:var(--border)] text-left text-[11px] uppercase tracking-wide text-[color:var(--text-3)]">
+                    <th className="py-2 pr-3">Remito / productos</th>
+                    <th className="py-2 pr-3">Fecha</th>
+                    <th className="py-2 pr-3 text-right">Vendido</th>
+                    <th className="py-2 pr-3 text-right">Cobrado</th>
+                    <th className="py-2 text-right">Saldo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {senas.map((s, i) => (
+                    <tr key={i} className="border-b border-[color:var(--border)]/50 align-top">
+                      <td className="py-2 pr-3">
+                        <div className="font-bold text-[color:var(--text)]">{s.remito || '—'}</div>
+                        <div className="text-[11px] text-[color:var(--text-3)]">{s.productos.map((p) => `${p.cantidad}× ${p.producto}`).join(' · ')}</div>
+                      </td>
+                      <td className="whitespace-nowrap py-2 pr-3 text-[color:var(--text-2)]">{s.fecha}</td>
+                      <td className="py-2 pr-3 text-right tabular-nums text-[color:var(--text-2)]">{money(s.total_vendido)}</td>
+                      <td className="py-2 pr-3 text-right tabular-nums text-[color:var(--chart-positive)]">{money(s.monto_cobrado)}</td>
+                      <td className="py-2 text-right font-bold tabular-nums text-[color:var(--chart-negative)]">{money(s.saldo)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="font-black text-[color:var(--text)]">
+                    <td className="py-2 pr-3" colSpan={2}>Total</td>
+                    <td className="py-2 pr-3 text-right tabular-nums">{money(senasSumVendido)}</td>
+                    <td className="py-2 pr-3 text-right tabular-nums">{money(senasSumCobrado)}</td>
+                    <td className="py-2 text-right tabular-nums">{money(senasSumSaldo)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        )}
+      </ErpModal>
     </div>
   );
 }
