@@ -1067,7 +1067,7 @@ def aplicar_formato_resumen_visual(
             {
                 "updateDimensionProperties": {
                     "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": col + 1, "endIndex": col + 2},
-                    "properties": {"pixelSize": 132},
+                    "properties": {"pixelSize": 180},
                     "fields": "pixelSize",
                 }
             },
@@ -1102,10 +1102,11 @@ def aplicar_formato_resumen_visual(
                                 "backgroundColor": {"red": 0.12, "green": 0.24, "blue": 0.46} if es_total else {"red": 0.86, "green": 0.86, "blue": 0.86},
                                 "horizontalAlignment": "CENTER",
                                 "verticalAlignment": "MIDDLE",
+                                "wrapStrategy": "WRAP",
                                 "textFormat": {"bold": True, "italic": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1} if es_total else {"red": 0, "green": 0, "blue": 0}},
                             }
                         },
-                        "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)",
+                        "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,wrapStrategy,textFormat)",
                     }
                 },
                 {
@@ -1318,7 +1319,22 @@ def procesar_sucursal_rango_mensual(
 
         return pd.concat(bloques, ignore_index=True)
 
-    def metricas_visuales(raw: pd.DataFrame, etiqueta: str, calcular, specs: list[tuple[str, str]]) -> list[dict[str, Any]]:
+    def valor_por_concepto(resumen: pd.DataFrame, concepto: str, columna: str) -> Any:
+        if resumen.empty or columna not in resumen.columns or "Concepto" not in resumen.columns:
+            return 0
+        concepto_key = texto_compacto(concepto)
+        for _, row in resumen.iterrows():
+            if texto_compacto(row.get("Concepto", "")) == concepto_key:
+                return row.get(columna, 0)
+        return 0
+
+    def metricas_visuales(
+        raw: pd.DataFrame,
+        etiqueta: str,
+        calcular,
+        specs: list[tuple[str, str]],
+        conceptos: list[tuple[str, str]],
+    ) -> list[dict[str, Any]]:
         resultados: list[tuple[str, pd.DataFrame]] = []
         for mes in meses:
             mes_desde, mes_hasta = rango_mes_en_periodo(mes, range_start, range_end)
@@ -1333,11 +1349,63 @@ def procesar_sucursal_rango_mensual(
         for titulo, columna in specs:
             filas = []
             for periodo, resumen in resultados:
-                valor = 0
-                if not resumen.empty and columna in resumen.columns:
-                    valor = resumen.iloc[-1][columna]
-                filas.append({"periodo": periodo, "valor": valor})
+                for subtitulo, concepto in conceptos:
+                    valor = valor_por_concepto(resumen, concepto, columna)
+                    filas.append({"periodo": f"{periodo} · {subtitulo}", "valor": valor})
             metricas.append({"titulo": titulo, "filas": filas})
+        return metricas
+
+    def metricas_proveedores_visuales(raw: pd.DataFrame, etiqueta: str) -> list[dict[str, Any]]:
+        resultados: list[tuple[str, pd.DataFrame]] = []
+        for mes in meses:
+            mes_desde, mes_hasta = rango_mes_en_periodo(mes, range_start, range_end)
+            mes_key = f"{mes.year}-{mes.month:02d}"
+            mes_raw = filtrar_por_rango_fecha(raw, mes_desde, mes_hasta, f"{etiqueta} {mes_key}")
+            resultados.append((etiqueta_mes(mes), calcular_compras_por_proveedor(mes_raw)))
+
+        total_raw = filtrar_por_rango_fecha(raw, range_start, range_end, etiqueta)
+        resultados.append(("TOTAL", calcular_compras_por_proveedor(total_raw)))
+
+        proveedores: list[str] = []
+        seen: set[str] = set()
+        for _, resumen in resultados:
+            if resumen.empty or "Proveedor" not in resumen.columns:
+                continue
+            for proveedor in resumen["Proveedor"].astype(str).tolist():
+                key = texto_compacto(proveedor)
+                if key and key not in seen:
+                    seen.add(key)
+                    proveedores.append(proveedor)
+
+        specs = [
+            ("Neto por proveedor", [
+                ("Bruto", "Neto gravado comprobantes"),
+                ("NC", "Neto gravado notas crÃ©dito (3 y 8)"),
+                ("Neto", "Imp. Neto Gravado Total (neto)"),
+            ]),
+            ("IVA por proveedor", [
+                ("Bruto", "Total IVA comprobantes"),
+                ("NC", "Total IVA notas crÃ©dito (3 y 8)"),
+                ("Neto", "Total IVA neto"),
+            ]),
+        ]
+
+        metricas: list[dict[str, Any]] = []
+        for titulo, columnas in specs:
+            filas = []
+            for proveedor in proveedores:
+                proveedor_key = texto_compacto(proveedor)
+                for periodo, resumen in resultados:
+                    row = None
+                    if not resumen.empty and "Proveedor" in resumen.columns:
+                        match = resumen[resumen["Proveedor"].astype(str).map(texto_compacto) == proveedor_key]
+                        if not match.empty:
+                            row = match.iloc[0]
+                    for subtitulo, columna in columnas:
+                        valor = row.get(columna, 0) if row is not None and columna in resumen.columns else 0
+                        filas.append({"periodo": f"{proveedor} · {periodo} · {subtitulo}", "valor": valor})
+            metricas.append({"titulo": titulo, "filas": filas})
+
         return metricas
 
     if ventas_raw is not None:
@@ -1351,6 +1419,11 @@ def procesar_sucursal_rango_mensual(
                     ("IVA Ventas", "Total IVA"),
                     ("Neto Ventas", "Imp. Neto Gravado Total"),
                     ("Total Ventas", "Imp. Total"),
+                ],
+                [
+                    ("Bruto", "Resto de comprobantes"),
+                    ("NC", "Comprobantes 3 y 8"),
+                    ("Neto", "Diferencia (resto - 3 y 8)"),
                 ],
             ),
         )
@@ -1366,12 +1439,17 @@ def procesar_sucursal_rango_mensual(
                     ("IVA Compras", "Total IVA"),
                     ("Neto Compras", "Imp. Neto Gravado Total"),
                 ],
+                [
+                    ("Bruto", "Resto de comprobantes"),
+                    ("NC", "Notas de crÃ©dito (3 y 8)"),
+                    ("Neto", "Diferencia (resto - notas crÃ©dito)"),
+                ],
             ),
         )
-        escribir_resultado("Compras por proveedor", tabla_periodos(compras_raw, f"Compras por proveedor {sucursal}", calcular_compras_por_proveedor))
+        escribir_resumen_visual("Compras por proveedor", metricas_proveedores_visuales(compras_raw, f"Compras por proveedor {sucursal}"))
 
     url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit"
-    print(f"[OK] Generado en Drive ({' + '.join(hojas_generadas)} con tabla mensual + total): {url}")
+    print(f"[OK] Generado en Drive ({' + '.join(hojas_generadas)} con resumen visual mensual + total): {url}")
     return url
 
 
