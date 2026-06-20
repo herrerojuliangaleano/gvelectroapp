@@ -698,6 +698,61 @@ export interface SalesBISellersCompare {
   }>;
 }
 
+// ── Perfil individual del vendedor (datos reales + coaching) ────────────────
+export interface SalesBISellerBenchmark {
+  total_cobrado: number;
+  unidades: number;
+  tickets: number;
+  ticket_promedio: number;
+  unidades_por_ticket: number;
+  seller_count: number;
+  nombre: string;
+}
+export interface SalesBIProfileDailyPoint {
+  fecha: string;
+  total_cobrado: number;
+  unidades: number;
+  sucursal_promedio: number;
+  empresa_promedio: number;
+}
+export interface SalesBIMixShift {
+  name: string;
+  actual: number;
+  anterior: number;
+  delta: number;
+  delta_pct: number | null;
+}
+export interface SalesBICoachingItem {
+  titulo: string;
+  detalle: string;
+  metric: string;
+}
+export interface SalesBISellerProfile {
+  found: boolean;
+  filters: SalesBISellersReport['filters'];
+  vendedor?: string;
+  seller: (SalesBISellerMetric & { unidades_por_ticket: number }) | null;
+  breakdowns: {
+    brand_mix: SalesBIMixMetric[];
+    category_mix: SalesBIMixMetric[];
+    top_products: SalesBITopProduct[];
+  };
+  daily_series: SalesBIProfileDailyPoint[];
+  benchmarks: { sucursal: SalesBISellerBenchmark; empresa: SalesBISellerBenchmark };
+  previous: {
+    filters: SalesBISellersReport['filters'];
+    seller: SalesBISellerMetric | null;
+    delta: Record<string, SalesBICompareMetric>;
+    brand_shifts: SalesBIMixShift[];
+    category_shifts: SalesBIMixShift[];
+  } | null;
+  insights: {
+    fortalezas: SalesBICoachingItem[];
+    oportunidades: SalesBICoachingItem[];
+    alertas: SalesBICoachingItem[];
+  };
+}
+
 export interface SalesBICommercialMetric {
   total_vendido: number;
   unidades: number;

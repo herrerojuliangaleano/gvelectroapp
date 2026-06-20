@@ -16,8 +16,9 @@
  * Tokens y widgets en `components/SalesBIWidgets.tsx`.
  */
 import {
-  AlertTriangle, BarChart2, BarChart3, Calendar, Check, Download, FileSpreadsheet,
-  Filter, Loader2, RefreshCw, Search, Trophy, Users, Wand2,
+  AlertTriangle, ArrowDownRight, ArrowUpRight, BarChart2, BarChart3, Calendar, Check,
+  CheckCircle2, Download, FileSpreadsheet, Filter, Lightbulb, Loader2, RefreshCw,
+  Search, Target, Trophy, Users, Wand2,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -28,13 +29,13 @@ import {
 
 import {
   can, createSalesBIProductAlias, exportSalesBISellersPdf, exportSalesBISellersXlsx,
-  fetchSalesBISellersCompare, fetchSalesBISellersOptions, fetchSalesBISellersReport,
-  fetchSalesBIUnmatchedProducts, rematchSalesBIImport, searchProducts,
+  fetchSalesBISellerProfile, fetchSalesBISellersCompare, fetchSalesBISellersOptions,
+  fetchSalesBISellersReport, fetchSalesBIUnmatchedProducts, rematchSalesBIImport, searchProducts,
 } from '../api/client';
 import type {
-  ProductInfo, SalesBIDailyMetric, SalesBIMixMetric, SalesBISellerMetric,
-  SalesBISellersCompare, SalesBISellersOptions, SalesBISellersReport, SalesBITopProduct,
-  SalesBIUnmatchedProduct,
+  ProductInfo, SalesBICoachingItem, SalesBIDailyMetric, SalesBIMixMetric, SalesBISellerMetric,
+  SalesBISellerProfile, SalesBISellersCompare, SalesBISellersOptions, SalesBISellersReport,
+  SalesBITopProduct, SalesBIUnmatchedProduct,
 } from '../types';
 import {
   CHART_ANIM, CHART_ANIM_FAST, CHART_TOOLTIP_STYLE, ChartCard, DeltaPill,
@@ -327,8 +328,9 @@ export function SalesBISellersPage() {
           {tab === 'overview' && <OverviewTab report={report} compare={compare} range={{ desde, hasta, sucursal: [...selectedSucursales][0] || '', tipo }} />}
           {tab === 'profile' && (
             <ProfileTab
-              report={report} compare={compare}
+              sellers={report.sellers}
               sellerId={profileSellerId} onChangeSeller={setProfileSellerId}
+              filters={{ desde, hasta, empresa, sucursales: [...selectedSucursales].join(','), tipo }}
             />
           )}
           {tab === 'compare' && (
@@ -1015,55 +1017,145 @@ function TopProductsList({ products, totalCobrado }: { products: SalesBITopProdu
 // ────────────────────────────────────────────────────────────────────────────
 // PROFILE TAB — perfil de un vendedor
 // ────────────────────────────────────────────────────────────────────────────
-function ProfileTab({
-  report, compare, sellerId, onChangeSeller,
+// Una columna del panel de coaching (Fortalezas / Para mejorar / Alertas).
+function CoachingColumn({
+  title, tone, icon, items, emptyText,
 }: {
-  report: SalesBISellersReport;
-  compare: SalesBISellersCompare | null;
+  title: string;
+  tone: 'positive' | 'amber' | 'negative';
+  icon: React.ReactNode;
+  items: SalesBICoachingItem[];
+  emptyText: string;
+}) {
+  const color = tone === 'positive' ? 'var(--chart-positive)' : tone === 'amber' ? 'var(--chart-amber)' : 'var(--chart-negative)';
+  return (
+    <div className="rounded-2xl border p-4" style={{ borderColor: `color-mix(in oklch, ${color} 35%, transparent)`, background: `color-mix(in oklch, ${color} 7%, transparent)` }}>
+      <div className="mb-3 flex items-center gap-2">
+        <span className="inline-flex size-6 items-center justify-center rounded-full" style={{ background: `color-mix(in oklch, ${color} 18%, transparent)`, color }}>{icon}</span>
+        <span className="text-sm font-black uppercase tracking-wide" style={{ color }}>{title}</span>
+        <span className="ml-auto text-xs font-bold text-[color:var(--text-3)]">{items.length}</span>
+      </div>
+      {items.length === 0 ? (
+        <p className="text-xs text-[color:var(--text-3)]">{emptyText}</p>
+      ) : (
+        <ul className="space-y-2.5">
+          {items.map((it, i) => (
+            <li key={i} className="rounded-xl bg-[color:var(--surface)]/60 p-2.5">
+              <div className="text-[13px] font-bold leading-snug text-[color:var(--text)]">{it.titulo}</div>
+              <div className="mt-0.5 text-[11px] leading-snug text-[color:var(--text-3)]">{it.detalle}</div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// Tira "vos vs promedio de la sucursal" para las métricas de foco.
+function BenchmarkStrip({ rows }: { rows: Array<{ label: string; val: number; ref: number; fmt: (n: number) => string; refLabel: string }> }) {
+  return (
+    <div className="grid gap-2.5 sm:grid-cols-3">
+      {rows.map((r) => {
+        const diff = r.ref ? (r.val - r.ref) / Math.abs(r.ref) * 100 : 0;
+        const up = diff >= 0;
+        const color = up ? 'var(--chart-positive)' : 'var(--chart-negative)';
+        return (
+          <div key={r.label} className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3">
+            <div className="text-[10px] font-bold uppercase tracking-wide text-[color:var(--text-3)]">{r.label}</div>
+            <div className="mt-1 flex items-baseline gap-2">
+              <span className="text-lg font-black text-[color:var(--text)]">{r.fmt(r.val)}</span>
+              {r.ref > 0 && (
+                <span className="inline-flex items-center gap-0.5 text-xs font-bold" style={{ color }}>
+                  {up ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}{Math.abs(diff).toFixed(0)}%
+                </span>
+              )}
+            </div>
+            <div className="text-[10px] text-[color:var(--text-3)]">{r.refLabel}: {r.fmt(r.ref)}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ProfileTab({
+  sellers, sellerId, onChangeSeller, filters,
+}: {
+  sellers: SalesBISellerMetric[];
   sellerId: string;
   onChangeSeller: (id: string) => void;
+  filters: { desde: string; hasta: string; empresa: string; sucursales: string; tipo: string };
 }) {
-  const seller = report.sellers.find((s) => s.vendedor_normalized === sellerId) || report.sellers[0];
-  if (!seller) {
+  const [profile, setProfile] = useState<SalesBISellerProfile | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  // El perfil SIEMPRE compara contra el período anterior del mismo largo.
+  const cmp = useMemo(() => previousRange(filters.desde, filters.hasta), [filters.desde, filters.hasta]);
+
+  useEffect(() => {
+    if (!sellerId) { setProfile(null); return; }
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    fetchSalesBISellerProfile({
+      vendedor: sellerId,
+      fecha_desde: filters.desde,
+      fecha_hasta: filters.hasta,
+      empresa: filters.empresa || undefined,
+      sucursales: filters.sucursales || undefined,
+      tipo: filters.tipo || undefined,
+      compare_desde: cmp.desde,
+      compare_hasta: cmp.hasta,
+    })
+      .then((p) => { if (!cancelled) setProfile(p); })
+      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : 'No se pudo cargar el perfil.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [sellerId, filters.desde, filters.hasta, filters.empresa, filters.sucursales, filters.tipo, cmp.desde, cmp.hasta]);
+
+  const SellerSwitcher = (
+    <div className="w-64 max-w-full">
+      <div className="mb-1 text-[10px] font-bold uppercase tracking-widest text-[color:var(--text-3)]">Cambiar vendedor</div>
+      <select value={sellerId} onChange={(e) => onChangeSeller(e.target.value)} className="w-full rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] px-3 py-2 text-sm text-[color:var(--text)] outline-none focus:border-[color:var(--chart-blue)]">
+        {sellers.map((s) => <option key={s.vendedor_normalized} value={s.vendedor_normalized}>{s.vendedor}</option>)}
+      </select>
+    </div>
+  );
+
+  if (loading && !profile) {
+    return <div className="flex items-center gap-2 p-10 text-sm text-[color:var(--text-2)]"><Loader2 size={16} className="animate-spin" /> Cargando perfil…</div>;
+  }
+  if (error) {
+    return <div className="rounded-2xl border border-[color:var(--chart-negative)]/40 bg-[color:var(--chart-negative)]/10 p-6 text-sm text-[color:var(--chart-negative)]">{error}</div>;
+  }
+  if (!profile || !profile.found || !profile.seller) {
     return (
-      <div className="rounded-2xl border border-dashed border-[color:var(--border)] p-10 text-center text-[color:var(--text-3)]">
-        No hay vendedores con datos en el rango seleccionado.
+      <div className="space-y-4">
+        <div className="flex justify-end">{SellerSwitcher}</div>
+        <div className="rounded-2xl border border-dashed border-[color:var(--border)] p-10 text-center text-[color:var(--text-3)]">
+          Este vendedor no tiene ventas en el rango seleccionado.
+        </div>
       </div>
     );
   }
-  const totals = report.totals;
-  const prevSellerDelta = compare?.sellers?.find((s) => s.vendedor_normalized === sellerId);
 
-  const branchName = seller.sucursal || report.filters.sucursal || seller.sucursales?.[0] || 'la sucursal';
-  const branchCount = seller.sellers_en_sucursal || report.sellers.length;
-  const companyCount = seller.sellers_en_empresa || report.sellers.length;
-  const rankCompany = seller.rank_empresa || report.sellers.findIndex((s) => s.vendedor_normalized === sellerId) + 1;
-  const rankBranch = seller.rank_sucursal || rankCompany;
-  const branchTotalCobrado = seller.sucursal_total_cobrado || totals.total_cobrado;
-  const companyTotalCobrado = seller.empresa_total_cobrado || totals.total_cobrado;
+  const seller = profile.seller;
+  const benchSuc = profile.benchmarks.sucursal;
+  const branchName = benchSuc.nombre || seller.sucursal || 'la sucursal';
+  const branchCount = seller.sellers_en_sucursal || benchSuc.seller_count || 0;
+  const companyCount = seller.sellers_en_empresa || profile.benchmarks.empresa.seller_count || 0;
+  const rankBranch = seller.rank_sucursal || 0;
+  const rankCompany = seller.rank_empresa || 0;
   const branchParticipation = seller.sucursal_participacion_pct ?? seller.participacion_pct;
   const companyParticipation = seller.empresa_participacion_pct ?? seller.participacion_pct;
+  const prevOf = (m: string) => profile.previous?.delta?.[m]?.comparado;
+  const hasPrev = !!profile.previous;
+  const insights = profile.insights;
+  const totalInsights = insights.fortalezas.length + insights.oportunidades.length + insights.alertas.length;
 
-  // Daily / mixes derivados proporcionalmente.
-  const sellerDaily = useMemo(() => scaleDailyForSeller(report.daily_series, seller, totals.total_cobrado), [report.daily_series, seller, totals.total_cobrado]);
-  const sellerBrand = useMemo(() => scaleMixForSeller(report.brand_mix, seller, totals.total_cobrado).slice(0, 8), [report.brand_mix, seller, totals.total_cobrado]);
-  const sellerCategory = useMemo(() => scaleMixForSeller(report.category_mix, seller, totals.total_cobrado), [report.category_mix, seller, totals.total_cobrado]);
-  const sellerTopProds = useMemo(() => report.top_products.slice(0, 6).map((p) => ({ ...p, total_cobrado: p.total_cobrado * (seller.total_cobrado / Math.max(1, totals.total_cobrado)) })), [report.top_products, seller, totals.total_cobrado]);
-
-  // Daily comparativo: vendedor (escalado) vs promedio sucursal / empresa
-  const dailyTriple = useMemo(() => {
-    const avgPerBranchSeller = Math.max(1, branchCount);
-    return sellerDaily.map((d) => ({
-      fecha: d.fecha,
-      vendedor: d.total_cobrado,
-      sucursal: (report.daily_series.find((g) => g.fecha === d.fecha)?.total_cobrado ?? 0) / avgPerBranchSeller,
-      empresa: (report.daily_series.find((g) => g.fecha === d.fecha)?.total_cobrado ?? 0) / Math.max(1, companyCount),
-    }));
-  }, [sellerDaily, report.daily_series, branchCount, companyCount]);
-
-  const ticketProm = seller.tickets ? Math.round(seller.total_cobrado / seller.tickets) : 0;
-  const prevTickets = prevSellerDelta?.delta?.tickets?.comparado ?? 0;
-  const prevTicketProm = prevTickets ? Math.round((prevSellerDelta?.delta?.total_cobrado?.comparado ?? 0) / prevTickets) : 0;
+  const dailyData = profile.daily_series.map((d) => ({
+    fecha: d.fecha, vendedor: d.total_cobrado, sucursal: d.sucursal_promedio, empresa: d.empresa_promedio,
+  }));
 
   return (
     <div className="space-y-5">
@@ -1079,66 +1171,85 @@ function ProfileTab({
                 <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--border)] bg-[color:var(--surface-2)] px-2.5 py-0.5 text-[11px] font-bold text-[color:var(--text-2)]">
                   {seller.sucursales && seller.sucursales.length > 1 ? `${branchName} +${seller.sucursales.length - 1}` : branchName}
                 </span>
-                <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold text-[color:var(--chart-positive)]" style={{ background: 'color-mix(in oklch, var(--chart-positive) 14%, transparent)' }}>
-                  <Trophy size={11} /> #{rankBranch} de {branchCount}
-                </span>
-                <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--border)] bg-[color:var(--surface-2)] px-2.5 py-0.5 text-[11px] font-bold text-[color:var(--text-2)]">
-                  #{rankCompany} de {companyCount} en la empresa
-                </span>
+                {rankBranch > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold text-[color:var(--chart-positive)]" style={{ background: 'color-mix(in oklch, var(--chart-positive) 14%, transparent)' }}>
+                    <Trophy size={11} /> #{rankBranch} de {branchCount}
+                  </span>
+                )}
+                {rankCompany > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--border)] bg-[color:var(--surface-2)] px-2.5 py-0.5 text-[11px] font-bold text-[color:var(--text-2)]">
+                    #{rankCompany} de {companyCount} en la empresa
+                  </span>
+                )}
               </div>
             </div>
           </div>
-          <div className="w-64">
-            <div className="mb-1 text-[10px] font-bold uppercase tracking-widest text-[color:var(--text-3)]">Cambiar vendedor</div>
-            <select value={sellerId} onChange={(e) => onChangeSeller(e.target.value)} className="w-full rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] px-3 py-2 text-sm text-[color:var(--text)] outline-none focus:border-[color:var(--chart-blue)]">
-              {report.sellers.map((s) => <option key={s.vendedor_normalized} value={s.vendedor_normalized}>{s.vendedor}</option>)}
-            </select>
-          </div>
+          {SellerSwitcher}
         </div>
 
         <div className="my-5 h-px bg-[color:var(--border)]" />
 
         <div className="grid gap-5 md:grid-cols-3">
-          <ParticipationBar
-            label="Participación en su sucursal"
-            value={branchParticipation}
-            color="var(--chart-blue)"
-            subtitle={`de ${money(branchTotalCobrado)}`}
-          />
-          <ParticipationBar
-            label="Participación en la empresa"
-            value={companyParticipation}
-            color="var(--chart-violet)"
-            subtitle={`de ${money(companyTotalCobrado)}`}
-          />
+          <ParticipationBar label="Participación en su sucursal" value={branchParticipation} color="var(--chart-blue)" subtitle={`de ${money(seller.sucursal_total_cobrado || 0)}`} />
+          <ParticipationBar label="Participación en la empresa" value={companyParticipation} color="var(--chart-violet)" subtitle={`de ${money(seller.empresa_total_cobrado || 0)}`} />
           <div className="space-y-2">
             <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[color:var(--text-3)]">Ranking</div>
             <div className="flex items-baseline gap-3">
-              <div className="text-5xl font-black text-[color:var(--chart-positive)]">#{rankBranch}</div>
+              <div className="text-5xl font-black text-[color:var(--chart-positive)]">#{rankBranch || '-'}</div>
               <div className="text-xs leading-tight text-[color:var(--text-3)]">en {branchName}<br />(de {branchCount} vendedores)</div>
             </div>
-            <div className="text-xs text-[color:var(--text-3)]">Empresa: <span className="font-black text-[color:var(--text)]">#{rankCompany} / {companyCount}</span></div>
+            <div className="text-xs text-[color:var(--text-3)]">Empresa: <span className="font-black text-[color:var(--text)]">#{rankCompany || '-'} / {companyCount}</span></div>
           </div>
         </div>
       </div>
 
-      {/* KPIs personales — mismo grid responsive */}
-      <div className="grid gap-2.5 grid-cols-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4 xl:grid-cols-8">
-        <KpiCard label="Cobrado"         accent="positive" value={seller.total_cobrado} prev={prevSellerDelta?.delta?.total_cobrado?.comparado} format={money} />
-        <KpiCard label="Unidades"        accent="blue"     value={seller.unidades}      prev={prevSellerDelta?.delta?.unidades?.comparado}      format={num} />
-        <KpiCard label="Tickets"         accent="amber"    value={seller.tickets}       prev={prevSellerDelta?.delta?.tickets?.comparado}       format={num} />
-        <KpiCard label="Ticket promedio" accent="teal"     value={ticketProm}           prev={prevTicketProm}                                    format={money} />
-        <KpiCard label="Vendido"         accent="violet"   value={seller.total_vendido} prev={prevSellerDelta?.delta?.total_vendido?.comparado} format={money} />
-        <KpiCard label="Part. sucursal"  accent="blue"     value={branchParticipation} format={(n) => `${n.toFixed(1)}%`} />
-        <KpiCard label="Señas"           accent="amber"    value={seller.sena_tickets || 0} prev={prevSellerDelta?.delta?.sena_tickets?.comparado} format={num} />
-        <KpiCard label="Saldo señas"     accent="negative" value={seller.sena_saldo_pendiente || 0} prev={prevSellerDelta?.delta?.sena_saldo_pendiente?.comparado} format={money} invertDelta />
+      {/* ── PANEL DE COACHING ─────────────────────────────────────────── */}
+      <div>
+        <div className="mb-2 flex items-center gap-2">
+          <Lightbulb size={15} className="text-[color:var(--chart-amber)]" />
+          <h3 className="text-sm font-black uppercase tracking-wide text-[color:var(--text-2)]">Para la charla — qué está pasando</h3>
+          <span className="text-xs text-[color:var(--text-3)]">vs período anterior y vs su sucursal</span>
+        </div>
+        {totalInsights === 0 ? (
+          <div className="rounded-2xl border border-dashed border-[color:var(--border)] p-6 text-center text-xs text-[color:var(--text-3)]">
+            Sin señales destacadas en este período. Sus números están en línea con el promedio.
+          </div>
+        ) : (
+          <div className="grid gap-4 lg:grid-cols-3">
+            <CoachingColumn title="Fortalezas" tone="positive" icon={<CheckCircle2 size={14} />} items={insights.fortalezas} emptyText="Sin fortalezas marcadas este período." />
+            <CoachingColumn title="Para mejorar" tone="amber" icon={<Target size={14} />} items={insights.oportunidades} emptyText="Nada puntual para mejorar." />
+            <CoachingColumn title="Alertas" tone="negative" icon={<AlertTriangle size={14} />} items={insights.alertas} emptyText="Sin alertas. Bien ahí." />
+          </div>
+        )}
       </div>
 
-      {/* Evolución triple */}
+      {/* vs promedio de la sucursal — métricas de foco */}
+      <div>
+        <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.18em] text-[color:var(--text-3)]">Cómo viene vs el promedio de {branchName}</div>
+        <BenchmarkStrip rows={[
+          { label: 'Cobrado', val: seller.total_cobrado, ref: benchSuc.total_cobrado, fmt: money, refLabel: 'Promedio vendedor' },
+          { label: 'Ticket promedio', val: seller.ticket_promedio, ref: benchSuc.ticket_promedio, fmt: money, refLabel: 'Promedio sucursal' },
+          { label: 'Unidades por ticket', val: seller.unidades_por_ticket, ref: benchSuc.unidades_por_ticket, fmt: (n) => n.toFixed(2), refLabel: 'Promedio sucursal' },
+        ]} />
+      </div>
+
+      {/* KPIs personales — con delta vs período anterior */}
+      <div className="grid gap-2.5 grid-cols-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4 xl:grid-cols-8">
+        <KpiCard label="Cobrado"         accent="positive" value={seller.total_cobrado} prev={prevOf('total_cobrado')} format={money} />
+        <KpiCard label="Unidades"        accent="blue"     value={seller.unidades}      prev={prevOf('unidades')}      format={num} />
+        <KpiCard label="Tickets"         accent="amber"    value={seller.tickets}       prev={prevOf('tickets')}       format={num} />
+        <KpiCard label="Ticket promedio" accent="teal"     value={seller.ticket_promedio} prev={prevOf('ticket_promedio')} format={money} />
+        <KpiCard label="U. por ticket"   accent="violet"   value={seller.unidades_por_ticket} format={(n) => n.toFixed(2)} />
+        <KpiCard label="Part. sucursal"  accent="blue"     value={branchParticipation} format={(n) => `${n.toFixed(1)}%`} />
+        <KpiCard label="Señas"           accent="amber"    value={seller.sena_tickets || 0} prev={prevOf('sena_tickets')} format={num} />
+        <KpiCard label="Saldo señas"     accent="negative" value={seller.sena_saldo_pendiente || 0} prev={prevOf('sena_saldo_pendiente')} format={money} invertDelta />
+      </div>
+
+      {/* Evolución triple — datos REALES del vendedor */}
       <div className="grid gap-4 lg:grid-cols-3">
         <ChartCard title="Evolución diaria personal" subtitle="vs promedio sucursal / empresa" className="lg:col-span-2">
           <ResponsiveContainer width="100%" height={260}>
-            <LineChart data={dailyTriple}>
+            <LineChart data={dailyData}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
               <XAxis dataKey="fecha" stroke="var(--text-3)" tick={{ fontSize: 11 }} />
               <YAxis stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
@@ -1149,26 +1260,52 @@ function ProfileTab({
               <Line type="monotone" dataKey="empresa" name="Prom. empresa" stroke="var(--chart-ghost)" strokeWidth={2} strokeDasharray="2 3" dot={false} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={240} animationEasing={CHART_ANIM.easing} />
             </LineChart>
           </ResponsiveContainer>
-          <p className="mt-2 text-[10px] text-[color:var(--text-3)]">
-            * Datos por vendedor derivados proporcionalmente del global (el backend aún no expone breakdown por vendedor).
-          </p>
         </ChartCard>
 
-        <ChartCard title="Mix por categoría" subtitle="5 grandes líneas comerciales">
-          <CategoryBars data={sellerCategory} />
+        <ChartCard title="Mix por categoría" subtitle="lo que vende, real">
+          <CategoryBars data={profile.breakdowns.category_mix} />
         </ChartCard>
       </div>
 
-      {/* Marcas + top productos */}
+      {/* Marcas + top productos — REALES */}
       <div className="grid gap-4 lg:grid-cols-2">
-        <ChartCard title="Marcas que más vende" subtitle="su mix de marcas">
-          <SellerBrandBars data={sellerBrand} />
+        <ChartCard title="Marcas que más vende" subtitle="su mix real de marcas">
+          <SellerBrandBars data={profile.breakdowns.brand_mix.slice(0, 8)} />
         </ChartCard>
 
         <ChartCard title="Top productos del vendedor" subtitle="lo que empuja sus números">
-          <TopProductsList products={sellerTopProds} totalCobrado={seller.total_cobrado} />
+          <TopProductsList products={profile.breakdowns.top_products.slice(0, 6)} totalCobrado={seller.total_cobrado} />
         </ChartCard>
       </div>
+
+      {/* Qué cambió vs período anterior */}
+      {hasPrev && profile.previous && (profile.previous.brand_shifts.length > 0 || profile.previous.category_shifts.length > 0) && (
+        <ChartCard title="Qué cambió vs período anterior" subtitle={`${profile.previous.filters.fecha_desde} a ${profile.previous.filters.fecha_hasta}`}>
+          <div className="grid gap-5 md:grid-cols-2">
+            {([['Marcas', profile.previous.brand_shifts], ['Categorías', profile.previous.category_shifts]] as const).map(([titulo, shifts]) => (
+              <div key={titulo}>
+                <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-[color:var(--text-3)]">{titulo}</div>
+                <ul className="space-y-1.5">
+                  {shifts.slice(0, 5).map((s) => {
+                    const up = s.delta >= 0;
+                    const color = up ? 'var(--chart-positive)' : 'var(--chart-negative)';
+                    return (
+                      <li key={s.name} className="flex items-center justify-between gap-2 text-sm">
+                        <span className="truncate text-[color:var(--text-2)]">{s.name}</span>
+                        <span className="inline-flex shrink-0 items-center gap-1 font-bold tabular-nums" style={{ color }}>
+                          {up ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
+                          {money(Math.abs(s.delta))}
+                          {s.delta_pct != null && <span className="text-[10px] text-[color:var(--text-3)]">({up ? '+' : ''}{s.delta_pct.toFixed(0)}%)</span>}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </ChartCard>
+      )}
     </div>
   );
 }

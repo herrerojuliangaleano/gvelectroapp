@@ -15,6 +15,7 @@ import type {
   SalesBIStats,
   SalesBISellersReport,
   SalesBISellersCompare,
+  SalesBISellerProfile,
   SalesBISellersOptions,
   SalesBICommercialAnalyzeResponse,
   SalesBICommercialBatch,
@@ -975,6 +976,20 @@ export async function fetchSalesBISellersCompare(params: {
   vendedores?: string;
 }): Promise<SalesBISellersCompare> {
   return request(`/api/sales-bi/sellers/compare${buildQs(params)}`);
+}
+
+export async function fetchSalesBISellerProfile(params: {
+  vendedor: string;
+  fecha_desde?: string;
+  fecha_hasta?: string;
+  sucursal?: string;
+  sucursales?: string;
+  empresa?: string;
+  tipo?: string;
+  compare_desde?: string;
+  compare_hasta?: string;
+}): Promise<SalesBISellerProfile> {
+  return request(`/api/sales-bi/sellers/profile${buildQs(params)}`);
 }
 
 export async function exportSalesBISellersPdf(payload: {
