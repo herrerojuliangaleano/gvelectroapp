@@ -733,7 +733,7 @@ export interface SalesBISenaTicket {
   total_vendido: number;
   monto_cobrado: number;
   saldo: number;
-  productos: { producto: string; marca: string; cantidad: number; total_cobrado: number }[];
+  productos: { producto: string; marca: string; categoria: string; cantidad: number; total_cobrado: number }[];
 }
 export interface SalesBISellerProfile {
   found: boolean;

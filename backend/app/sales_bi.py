@@ -2530,6 +2530,7 @@ def build_seller_profile(
         t["saldo"] += _num(record.saldo)
         t["productos"].append({
             "producto": str(record.producto or ""), "marca": str(record.marca or ""),
+            "categoria": str(record.categoria or "Sin categoría"),
             "cantidad": cantidad, "total_cobrado": round(_num(record.total_cobrado), 2),
         })
     senas_detail = []

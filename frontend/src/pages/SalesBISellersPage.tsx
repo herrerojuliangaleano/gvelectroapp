@@ -1055,32 +1055,34 @@ function CoachingColumn({
   );
 }
 
-// KPI compacto (sin sparkline): valor + delta vs período anterior (opcional) +
-// nota chica (ej. promedio de la sucursal). Ahorra mucho espacio vertical.
-function MiniKpi({ label, value, deltaPct, note, invert = false }: {
-  label: string;
-  value: string;
-  deltaPct?: number | null;
-  note?: string;
-  invert?: boolean;
+// Lista rankeada con barra de proporción — para el resumen comercial del modal.
+function RankedList({ rows, fmt, color = 'var(--chart-blue)', empty }: {
+  rows: { label: string; sub?: string; value: number }[];
+  fmt: (n: number) => string;
+  color?: string;
+  empty: string;
 }) {
-  const has = typeof deltaPct === 'number' && Number.isFinite(deltaPct);
-  const up = (deltaPct ?? 0) >= 0;
-  const good = invert ? !up : up;
-  const color = good ? 'var(--chart-positive)' : 'var(--chart-negative)';
+  const max = Math.max(1, ...rows.map((r) => r.value));
+  const total = rows.reduce((a, r) => a + r.value, 0) || 1;
+  if (rows.length === 0) return <p className="text-xs text-[color:var(--text-3)]">{empty}</p>;
   return (
-    <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface)]/60 p-3">
-      <div className="flex items-center justify-between gap-1">
-        <span className="truncate text-[10px] font-semibold uppercase tracking-wide text-[color:var(--text-3)]">{label}</span>
-        {has && (
-          <span className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-bold tabular-nums" style={{ color }}>
-            {up ? <ArrowUpRight size={11} /> : <ArrowDownRight size={11} />}{up ? '+' : ''}{deltaPct!.toFixed(0)}%
-          </span>
-        )}
-      </div>
-      <div className="mt-1 text-xl font-black tracking-tight tabular-nums text-[color:var(--text)]">{value}</div>
-      {note && <div className="mt-0.5 truncate text-[10px] text-[color:var(--text-3)]">{note}</div>}
-    </div>
+    <ul className="space-y-2">
+      {rows.map((r, i) => (
+        <li key={i}>
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="min-w-0 truncate text-sm text-[color:var(--text)]">
+              {r.label}{r.sub && <span className="ml-1 text-[11px] text-[color:var(--text-3)]">· {r.sub}</span>}
+            </span>
+            <span className="shrink-0 text-sm font-bold tabular-nums text-[color:var(--text)]">
+              {fmt(r.value)}<span className="ml-1 text-[10px] font-normal text-[color:var(--text-3)]">{(r.value / total * 100).toFixed(0)}%</span>
+            </span>
+          </div>
+          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[color:var(--surface-2)]">
+            <div className="h-full rounded-full" style={{ width: `${Math.max(2, r.value / max * 100)}%`, background: color }} />
+          </div>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -1112,7 +1114,7 @@ function ProfileTab({
   const [profile, setProfile] = useState<SalesBISellerProfile | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [showSenas, setShowSenas] = useState(false);
+  const [detail, setDetail] = useState<'cobrado' | 'unidades' | 'tickets' | 'senas' | null>(null);
   // La comparación vs período anterior respeta el toggle global "Comparar contra
   // otro período". Si está activo, usa el rango que eligió el usuario (o el
   // período anterior del mismo largo como fallback).
@@ -1178,14 +1180,52 @@ function ProfileTab({
   const rankCompany = seller.rank_empresa || 0;
   const branchParticipation = seller.sucursal_participacion_pct ?? seller.participacion_pct;
   const companyParticipation = seller.empresa_participacion_pct ?? seller.participacion_pct;
-  const dpct = (m: string): number | null => profile.previous?.delta?.[m]?.delta_pct ?? null;
+  const prevOf = (m: string) => profile.previous?.delta?.[m]?.comparado;
   const hasPrev = !!profile.previous;
   const insights = profile.insights;
   const totalInsights = insights.fortalezas.length + insights.oportunidades.length + insights.alertas.length;
   const senas = profile.senas_detail;
-  const senasSumVendido = senas.reduce((a, s) => a + s.total_vendido, 0);
   const senasSumCobrado = senas.reduce((a, s) => a + s.monto_cobrado, 0);
   const senasSumSaldo = senas.reduce((a, s) => a + s.saldo, 0);
+
+  // Resumen comercial para el modal de detalle: por categoría + las que más vendió.
+  type Row = { label: string; sub?: string; value: number };
+  const bk = profile.breakdowns;
+  function compFor(metric: 'cobrado' | 'unidades' | 'tickets' | 'senas') {
+    if (metric === 'cobrado') return {
+      title: 'Cobrado', color: 'var(--chart-positive)', fmt: money,
+      headline: `${money(seller.total_cobrado)} cobrado · ${num(seller.unidades)} unidades`,
+      cats: bk.category_mix.map((c) => ({ label: c.name, value: c.total_cobrado })) as Row[],
+      prods: bk.top_products.map((p) => ({ label: p.producto, sub: p.marca, value: p.total_cobrado })) as Row[],
+    };
+    if (metric === 'unidades') return {
+      title: 'Unidades vendidas', color: 'var(--chart-blue)', fmt: num,
+      headline: `${num(seller.unidades)} unidades en ${num(seller.tickets)} tickets`,
+      cats: [...bk.category_mix].sort((a, b) => b.unidades - a.unidades).map((c) => ({ label: c.name, value: c.unidades })) as Row[],
+      prods: [...bk.top_products].sort((a, b) => b.unidades - a.unidades).map((p) => ({ label: p.producto, sub: p.marca, value: p.unidades })) as Row[],
+    };
+    if (metric === 'tickets') return {
+      title: 'Tickets', color: 'var(--chart-amber)', fmt: num,
+      headline: `${num(seller.tickets)} tickets · ticket promedio ${money(seller.ticket_promedio)}`,
+      cats: [...bk.category_mix].sort((a, b) => (b.tickets || 0) - (a.tickets || 0)).map((c) => ({ label: c.name, value: c.tickets || 0 })) as Row[],
+      prods: [...bk.top_products].sort((a, b) => (b.tickets || 0) - (a.tickets || 0)).map((p) => ({ label: p.producto, sub: p.marca, value: p.tickets || 0 })) as Row[],
+    };
+    // señas — resumen comercial (qué categorías/productos está señando)
+    const byCat: Record<string, number> = {};
+    const byProd: Record<string, Row> = {};
+    senas.forEach((s) => s.productos.forEach((p) => {
+      byCat[p.categoria] = (byCat[p.categoria] || 0) + p.total_cobrado;
+      if (!byProd[p.producto]) byProd[p.producto] = { label: p.producto, sub: p.marca, value: 0 };
+      byProd[p.producto].value += p.total_cobrado;
+    }));
+    return {
+      title: 'Señas', color: 'var(--chart-amber)', fmt: money,
+      headline: `${senas.length} señas · cobrado ${money(senasSumCobrado)} · saldo pendiente ${money(senasSumSaldo)}`,
+      cats: Object.entries(byCat).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value) as Row[],
+      prods: Object.values(byProd).sort((a, b) => b.value - a.value) as Row[],
+    };
+  }
+  const comp = detail ? compFor(detail) : null;
 
   const dailyData = profile.daily_series.map((d) => ({
     fecha: d.fecha, vendedor: d.total_cobrado, sucursal: d.sucursal_promedio, empresa: d.empresa_promedio,
@@ -1257,19 +1297,26 @@ function ProfileTab({
         )}
       </div>
 
-      {/* KPIs compactos — nota = promedio de su sucursal. El % vs período
-          anterior solo aparece si está activo "Comparar contra otro período". */}
-      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
-        <MiniKpi label="Cobrado" value={money(seller.total_cobrado)} deltaPct={dpct('total_cobrado')} note={`Prom. ${branchName}: ${money(benchSuc.total_cobrado)}`} />
-        <MiniKpi label="Unidades" value={num(seller.unidades)} deltaPct={dpct('unidades')} />
-        <MiniKpi label="Tickets" value={num(seller.tickets)} deltaPct={dpct('tickets')} />
-        <MiniKpi label="Ticket promedio" value={money(seller.ticket_promedio)} deltaPct={dpct('ticket_promedio')} note={`Prom. suc: ${money(benchSuc.ticket_promedio)}`} />
-        <MiniKpi label="U. por ticket" value={seller.unidades_por_ticket.toFixed(2)} note={`Prom. suc: ${benchSuc.unidades_por_ticket.toFixed(2)}`} />
-        <ClickableKpi onClick={() => setShowSenas(true)} disabled={!senas.length}>
-          <MiniKpi label="Señas" value={num(seller.sena_tickets || 0)} deltaPct={dpct('sena_tickets')} />
+      {/* KPIs — con sparkline. Nota = promedio de su sucursal. El % vs período
+          anterior solo aparece si está activo "Comparar contra otro período".
+          Cobrado/Unidades/Tickets/Señas abren un modal con el resumen comercial. */}
+      <div className="grid gap-2.5 grid-cols-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4 xl:grid-cols-7">
+        <ClickableKpi onClick={() => setDetail('cobrado')}>
+          <KpiCard label="Cobrado" accent="positive" value={seller.total_cobrado} prev={prevOf('total_cobrado')} format={money} note={`Prom. ${branchName}: ${money(benchSuc.total_cobrado)}`} />
         </ClickableKpi>
-        <ClickableKpi onClick={() => setShowSenas(true)} disabled={!senas.length}>
-          <MiniKpi label="Saldo señas" value={money(seller.sena_saldo_pendiente || 0)} deltaPct={dpct('sena_saldo_pendiente')} invert />
+        <ClickableKpi onClick={() => setDetail('unidades')}>
+          <KpiCard label="Unidades" accent="blue" value={seller.unidades} prev={prevOf('unidades')} format={num} />
+        </ClickableKpi>
+        <ClickableKpi onClick={() => setDetail('tickets')}>
+          <KpiCard label="Tickets" accent="amber" value={seller.tickets} prev={prevOf('tickets')} format={num} />
+        </ClickableKpi>
+        <KpiCard label="Ticket promedio" accent="teal" value={seller.ticket_promedio} prev={prevOf('ticket_promedio')} format={money} note={`Prom. suc: ${money(benchSuc.ticket_promedio)}`} />
+        <KpiCard label="U. por ticket" accent="violet" value={seller.unidades_por_ticket} format={(n) => n.toFixed(2)} note={`Prom. suc: ${benchSuc.unidades_por_ticket.toFixed(2)}`} />
+        <ClickableKpi onClick={() => setDetail('senas')} disabled={!senas.length}>
+          <KpiCard label="Señas" accent="amber" value={seller.sena_tickets || 0} prev={prevOf('sena_tickets')} format={num} />
+        </ClickableKpi>
+        <ClickableKpi onClick={() => setDetail('senas')} disabled={!senas.length}>
+          <KpiCard label="Saldo señas" accent="negative" value={seller.sena_saldo_pendiente || 0} prev={prevOf('sena_saldo_pendiente')} format={money} invertDelta />
         </ClickableKpi>
       </div>
       {!hasPrev && (
@@ -1340,50 +1387,20 @@ function ProfileTab({
         </ChartCard>
       )}
 
-      {/* Modal de detalle de señas — cómo se compone la métrica */}
-      <ErpModal open={showSenas} onClose={() => setShowSenas(false)} size="lg" title={`Señas de ${seller.vendedor}`}>
-        {senas.length === 0 ? (
-          <p className="text-sm text-[color:var(--text-3)]">No hay señas en este período.</p>
-        ) : (
-          <div className="space-y-3">
-            <p className="text-xs text-[color:var(--text-3)]">
-              {senas.length} señas · cobrado {money(senasSumCobrado)} · saldo pendiente{' '}
-              <b className="text-[color:var(--chart-negative)]">{money(senasSumSaldo)}</b>
-            </p>
-            <div className="max-h-[60vh] overflow-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-[color:var(--surface)]">
-                  <tr className="border-b border-[color:var(--border)] text-left text-[11px] uppercase tracking-wide text-[color:var(--text-3)]">
-                    <th className="py-2 pr-3">Remito / productos</th>
-                    <th className="py-2 pr-3">Fecha</th>
-                    <th className="py-2 pr-3 text-right">Vendido</th>
-                    <th className="py-2 pr-3 text-right">Cobrado</th>
-                    <th className="py-2 text-right">Saldo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {senas.map((s, i) => (
-                    <tr key={i} className="border-b border-[color:var(--border)]/50 align-top">
-                      <td className="py-2 pr-3">
-                        <div className="font-bold text-[color:var(--text)]">{s.remito || '—'}</div>
-                        <div className="text-[11px] text-[color:var(--text-3)]">{s.productos.map((p) => `${p.cantidad}× ${p.producto}`).join(' · ')}</div>
-                      </td>
-                      <td className="whitespace-nowrap py-2 pr-3 text-[color:var(--text-2)]">{s.fecha}</td>
-                      <td className="py-2 pr-3 text-right tabular-nums text-[color:var(--text-2)]">{money(s.total_vendido)}</td>
-                      <td className="py-2 pr-3 text-right tabular-nums text-[color:var(--chart-positive)]">{money(s.monto_cobrado)}</td>
-                      <td className="py-2 text-right font-bold tabular-nums text-[color:var(--chart-negative)]">{money(s.saldo)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="font-black text-[color:var(--text)]">
-                    <td className="py-2 pr-3" colSpan={2}>Total</td>
-                    <td className="py-2 pr-3 text-right tabular-nums">{money(senasSumVendido)}</td>
-                    <td className="py-2 pr-3 text-right tabular-nums">{money(senasSumCobrado)}</td>
-                    <td className="py-2 text-right tabular-nums">{money(senasSumSaldo)}</td>
-                  </tr>
-                </tfoot>
-              </table>
+      {/* Modal de detalle — resumen comercial (por categoría + las que más vendió) */}
+      <ErpModal open={!!detail} onClose={() => setDetail(null)} size="lg" title={comp ? `${comp.title} — ${seller.vendedor}` : ''}>
+        {comp && (
+          <div className="space-y-4">
+            {comp.headline && <p className="text-xs text-[color:var(--text-3)]">{comp.headline}</p>}
+            <div className="grid gap-6 md:grid-cols-2">
+              <div>
+                <div className="mb-2.5 text-[11px] font-black uppercase tracking-wide text-[color:var(--text-3)]">Por categoría</div>
+                <RankedList rows={comp.cats.slice(0, 8)} fmt={comp.fmt} color={comp.color} empty="Sin datos en este período." />
+              </div>
+              <div>
+                <div className="mb-2.5 text-[11px] font-black uppercase tracking-wide text-[color:var(--text-3)]">Las que más vendió</div>
+                <RankedList rows={comp.prods.slice(0, 8)} fmt={comp.fmt} color={comp.color} empty="Sin datos en este período." />
+              </div>
             </div>
           </div>
         )}

@@ -271,7 +271,7 @@ const ACCENT_TO_COLOR: Record<KpiAccent, string> = {
 };
 
 export function KpiCard({
-  label, value, prev, accent = 'blue', format = (n) => num(n), invertDelta = false,
+  label, value, prev, accent = 'blue', format = (n) => num(n), invertDelta = false, note,
 }: {
   label: string;
   value: number;
@@ -280,6 +280,8 @@ export function KpiCard({
   format?: (n: number) => string;
   /** Si true, un delta negativo se muestra en verde (ej. saldo, costos). */
   invertDelta?: boolean;
+  /** Línea chica bajo el valor (ej. "Prom. sucursal: $X"). */
+  note?: string;
 }) {
   const safePrev = typeof prev === 'number' && Number.isFinite(prev) ? prev : 0;
   const rawPct = safePrev !== 0 ? ((value - safePrev) / Math.abs(safePrev)) * 100 : 0;
@@ -312,6 +314,7 @@ export function KpiCard({
         )}
       </div>
       <div className="mt-1 text-base font-black tracking-tight text-[color:var(--text)] tabular-nums sm:mt-1.5 sm:text-2xl">{format(value)}</div>
+      {note && <div className="mt-0.5 truncate text-[10px] text-[color:var(--text-3)]">{note}</div>}
       <div className="mt-2 h-9 sm:mt-3 sm:h-12">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={data} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
