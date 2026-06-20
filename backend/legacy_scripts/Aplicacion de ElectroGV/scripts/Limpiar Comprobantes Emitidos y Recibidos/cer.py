@@ -196,17 +196,6 @@ def etiqueta_mes(fecha: date) -> str:
     return f"{meses[fecha.month - 1]}-{str(fecha.year)[-2:]}"
 
 
-def formato_importe_ar(value: Any) -> str:
-    try:
-        numero = float(value or 0)
-    except Exception:
-        numero = 0.0
-    signo = "-" if numero < 0 else ""
-    base = f"{abs(numero):,.2f}"
-    base = base.replace(",", "_").replace(".", ",").replace("_", ".")
-    return f"{signo}{base}"
-
-
 def detectar_fila_encabezado(
     df: pd.DataFrame,
     palabras_clave: list[str],
@@ -1010,141 +999,143 @@ def preparar_hojas_dinamicas(sheets_service, spreadsheet_id: str, nombres_hojas:
     return mapa
 
 
-def aplicar_formato_resumen_visual(
+def aplicar_formato_tablas_periodo(
     sheets_service,
     spreadsheet_id: str,
     sheet_id: int,
-    bloques: int,
-    entradas: int,
+    n_cols: int,
+    n_rows: int,
+    section_rows: list[int],
+    header_rows: list[int],
+    highlight_rows: list[int],
+    numeric_start_col: int = 1,
 ) -> None:
-    requests: list[dict[str, Any]] = []
-    total_cols = bloques * 3 - 1
-    total_rows = 1 + entradas * 2
+    end_col = max(n_cols, 1)
+    requests: list[dict[str, Any]] = [
+        {
+            "updateSheetProperties": {
+                "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 0}},
+                "fields": "gridProperties.frozenRowCount",
+            }
+        },
+        {
+            "autoResizeDimensions": {
+                "dimensions": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 0, "endIndex": end_col}
+            }
+        },
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 1},
+                "properties": {"pixelSize": 260},
+                "fields": "pixelSize",
+            }
+        },
+        {
+            "updateBorders": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": n_rows, "startColumnIndex": 0, "endColumnIndex": end_col},
+                "top": {"style": "SOLID", "width": 1, "color": {"red": 0.75, "green": 0.75, "blue": 0.75}},
+                "bottom": {"style": "SOLID", "width": 1, "color": {"red": 0.75, "green": 0.75, "blue": 0.75}},
+                "left": {"style": "SOLID", "width": 1, "color": {"red": 0.75, "green": 0.75, "blue": 0.75}},
+                "right": {"style": "SOLID", "width": 1, "color": {"red": 0.75, "green": 0.75, "blue": 0.75}},
+                "innerHorizontal": {"style": "SOLID", "width": 1, "color": {"red": 0.86, "green": 0.86, "blue": 0.86}},
+                "innerVertical": {"style": "SOLID", "width": 1, "color": {"red": 0.86, "green": 0.86, "blue": 0.86}},
+            }
+        },
+    ]
 
-    for bloque in range(bloques):
-        col = bloque * 3
-        end_col = col + 2
+    if n_cols > numeric_start_col and n_rows > 1:
+        requests.append(
+            {
+                "repeatCell": {
+                    "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": n_rows, "startColumnIndex": numeric_start_col, "endColumnIndex": end_col},
+                    "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "#,##0.00"}}},
+                    "fields": "userEnteredFormat.numberFormat",
+                }
+            }
+        )
 
+        requests.append(
+            {
+                "updateDimensionProperties": {
+                    "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": numeric_start_col, "endIndex": end_col},
+                    "properties": {"pixelSize": 185},
+                    "fields": "pixelSize",
+                }
+            }
+        )
+
+    for row in section_rows:
         requests.extend([
             {
                 "mergeCells": {
-                    "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1, "startColumnIndex": col, "endColumnIndex": end_col},
+                    "range": {"sheetId": sheet_id, "startRowIndex": row, "endRowIndex": row + 1, "startColumnIndex": 0, "endColumnIndex": end_col},
                     "mergeType": "MERGE_ALL",
                 }
             },
             {
                 "repeatCell": {
-                    "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1, "startColumnIndex": col, "endColumnIndex": end_col},
+                    "range": {"sheetId": sheet_id, "startRowIndex": row, "endRowIndex": row + 1, "startColumnIndex": 0, "endColumnIndex": end_col},
                     "cell": {
                         "userEnteredFormat": {
-                            "backgroundColor": {"red": 1.0, "green": 0.92, "blue": 0.98},
+                            "backgroundColor": {"red": 0.90, "green": 0.90, "blue": 0.90},
                             "horizontalAlignment": "CENTER",
                             "verticalAlignment": "MIDDLE",
-                            "textFormat": {"bold": True, "italic": True, "fontSize": 12},
+                            "textFormat": {"bold": True, "italic": True, "fontSize": 11},
                         }
                     },
                     "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)",
                 }
             },
             {
-                "updateBorders": {
-                    "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": total_rows, "startColumnIndex": col, "endColumnIndex": end_col},
-                    "top": {"style": "SOLID", "width": 1, "color": {"red": 0, "green": 0, "blue": 0}},
-                    "bottom": {"style": "SOLID", "width": 1, "color": {"red": 0, "green": 0, "blue": 0}},
-                    "left": {"style": "SOLID", "width": 1, "color": {"red": 0, "green": 0, "blue": 0}},
-                    "right": {"style": "SOLID", "width": 1, "color": {"red": 0, "green": 0, "blue": 0}},
-                    "innerHorizontal": {"style": "SOLID", "width": 1, "color": {"red": 0.75, "green": 0.75, "blue": 0.75}},
-                    "innerVertical": {"style": "SOLID", "width": 1, "color": {"red": 0.75, "green": 0.75, "blue": 0.75}},
-                }
-            },
-            {
                 "updateDimensionProperties": {
-                    "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": col, "endIndex": col + 1},
-                    "properties": {"pixelSize": 34},
-                    "fields": "pixelSize",
-                }
-            },
-            {
-                "updateDimensionProperties": {
-                    "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": col + 1, "endIndex": col + 2},
-                    "properties": {"pixelSize": 180},
+                    "range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": row, "endIndex": row + 1},
+                    "properties": {"pixelSize": 28},
                     "fields": "pixelSize",
                 }
             },
         ])
 
-        if bloque < bloques - 1:
-            requests.append({
+    for row in header_rows:
+        requests.extend([
+            {
+                "repeatCell": {
+                    "range": {"sheetId": sheet_id, "startRowIndex": row, "endRowIndex": row + 1, "startColumnIndex": 0, "endColumnIndex": end_col},
+                    "cell": {
+                        "userEnteredFormat": {
+                            "backgroundColor": {"red": 0.78, "green": 0.88, "blue": 1.0},
+                            "horizontalAlignment": "CENTER",
+                            "verticalAlignment": "MIDDLE",
+                            "wrapStrategy": "WRAP",
+                            "textFormat": {"bold": True},
+                        }
+                    },
+                    "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,wrapStrategy,textFormat)",
+                }
+            },
+            {
                 "updateDimensionProperties": {
-                    "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": col + 2, "endIndex": col + 3},
-                    "properties": {"pixelSize": 24},
+                    "range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": row, "endIndex": row + 1},
+                    "properties": {"pixelSize": 36},
                     "fields": "pixelSize",
                 }
-            })
+            },
+        ])
 
-        for idx in range(entradas):
-            row_label = 1 + idx * 2
-            row_value = row_label + 1
-            es_total = idx == entradas - 1
-
-            requests.extend([
-                {
-                    "mergeCells": {
-                        "range": {"sheetId": sheet_id, "startRowIndex": row_label, "endRowIndex": row_label + 1, "startColumnIndex": col, "endColumnIndex": end_col},
-                        "mergeType": "MERGE_ALL",
-                    }
-                },
-                {
-                    "repeatCell": {
-                        "range": {"sheetId": sheet_id, "startRowIndex": row_label, "endRowIndex": row_label + 1, "startColumnIndex": col, "endColumnIndex": end_col},
-                        "cell": {
-                            "userEnteredFormat": {
-                                "backgroundColor": {"red": 0.12, "green": 0.24, "blue": 0.46} if es_total else {"red": 0.86, "green": 0.86, "blue": 0.86},
-                                "horizontalAlignment": "CENTER",
-                                "verticalAlignment": "MIDDLE",
-                                "wrapStrategy": "WRAP",
-                                "textFormat": {"bold": True, "italic": True, "foregroundColor": {"red": 1, "green": 1, "blue": 1} if es_total else {"red": 0, "green": 0, "blue": 0}},
-                            }
-                        },
-                        "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,wrapStrategy,textFormat)",
-                    }
-                },
-                {
-                    "repeatCell": {
-                        "range": {"sheetId": sheet_id, "startRowIndex": row_value, "endRowIndex": row_value + 1, "startColumnIndex": col, "endColumnIndex": end_col},
-                        "cell": {
-                            "userEnteredFormat": {
-                                "backgroundColor": {"red": 0.95, "green": 0.98, "blue": 1.0} if es_total else {"red": 1, "green": 1, "blue": 1},
-                                "textFormat": {"bold": es_total, "italic": True},
-                                "verticalAlignment": "MIDDLE",
-                            }
-                        },
-                        "fields": "userEnteredFormat(backgroundColor,textFormat,verticalAlignment)",
-                    }
-                },
-                {
-                    "repeatCell": {
-                        "range": {"sheetId": sheet_id, "startRowIndex": row_value, "endRowIndex": row_value + 1, "startColumnIndex": col, "endColumnIndex": col + 1},
-                        "cell": {"userEnteredFormat": {"horizontalAlignment": "CENTER"}},
-                        "fields": "userEnteredFormat.horizontalAlignment",
-                    }
-                },
-                {
-                    "repeatCell": {
-                        "range": {"sheetId": sheet_id, "startRowIndex": row_value, "endRowIndex": row_value + 1, "startColumnIndex": col + 1, "endColumnIndex": col + 2},
-                        "cell": {"userEnteredFormat": {"horizontalAlignment": "RIGHT"}},
-                        "fields": "userEnteredFormat.horizontalAlignment",
-                    }
-                },
-            ])
-
-    if total_cols > 0:
-        requests.append({
-            "updateSheetProperties": {
-                "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 1}},
-                "fields": "gridProperties.frozenRowCount",
+    for row in highlight_rows:
+        requests.append(
+            {
+                "repeatCell": {
+                    "range": {"sheetId": sheet_id, "startRowIndex": row, "endRowIndex": row + 1, "startColumnIndex": 0, "endColumnIndex": end_col},
+                    "cell": {
+                        "userEnteredFormat": {
+                            "backgroundColor": {"red": 0.10, "green": 0.95, "blue": 0.10},
+                            "textFormat": {"bold": True},
+                        }
+                    },
+                    "fields": "userEnteredFormat(backgroundColor,textFormat)",
+                }
             }
-        })
+        )
 
     sheets_service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
 
@@ -1271,185 +1262,65 @@ def procesar_sucursal_rango_mensual(
     mapa = preparar_hojas_dinamicas(sheets_service, spreadsheet_id, hojas_a_crear)
     hojas_generadas: list[str] = []
 
-    def escribir_resultado(nombre_hoja: str, df: pd.DataFrame) -> None:
-        escribir_hoja(sheets_service, spreadsheet_id, nombre_hoja, df)
-        aplicar_formato_hoja(sheets_service, spreadsheet_id, mapa[nombre_hoja], len(df.columns), len(df) + 1, numeric_start_col=4)
+    def periodos_del_reporte() -> list[tuple[str, date, date]]:
+        items: list[tuple[str, date, date]] = [("TOTAL", range_start, range_end)]
+        for mes in meses:
+            mes_desde, mes_hasta = rango_mes_en_periodo(mes, range_start, range_end)
+            items.append((etiqueta_mes(mes), mes_desde, mes_hasta))
+        return items
+
+    def escribir_tablas_por_periodo(nombre_hoja: str, raw: pd.DataFrame, etiqueta: str, calcular, numeric_start_col: int = 1) -> None:
+        valores: list[list[Any]] = []
+        section_rows: list[int] = []
+        header_rows: list[int] = []
+        highlight_rows: list[int] = []
+        max_cols = 1
+
+        for periodo, desde, hasta in periodos_del_reporte():
+            df = calcular(filtrar_por_rango_fecha(raw, desde, hasta, f"{etiqueta} {periodo}"))
+            max_cols = max(max_cols, len(df.columns))
+
+            section_rows.append(len(valores))
+            valores.append([periodo])
+
+            header_rows.append(len(valores))
+            valores.append(list(df.columns))
+
+            if df.empty:
+                valores.append(["(sin movimientos)"])
+            else:
+                for _, row in df.iterrows():
+                    output_row = row.tolist()
+                    if "Concepto" in df.columns and "diferencia" in texto_compacto(row.get("Concepto", "")):
+                        highlight_rows.append(len(valores))
+                    valores.append(output_row)
+
+            valores.append([""])
+
+        padded = [row + [""] * (max_cols - len(row)) for row in valores]
+        valores_a_hoja(sheets_service, spreadsheet_id, nombre_hoja, padded)
+        aplicar_formato_tablas_periodo(
+            sheets_service,
+            spreadsheet_id,
+            mapa[nombre_hoja],
+            max_cols,
+            len(padded),
+            section_rows,
+            header_rows,
+            highlight_rows,
+            numeric_start_col=numeric_start_col,
+        )
         hojas_generadas.append(nombre_hoja)
-
-    def escribir_resumen_visual(nombre_hoja: str, metricas: list[dict[str, Any]]) -> None:
-        if not metricas:
-            return
-
-        entradas = len(metricas[0]["filas"])
-        columnas = len(metricas) * 3 - 1
-        valores = [["" for _ in range(columnas)] for _ in range(1 + entradas * 2)]
-
-        for idx, metrica in enumerate(metricas):
-            col = idx * 3
-            valores[0][col] = metrica["titulo"]
-            for row_idx, fila in enumerate(metrica["filas"]):
-                row_label = 1 + row_idx * 2
-                row_value = row_label + 1
-                valores[row_label][col] = fila["periodo"]
-                valores[row_value][col] = "$"
-                valores[row_value][col + 1] = formato_importe_ar(fila["valor"])
-
-        valores_a_hoja(sheets_service, spreadsheet_id, nombre_hoja, valores)
-        aplicar_formato_resumen_visual(sheets_service, spreadsheet_id, mapa[nombre_hoja], len(metricas), entradas)
-        hojas_generadas.append(nombre_hoja)
-
-    def agregar_periodo(df: pd.DataFrame, periodo: str, desde: date, hasta: date) -> pd.DataFrame:
-        salida = df.copy()
-        salida.insert(0, "Hasta", hasta.isoformat())
-        salida.insert(0, "Desde", desde.isoformat())
-        salida.insert(0, "Periodo", periodo)
-        return salida
-
-    def tabla_periodos(raw: pd.DataFrame, etiqueta: str, calcular) -> pd.DataFrame:
-        bloques: list[pd.DataFrame] = []
-
-        total_raw = filtrar_por_rango_fecha(raw, range_start, range_end, etiqueta)
-        bloques.append(agregar_periodo(calcular(total_raw), "TOTAL", range_start, range_end))
-
-        for mes in meses:
-            mes_desde, mes_hasta = rango_mes_en_periodo(mes, range_start, range_end)
-            mes_key = f"{mes.year}-{mes.month:02d}"
-            mes_raw = filtrar_por_rango_fecha(raw, mes_desde, mes_hasta, f"{etiqueta} {mes_key}")
-            bloques.append(agregar_periodo(calcular(mes_raw), mes_key, mes_desde, mes_hasta))
-
-        return pd.concat(bloques, ignore_index=True)
-
-    def valor_por_concepto(resumen: pd.DataFrame, concepto: str, columna: str) -> Any:
-        if resumen.empty or columna not in resumen.columns or "Concepto" not in resumen.columns:
-            return 0
-        concepto_key = texto_compacto(concepto)
-        for _, row in resumen.iterrows():
-            if texto_compacto(row.get("Concepto", "")) == concepto_key:
-                return row.get(columna, 0)
-        return 0
-
-    def metricas_visuales(
-        raw: pd.DataFrame,
-        etiqueta: str,
-        calcular,
-        specs: list[tuple[str, str]],
-        conceptos: list[tuple[str, str]],
-    ) -> list[dict[str, Any]]:
-        resultados: list[tuple[str, pd.DataFrame]] = []
-        for mes in meses:
-            mes_desde, mes_hasta = rango_mes_en_periodo(mes, range_start, range_end)
-            mes_key = f"{mes.year}-{mes.month:02d}"
-            mes_raw = filtrar_por_rango_fecha(raw, mes_desde, mes_hasta, f"{etiqueta} {mes_key}")
-            resultados.append((etiqueta_mes(mes), calcular(mes_raw)))
-
-        total_raw = filtrar_por_rango_fecha(raw, range_start, range_end, etiqueta)
-        resultados.append(("TOTAL", calcular(total_raw)))
-
-        metricas: list[dict[str, Any]] = []
-        for titulo, columna in specs:
-            filas = []
-            for periodo, resumen in resultados:
-                for subtitulo, concepto in conceptos:
-                    valor = valor_por_concepto(resumen, concepto, columna)
-                    filas.append({"periodo": f"{periodo} · {subtitulo}", "valor": valor})
-            metricas.append({"titulo": titulo, "filas": filas})
-        return metricas
-
-    def metricas_proveedores_visuales(raw: pd.DataFrame, etiqueta: str) -> list[dict[str, Any]]:
-        resultados: list[tuple[str, pd.DataFrame]] = []
-        for mes in meses:
-            mes_desde, mes_hasta = rango_mes_en_periodo(mes, range_start, range_end)
-            mes_key = f"{mes.year}-{mes.month:02d}"
-            mes_raw = filtrar_por_rango_fecha(raw, mes_desde, mes_hasta, f"{etiqueta} {mes_key}")
-            resultados.append((etiqueta_mes(mes), calcular_compras_por_proveedor(mes_raw)))
-
-        total_raw = filtrar_por_rango_fecha(raw, range_start, range_end, etiqueta)
-        resultados.append(("TOTAL", calcular_compras_por_proveedor(total_raw)))
-
-        proveedores: list[str] = []
-        seen: set[str] = set()
-        for _, resumen in resultados:
-            if resumen.empty or "Proveedor" not in resumen.columns:
-                continue
-            for proveedor in resumen["Proveedor"].astype(str).tolist():
-                key = texto_compacto(proveedor)
-                if key and key not in seen:
-                    seen.add(key)
-                    proveedores.append(proveedor)
-
-        specs = [
-            ("Neto por proveedor", [
-                ("Bruto", "Neto gravado comprobantes"),
-                ("NC", "Neto gravado notas crÃ©dito (3 y 8)"),
-                ("Neto", "Imp. Neto Gravado Total (neto)"),
-            ]),
-            ("IVA por proveedor", [
-                ("Bruto", "Total IVA comprobantes"),
-                ("NC", "Total IVA notas crÃ©dito (3 y 8)"),
-                ("Neto", "Total IVA neto"),
-            ]),
-        ]
-
-        metricas: list[dict[str, Any]] = []
-        for titulo, columnas in specs:
-            filas = []
-            for proveedor in proveedores:
-                proveedor_key = texto_compacto(proveedor)
-                for periodo, resumen in resultados:
-                    row = None
-                    if not resumen.empty and "Proveedor" in resumen.columns:
-                        match = resumen[resumen["Proveedor"].astype(str).map(texto_compacto) == proveedor_key]
-                        if not match.empty:
-                            row = match.iloc[0]
-                    for subtitulo, columna in columnas:
-                        valor = row.get(columna, 0) if row is not None and columna in resumen.columns else 0
-                        filas.append({"periodo": f"{proveedor} · {periodo} · {subtitulo}", "valor": valor})
-            metricas.append({"titulo": titulo, "filas": filas})
-
-        return metricas
 
     if ventas_raw is not None:
-        escribir_resumen_visual(
-            "Ventas",
-            metricas_visuales(
-                ventas_raw,
-                f"Ventas {sucursal}",
-                calcular_ventas,
-                [
-                    ("IVA Ventas", "Total IVA"),
-                    ("Neto Ventas", "Imp. Neto Gravado Total"),
-                    ("Total Ventas", "Imp. Total"),
-                ],
-                [
-                    ("Bruto", "Resto de comprobantes"),
-                    ("NC", "Comprobantes 3 y 8"),
-                    ("Neto", "Diferencia (resto - 3 y 8)"),
-                ],
-            ),
-        )
+        escribir_tablas_por_periodo("Ventas", ventas_raw, f"Ventas {sucursal}", calcular_ventas, numeric_start_col=1)
 
     if compras_raw is not None:
-        escribir_resumen_visual(
-            "Compras",
-            metricas_visuales(
-                compras_raw,
-                f"Compras {sucursal}",
-                calcular_compras,
-                [
-                    ("IVA Compras", "Total IVA"),
-                    ("Neto Compras", "Imp. Neto Gravado Total"),
-                ],
-                [
-                    ("Bruto", "Resto de comprobantes"),
-                    ("NC", "Notas de crÃ©dito (3 y 8)"),
-                    ("Neto", "Diferencia (resto - notas crÃ©dito)"),
-                ],
-            ),
-        )
-        escribir_resumen_visual("Compras por proveedor", metricas_proveedores_visuales(compras_raw, f"Compras por proveedor {sucursal}"))
+        escribir_tablas_por_periodo("Compras", compras_raw, f"Compras {sucursal}", calcular_compras, numeric_start_col=1)
+        escribir_tablas_por_periodo("Compras por proveedor", compras_raw, f"Compras por proveedor {sucursal}", calcular_compras_por_proveedor, numeric_start_col=1)
 
     url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit"
-    print(f"[OK] Generado en Drive ({' + '.join(hojas_generadas)} con resumen visual mensual + total): {url}")
+    print(f"[OK] Generado en Drive ({' + '.join(hojas_generadas)} con tablas por periodo + total): {url}")
     return url
 
 

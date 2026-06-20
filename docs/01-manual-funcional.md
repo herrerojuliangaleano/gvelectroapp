@@ -649,8 +649,10 @@ subida de archivos, logs y seguimiento de jobs.
 
 - El flujo mensual normal mantiene la lógica original: mes actual, mes pasado o ambos se procesan como archivos completos separados.
 - En **Seleccionar otro rango** (`este año`, `año pasado` o `rango personalizado`), el resultado se genera en Drive con pocas hojas: `Ventas`, `Compras` y `Compras por proveedor`.
-- `Ventas` y `Compras` usan bloques visuales: título de la métrica, mes en fila destacada y debajo los importes `Bruto`, `NC` y `Neto`.
-- `Compras por proveedor` usa el mismo criterio visual, separando `Neto por proveedor` e `IVA por proveedor` con `Bruto`, `NC` y `Neto`.
+- `Ventas`, `Compras` y `Compras por proveedor` usan secciones por periodo: primero `TOTAL` y despues cada mes (`jun-25`, `jul-25`, etc.).
+- Cada seccion mantiene la tabla clara del flujo original. `Ventas` conserva `Resto de comprobantes`, `Comprobantes 3 y 8` y `Diferencia`; `Compras` conserva `Resto de comprobantes`, `Notas de credito (3 y 8)` y `Diferencia`.
+- `Compras por proveedor` conserva el detalle por proveedor con neto gravado de comprobantes, neto gravado de notas de credito, neto final, IVA de comprobantes, IVA de notas de credito e IVA neto.
+- En `Ventas` y `Compras` la fila de diferencia queda resaltada.
 - La separación mensual usa la fecha interna del comprobante de ARCA, no el nombre del archivo.
 - Para rangos largos, los archivos subidos deben incluir columna de fecha de comprobante/emisión en emitidos y recibidos.
 
