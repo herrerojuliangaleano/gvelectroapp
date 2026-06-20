@@ -686,7 +686,7 @@ def obtener_mapas_hojas(sheets_service, spreadsheet_id: str) -> dict[str, int]:
     return mapa
 
 
-def aplicar_formato_hoja(sheets_service, spreadsheet_id: str, sheet_id: int, n_cols: int, n_rows: int) -> None:
+def aplicar_formato_hoja(sheets_service, spreadsheet_id: str, sheet_id: int, n_cols: int, n_rows: int, numeric_start_col: int = 1) -> None:
     requests = [
         {
             "updateSheetProperties": {
@@ -715,7 +715,7 @@ def aplicar_formato_hoja(sheets_service, spreadsheet_id: str, sheet_id: int, n_c
         },
     ]
 
-    if n_cols > 1 and n_rows > 1:
+    if n_cols > numeric_start_col and n_rows > 1:
         requests.append(
             {
                 "repeatCell": {
@@ -723,7 +723,7 @@ def aplicar_formato_hoja(sheets_service, spreadsheet_id: str, sheet_id: int, n_c
                         "sheetId": sheet_id,
                         "startRowIndex": 1,
                         "endRowIndex": n_rows,
-                        "startColumnIndex": 1,
+                        "startColumnIndex": numeric_start_col,
                         "endColumnIndex": n_cols,
                     },
                     "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "#,##0.00"}}},
@@ -1097,18 +1097,10 @@ def procesar_sucursal_rango_mensual(
 
     hojas_a_crear: list[str] = []
     if ventas_raw is not None:
-        hojas_a_crear.append("Ventas TOTAL")
+        hojas_a_crear.append("Ventas")
     if compras_raw is not None:
-        hojas_a_crear.append("Compras TOTAL")
-        hojas_a_crear.append("Proveedor TOTAL")
-
-    for mes in meses:
-        mes_key = f"{mes.year}-{mes.month:02d}"
-        if ventas_raw is not None:
-            hojas_a_crear.append(f"Ventas {mes_key}")
-        if compras_raw is not None:
-            hojas_a_crear.append(f"Compras {mes_key}")
-            hojas_a_crear.append(f"Proveedor {mes_key}")
+        hojas_a_crear.append("Compras")
+        hojas_a_crear.append("Compras por proveedor")
 
     spreadsheet_id = crear_google_sheet_en_drive(drive_service=drive_service, titulo=titulo_drive, folder_id=folder_id)
     mapa = preparar_hojas_dinamicas(sheets_service, spreadsheet_id, hojas_a_crear)
@@ -1116,33 +1108,39 @@ def procesar_sucursal_rango_mensual(
 
     def escribir_resultado(nombre_hoja: str, df: pd.DataFrame) -> None:
         escribir_hoja(sheets_service, spreadsheet_id, nombre_hoja, df)
-        aplicar_formato_hoja(sheets_service, spreadsheet_id, mapa[nombre_hoja], len(df.columns), len(df) + 1)
+        aplicar_formato_hoja(sheets_service, spreadsheet_id, mapa[nombre_hoja], len(df.columns), len(df) + 1, numeric_start_col=3)
         hojas_generadas.append(nombre_hoja)
 
+    def agregar_periodo(df: pd.DataFrame, periodo: str, desde: date, hasta: date) -> pd.DataFrame:
+        salida = df.copy()
+        salida.insert(0, "Hasta", hasta.isoformat())
+        salida.insert(0, "Desde", desde.isoformat())
+        salida.insert(0, "Periodo", periodo)
+        return salida
+
+    def tabla_periodos(raw: pd.DataFrame, etiqueta: str, calcular) -> pd.DataFrame:
+        bloques: list[pd.DataFrame] = []
+
+        total_raw = filtrar_por_rango_fecha(raw, range_start, range_end, etiqueta)
+        bloques.append(agregar_periodo(calcular(total_raw), "TOTAL", range_start, range_end))
+
+        for mes in meses:
+            mes_desde, mes_hasta = rango_mes_en_periodo(mes, range_start, range_end)
+            mes_key = f"{mes.year}-{mes.month:02d}"
+            mes_raw = filtrar_por_rango_fecha(raw, mes_desde, mes_hasta, f"{etiqueta} {mes_key}")
+            bloques.append(agregar_periodo(calcular(mes_raw), mes_key, mes_desde, mes_hasta))
+
+        return pd.concat(bloques, ignore_index=True)
+
     if ventas_raw is not None:
-        ventas_total = filtrar_por_rango_fecha(ventas_raw, range_start, range_end, f"Ventas {sucursal}")
-        escribir_resultado("Ventas TOTAL", calcular_ventas(ventas_total))
+        escribir_resultado("Ventas", tabla_periodos(ventas_raw, f"Ventas {sucursal}", calcular_ventas))
 
     if compras_raw is not None:
-        compras_total = filtrar_por_rango_fecha(compras_raw, range_start, range_end, f"Compras {sucursal}")
-        escribir_resultado("Compras TOTAL", calcular_compras(compras_total))
-        escribir_resultado("Proveedor TOTAL", calcular_compras_por_proveedor(compras_total))
-
-    for mes in meses:
-        mes_desde, mes_hasta = rango_mes_en_periodo(mes, range_start, range_end)
-        mes_key = f"{mes.year}-{mes.month:02d}"
-
-        if ventas_raw is not None:
-            ventas_mes = filtrar_por_rango_fecha(ventas_raw, mes_desde, mes_hasta, f"Ventas {sucursal} {mes_key}")
-            escribir_resultado(f"Ventas {mes_key}", calcular_ventas(ventas_mes))
-
-        if compras_raw is not None:
-            compras_mes = filtrar_por_rango_fecha(compras_raw, mes_desde, mes_hasta, f"Compras {sucursal} {mes_key}")
-            escribir_resultado(f"Compras {mes_key}", calcular_compras(compras_mes))
-            escribir_resultado(f"Proveedor {mes_key}", calcular_compras_por_proveedor(compras_mes))
+        escribir_resultado("Compras", tabla_periodos(compras_raw, f"Compras {sucursal}", calcular_compras))
+        escribir_resultado("Compras por proveedor", tabla_periodos(compras_raw, f"Compras por proveedor {sucursal}", calcular_compras_por_proveedor))
 
     url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit"
-    print(f"[OK] Generado en Drive ({len(hojas_generadas)} hojas mensualizadas): {url}")
+    print(f"[OK] Generado en Drive ({' + '.join(hojas_generadas)} con tabla mensual + total): {url}")
     return url
 
 

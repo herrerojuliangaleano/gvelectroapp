@@ -648,7 +648,8 @@ subida de archivos, logs y seguimiento de jobs.
 ### Limpiar Comprobantes (`cer`)
 
 - El flujo mensual normal mantiene la lógica original: mes actual, mes pasado o ambos se procesan como archivos completos separados.
-- En **Seleccionar otro rango** (`este año`, `año pasado` o `rango personalizado`), el resultado se genera en Drive con pestañas por mes y pestañas `TOTAL`.
+- En **Seleccionar otro rango** (`este año`, `año pasado` o `rango personalizado`), el resultado se genera en Drive con pocas hojas: `Ventas`, `Compras` y `Compras por proveedor`.
+- Cada hoja usa formato de tabla con columnas `Periodo`, `Desde` y `Hasta`: primero `TOTAL` y después cada mes (`YYYY-MM`).
 - La separación mensual usa la fecha interna del comprobante de ARCA, no el nombre del archivo.
 - Para rangos largos, los archivos subidos deben incluir columna de fecha de comprobante/emisión en emitidos y recibidos.
 
