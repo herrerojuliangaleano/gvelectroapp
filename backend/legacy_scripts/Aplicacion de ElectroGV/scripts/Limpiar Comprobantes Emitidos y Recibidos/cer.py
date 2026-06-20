@@ -425,7 +425,6 @@ def _seleccionar_recibidos(df: pd.DataFrame) -> pd.DataFrame | None:
     # Imp. Neto Gravado Total (candidatos específicos primero para no agarrar
     # "Imp. Neto No Gravado").
     col_neto = buscar_columna_flexible(df, ["imp_neto_gravado_total", "imp_neto_gravado", "neto_gravado_total", "neto_gravado"])
-    col_total = buscar_columna_flexible(df, ["imp_total", "importe_total"])
     # Proveedor = quien emite el comprobante recibido. Candidatos específicos
     # primero para no agarrar "Denominación Receptor" ni "Tipo Doc. Emisor".
     col_prov = buscar_columna_flexible(df, ["denominacion_emisor", "denominacionemisor", "razon_social_emisor", "denominacion"])
@@ -435,7 +434,6 @@ def _seleccionar_recibidos(df: pd.DataFrame) -> pd.DataFrame | None:
         "tipo": df[col_tipo],
         "total_iva": df[col_iva],
         "imp_neto_gravado": df[col_neto] if col_neto else "",
-        "imp_total": df[col_total] if col_total else "",
         "proveedor": df[col_prov] if col_prov else "",
     })
 
@@ -495,7 +493,6 @@ def calcular_ventas(df: pd.DataFrame) -> pd.DataFrame:
         "tipo_de_comprobante",
         "imp_neto_gravado_total",
         "total_iva",
-        "imp_total",
     }
 
     faltantes = columnas - set(df.columns)
@@ -513,13 +510,18 @@ def calcular_ventas(df: pd.DataFrame) -> pd.DataFrame:
     )
     ventas["imp_neto_gravado_total"] = to_numero(ventas["imp_neto_gravado_total"])
     ventas["total_iva"] = to_numero(ventas["total_iva"])
-    ventas["imp_total"] = to_numero(ventas["imp_total"])
 
     mask_b = ventas["tipo_de_comprobante"].isin([3, 8])
     mask_a = ventas["tipo_de_comprobante"].notna() & ~mask_b
 
-    suma_a = ventas.loc[mask_a, ["imp_neto_gravado_total", "total_iva", "imp_total"]].sum(numeric_only=True)
-    suma_b = ventas.loc[mask_b, ["imp_neto_gravado_total", "total_iva", "imp_total"]].sum(numeric_only=True)
+    neto_a = ventas.loc[mask_a, "imp_neto_gravado_total"].sum(skipna=True)
+    neto_b = ventas.loc[mask_b, "imp_neto_gravado_total"].sum(skipna=True)
+    iva_a = ventas.loc[mask_a, "total_iva"].sum(skipna=True)
+    iva_b = ventas.loc[mask_b, "total_iva"].sum(skipna=True)
+    # El Total es el real de la operación = Neto Gravado + IVA (sin percepciones
+    # ni otros conceptos del Imp. Total de ARCA).
+    tot_a = neto_a + iva_a
+    tot_b = neto_b + iva_b
 
     resultado = pd.DataFrame({
         "Concepto": [
@@ -527,21 +529,9 @@ def calcular_ventas(df: pd.DataFrame) -> pd.DataFrame:
             "Comprobantes 3 y 8",
             "Diferencia (resto - 3 y 8)",
         ],
-        "Imp. Neto Gravado Total": [
-            suma_a["imp_neto_gravado_total"],
-            suma_b["imp_neto_gravado_total"],
-            suma_a["imp_neto_gravado_total"] - suma_b["imp_neto_gravado_total"],
-        ],
-        "Total IVA": [
-            suma_a["total_iva"],
-            suma_b["total_iva"],
-            suma_a["total_iva"] - suma_b["total_iva"],
-        ],
-        "Imp. Total": [
-            suma_a["imp_total"],
-            suma_b["imp_total"],
-            suma_a["imp_total"] - suma_b["imp_total"],
-        ],
+        "Imp. Neto Gravado Total": [neto_a, neto_b, neto_a - neto_b],
+        "Total IVA": [iva_a, iva_b, iva_a - iva_b],
+        "Imp. Total": [tot_a, tot_b, tot_a - tot_b],
     })
 
     print(f"[INFO] Ventas: filas resto = {mask_a.sum()}")
@@ -569,9 +559,6 @@ def calcular_compras(df: pd.DataFrame) -> pd.DataFrame:
     if "imp_neto_gravado" not in compras.columns:
         compras["imp_neto_gravado"] = 0
     compras["imp_neto_gravado"] = to_numero(compras["imp_neto_gravado"])
-    if "imp_total" not in compras.columns:
-        compras["imp_total"] = 0
-    compras["imp_total"] = to_numero(compras["imp_total"])
 
     mask_b = compras["tipo_num"].isin([3, 8])
     mask_a = compras["tipo_num"].notna() & ~mask_b
@@ -580,8 +567,10 @@ def calcular_compras(df: pd.DataFrame) -> pd.DataFrame:
     iva_b = compras.loc[mask_b, "total_iva"].sum(skipna=True)
     neto_a = compras.loc[mask_a, "imp_neto_gravado"].sum(skipna=True)
     neto_b = compras.loc[mask_b, "imp_neto_gravado"].sum(skipna=True)
-    total_a = compras.loc[mask_a, "imp_total"].sum(skipna=True)
-    total_b = compras.loc[mask_b, "imp_total"].sum(skipna=True)
+    # El Total es el real de la operación = Neto Gravado + IVA (sin percepciones
+    # ni otros conceptos del Imp. Total de ARCA).
+    total_a = neto_a + iva_a
+    total_b = neto_b + iva_b
 
     resultado = pd.DataFrame({
         "Concepto": [
@@ -626,14 +615,12 @@ def calcular_compras_por_proveedor(df: pd.DataFrame) -> pd.DataFrame:
     compras = df.copy()
     if "proveedor" not in compras.columns:
         compras["proveedor"] = ""
-    for col in ("imp_neto_gravado", "imp_total"):
-        if col not in compras.columns:
-            compras[col] = 0
+    if "imp_neto_gravado" not in compras.columns:
+        compras["imp_neto_gravado"] = 0
 
     compras["tipo_num"] = compras["tipo"].apply(extraer_tipo_num)
     compras["total_iva"] = to_numero(compras["total_iva"])
     compras["imp_neto_gravado"] = to_numero(compras["imp_neto_gravado"])
-    compras["imp_total"] = to_numero(compras["imp_total"])
     compras["proveedor"] = compras["proveedor"].astype(str).str.strip()
     compras.loc[compras["proveedor"].isin(["", "nan", "none", "None"]), "proveedor"] = "(sin proveedor)"
 
@@ -641,15 +628,15 @@ def calcular_compras_por_proveedor(df: pd.DataFrame) -> pd.DataFrame:
     signo = compras["tipo_num"].isin([3, 8]).map({True: -1, False: 1})
     compras["_neto"] = compras["imp_neto_gravado"] * signo
     compras["_iva"] = compras["total_iva"] * signo
-    compras["_total"] = compras["imp_total"] * signo
 
-    agrupado = compras.groupby("proveedor", sort=False)[["_neto", "_iva", "_total"]].sum(min_count=1)
+    agrupado = compras.groupby("proveedor", sort=False)[["_neto", "_iva"]].sum(min_count=1)
     agrupado = agrupado.reset_index().rename(columns={
         "proveedor": "Proveedor",
         "_neto": "Imp. Neto Gravado Total",
         "_iva": "Total IVA",
-        "_total": "Imp. Total",
     })
+    # El Total real = Neto Gravado + IVA (sin percepciones ni otros conceptos).
+    agrupado["Imp. Total"] = agrupado["Imp. Neto Gravado Total"] + agrupado["Total IVA"]
     cols = ["Proveedor", "Imp. Neto Gravado Total", "Total IVA", "Imp. Total"]
     resultado = agrupado[cols]
     if not resultado.empty:
