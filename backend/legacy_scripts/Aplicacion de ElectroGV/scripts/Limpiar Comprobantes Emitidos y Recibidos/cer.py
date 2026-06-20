@@ -304,18 +304,22 @@ def leer_emitidos(ruta: Path) -> pd.DataFrame:
 
 
 def _seleccionar_recibidos(df: pd.DataFrame) -> pd.DataFrame | None:
-    """De un DataFrame ya normalizado, extrae tipo + total IVA + proveedor
-    (Denominación Emisor). Devuelve None si faltan tipo/IVA."""
+    """De un DataFrame ya normalizado, extrae tipo + total IVA + neto gravado +
+    proveedor (Denominación Emisor). Devuelve None si faltan tipo/IVA."""
     col_tipo = buscar_columna_flexible(df, ["tipo_de_comprobante", "tipo"])
     col_iva = buscar_columna_flexible(df, ["total_iva", "total iva", "iva"])
     if not col_tipo or not col_iva:
         return None
+    # Imp. Neto Gravado Total (candidatos específicos primero para no agarrar
+    # "Imp. Neto No Gravado").
+    col_neto = buscar_columna_flexible(df, ["imp_neto_gravado_total", "imp_neto_gravado", "neto_gravado_total", "neto_gravado"])
     # Proveedor = quien emite el comprobante recibido. Candidatos específicos
     # primero para no agarrar "Denominación Receptor" ni "Tipo Doc. Emisor".
     col_prov = buscar_columna_flexible(df, ["denominacion_emisor", "denominacionemisor", "razon_social_emisor", "denominacion"])
     return pd.DataFrame({
         "tipo": df[col_tipo],
         "total_iva": df[col_iva],
+        "imp_neto_gravado": df[col_neto] if col_neto else "",
         "proveedor": df[col_prov] if col_prov else "",
     })
 
@@ -446,18 +450,28 @@ def calcular_compras(df: pd.DataFrame) -> pd.DataFrame:
     # Las notas de crédito son los tipos 3 y 8 y restan al resto (igual que ventas).
     compras["tipo_num"] = compras["tipo"].apply(extraer_tipo_num)
     compras["total_iva"] = to_numero(compras["total_iva"])
+    if "imp_neto_gravado" not in compras.columns:
+        compras["imp_neto_gravado"] = 0
+    compras["imp_neto_gravado"] = to_numero(compras["imp_neto_gravado"])
 
     mask_b = compras["tipo_num"].isin([3, 8])
     mask_a = compras["tipo_num"].notna() & ~mask_b
 
     iva_a = compras.loc[mask_a, "total_iva"].sum(skipna=True)
     iva_b = compras.loc[mask_b, "total_iva"].sum(skipna=True)
+    neto_a = compras.loc[mask_a, "imp_neto_gravado"].sum(skipna=True)
+    neto_b = compras.loc[mask_b, "imp_neto_gravado"].sum(skipna=True)
 
     resultado = pd.DataFrame({
         "Concepto": [
             "Resto de comprobantes",
             "Notas de crédito (3 y 8)",
             "Diferencia (resto - notas crédito)",
+        ],
+        "Imp. Neto Gravado Total": [
+            neto_a,
+            neto_b,
+            neto_a - neto_b,
         ],
         "Total IVA": [
             iva_a,
@@ -486,28 +500,40 @@ def calcular_compras_por_proveedor(df: pd.DataFrame) -> pd.DataFrame:
     compras = df.copy()
     if "proveedor" not in compras.columns:
         compras["proveedor"] = ""
+    if "imp_neto_gravado" not in compras.columns:
+        compras["imp_neto_gravado"] = 0
 
     compras["tipo_num"] = compras["tipo"].apply(extraer_tipo_num)
     compras["total_iva"] = to_numero(compras["total_iva"])
+    compras["imp_neto_gravado"] = to_numero(compras["imp_neto_gravado"])
     compras["proveedor"] = compras["proveedor"].astype(str).str.strip()
     compras.loc[compras["proveedor"].isin(["", "nan", "none", "None"]), "proveedor"] = "(sin proveedor)"
 
     filas = []
     for proveedor, sub in compras.groupby("proveedor", sort=False):
         es_nc = sub["tipo_num"].isin([3, 8])
+        neto_normal = sub.loc[~es_nc, "imp_neto_gravado"].sum(skipna=True)
+        neto_nc = sub.loc[es_nc, "imp_neto_gravado"].sum(skipna=True)
         iva_normal = sub.loc[~es_nc, "total_iva"].sum(skipna=True)
         iva_nc = sub.loc[es_nc, "total_iva"].sum(skipna=True)
         filas.append({
             "Proveedor": proveedor,
+            "Neto gravado comprobantes": neto_normal,
+            "Neto gravado notas crédito (3 y 8)": neto_nc,
+            "Imp. Neto Gravado Total (neto)": neto_normal - neto_nc,
             "Total IVA comprobantes": iva_normal,
             "Total IVA notas crédito (3 y 8)": iva_nc,
             "Total IVA neto": iva_normal - iva_nc,
         })
 
-    cols = ["Proveedor", "Total IVA comprobantes", "Total IVA notas crédito (3 y 8)", "Total IVA neto"]
+    cols = [
+        "Proveedor",
+        "Neto gravado comprobantes", "Neto gravado notas crédito (3 y 8)", "Imp. Neto Gravado Total (neto)",
+        "Total IVA comprobantes", "Total IVA notas crédito (3 y 8)", "Total IVA neto",
+    ]
     resultado = pd.DataFrame(filas, columns=cols)
     if not resultado.empty:
-        resultado = resultado.sort_values("Total IVA neto", ascending=False, kind="stable").reset_index(drop=True)
+        resultado = resultado.sort_values("Imp. Neto Gravado Total (neto)", ascending=False, kind="stable").reset_index(drop=True)
         for c in cols[1:]:
             resultado[c] = resultado[c].round(2)
 
