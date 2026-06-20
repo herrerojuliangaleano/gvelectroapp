@@ -14,6 +14,7 @@ from ..sales_bi import (
     delete_temp_file,
     delete_product_alias,
     find_branch,
+    build_seller_profile,
     build_sellers_report,
     get_active_import,
     get_import_detail,
@@ -834,6 +835,33 @@ def get_sellers_compare(
         sucursales=sucursales,
         include_costs=user.has("sales_bi.view_costs"),
         include_margin=user.has("sales_bi.view_margin"),
+    )
+
+
+@router.get("/sellers/profile")
+def get_seller_profile(
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    vendedor: str = Query(..., description="vendedor_normalized o nombre del vendedor"),
+    fecha_desde: str | None = Query(default=None),
+    fecha_hasta: str | None = Query(default=None),
+    sucursal: str | None = Query(default=None),
+    sucursales: str | None = Query(default=None, description="CSV de sucursales (multi-select)"),
+    empresa: str | None = Query(default=None, description="Slug de la empresa (companies.id)"),
+    tipo: str | None = Query(default=None),
+    compare_desde: str | None = Query(default=None),
+    compare_hasta: str | None = Query(default=None),
+):
+    _require(user, "sales_bi.view")
+    return build_seller_profile(
+        vendedor,
+        fecha_desde,
+        fecha_hasta,
+        sucursal,
+        tipo,
+        empresa=empresa,
+        sucursales=sucursales,
+        compare_desde=compare_desde,
+        compare_hasta=compare_hasta,
     )
 
 

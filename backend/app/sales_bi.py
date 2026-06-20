@@ -2313,6 +2313,306 @@ def compare_sellers_report(
     }
 
 
+# ── Perfil individual del vendedor (datos REALES, no derivados) ──────────────
+def _breakdowns_from_rows(rows, total_reference: float) -> dict[str, Any]:
+    """Breakdowns reales (marcas/categorías/productos/diario) de un set de
+    registros — se usa para un solo vendedor."""
+    brands: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    categories: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    products: dict[tuple[str, str], dict[str, Any]] = {}
+    daily: dict[str, dict[str, Any]] = {}
+    for record, imp in rows:
+        _add_metric(brands[str(record.marca or "Sin marca")], record)
+        _add_metric(categories[str(record.categoria or "Sin categoria")], record)
+        pk = (str(record.sku or ""), str(record.producto or ""))
+        if pk not in products:
+            products[pk] = {"sku": pk[0], "producto": pk[1], "marca": str(record.marca or ""), **_metric_bucket()}
+        _add_metric(products[pk], record)
+        day = _fmt_date(imp.fecha)
+        if day not in daily:
+            daily[day] = {"fecha": day, **_metric_bucket()}
+        _add_metric(daily[day], record)
+
+    def mix(src: dict[str, dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
+        out = [{"name": k, **_finalize_metric(v, include_margin=False, total_reference=total_reference)} for k, v in src.items()]
+        out.sort(key=lambda r: float(r["total_cobrado"]), reverse=True)
+        return out[:limit] if limit else out
+
+    top = [
+        {"sku": v["sku"], "producto": v["producto"], "marca": v["marca"],
+         **_finalize_metric(v, include_margin=False, total_reference=total_reference)}
+        for v in products.values()
+    ]
+    top.sort(key=lambda r: float(r["total_cobrado"]), reverse=True)
+    daily_series = [{"fecha": k, **_finalize_metric(v, include_margin=False)} for k, v in sorted(daily.items())]
+    return {
+        "brand_mix": mix(brands, 10),
+        "category_mix": mix(categories),
+        "top_products": top[:15],
+        "daily_series": daily_series,
+    }
+
+
+def _mix_shifts(current: list[dict[str, Any]], previous: list[dict[str, Any]], limit: int = 6) -> list[dict[str, Any]]:
+    """Compara dos mixes (por 'name') y devuelve los mayores movimientos."""
+    cur = {str(r["name"]): float(r.get("total_cobrado") or 0) for r in current}
+    prev = {str(r["name"]): float(r.get("total_cobrado") or 0) for r in previous}
+    out = []
+    for name in set(cur) | set(prev):
+        a = cur.get(name, 0.0)
+        b = prev.get(name, 0.0)
+        out.append({
+            "name": name,
+            "actual": round(a, 2),
+            "anterior": round(b, 2),
+            "delta": round(a - b, 2),
+            "delta_pct": round((a - b) / b * 100, 2) if b else None,
+        })
+    out.sort(key=lambda r: abs(r["delta"]), reverse=True)
+    return out[:limit]
+
+
+def _seller_insights(
+    seller: dict[str, Any],
+    units_per_ticket: float,
+    benchmarks: dict[str, Any],
+    previous: dict[str, Any] | None,
+    breakdowns: dict[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
+    """Genera señales de coaching cruzando el vendedor vs período anterior y vs
+    el promedio de su sucursal. Foco: crecimiento, comparación con pares,
+    ticket promedio y unidades por ticket."""
+    fort: list[dict[str, Any]] = []
+    opor: list[dict[str, Any]] = []
+    aler: list[dict[str, Any]] = []
+
+    suc = benchmarks.get("sucursal", {}) or {}
+    suc_nombre = suc.get("nombre") or "la sucursal"
+
+    def ratio(a: float, b: float) -> float | None:
+        return (a / b) if b else None
+
+    # ── Ranking ──────────────────────────────────────────────────────────
+    rank_suc = int(seller.get("rank_sucursal") or 0)
+    n_suc = int(seller.get("sellers_en_sucursal") or 0)
+    rank_emp = int(seller.get("rank_empresa") or 0)
+    n_emp = int(seller.get("sellers_en_empresa") or 0)
+    if rank_suc == 1 and n_suc > 1:
+        fort.append({"titulo": f"#1 en {suc_nombre}", "detalle": f"Lidera entre {n_suc} vendedores de su sucursal.", "metric": "rank_sucursal"})
+    if 0 < rank_emp <= 3 and n_emp > 3:
+        fort.append({"titulo": f"Top {rank_emp} de la empresa", "detalle": f"Entre {n_emp} vendedores de toda la empresa.", "metric": "rank_empresa"})
+    elif n_emp >= 4 and rank_emp > 0 and rank_emp > 0.75 * n_emp:
+        aler.append({"titulo": f"Puesto {rank_emp} de {n_emp} en la empresa", "detalle": "Está en el cuarto inferior del ranking.", "metric": "rank_empresa"})
+
+    # ── Crecimiento vs período anterior ──────────────────────────────────
+    if previous and previous.get("delta"):
+        delta = previous["delta"]
+        def dpct(key: str):
+            d = delta.get(key) or {}
+            return d.get("delta_pct")
+        cob = dpct("total_cobrado")
+        if cob is not None:
+            if cob >= 10:
+                fort.append({"titulo": f"Facturación +{cob:.0f}% vs período anterior", "detalle": f"Cobrado {money_txt(seller.get('total_cobrado'))} (antes {money_txt(delta.get('total_cobrado',{}).get('comparado'))}).", "metric": "total_cobrado"})
+            elif cob <= -10:
+                aler.append({"titulo": f"Facturación {cob:.0f}% vs período anterior", "detalle": f"Cobrado {money_txt(seller.get('total_cobrado'))} (antes {money_txt(delta.get('total_cobrado',{}).get('comparado'))}).", "metric": "total_cobrado"})
+            elif cob <= -3:
+                opor.append({"titulo": f"Facturación bajó {abs(cob):.0f}%", "detalle": "Leve caída respecto del período anterior.", "metric": "total_cobrado"})
+        und = dpct("unidades")
+        if und is not None and und <= -10:
+            opor.append({"titulo": f"Unidades {und:.0f}% vs período anterior", "detalle": "Vendió menos productos que el período anterior.", "metric": "unidades"})
+        tp = dpct("ticket_promedio")
+        if tp is not None and tp >= 10:
+            fort.append({"titulo": f"Ticket promedio +{tp:.0f}%", "detalle": "Sube el valor por venta vs período anterior.", "metric": "ticket_promedio"})
+        # Cambio de ranking
+        prev_seller = previous.get("seller") or {}
+        prev_rank_emp = int(prev_seller.get("rank_empresa") or 0)
+        if prev_rank_emp and rank_emp and abs(prev_rank_emp - rank_emp) >= 2:
+            if rank_emp < prev_rank_emp:
+                fort.append({"titulo": f"Subió del puesto {prev_rank_emp} al {rank_emp}", "detalle": "Mejoró su posición en la empresa.", "metric": "rank_empresa"})
+            else:
+                aler.append({"titulo": f"Bajó del puesto {prev_rank_emp} al {rank_emp}", "detalle": "Perdió posiciones en la empresa.", "metric": "rank_empresa"})
+
+    # ── vs promedio de la sucursal ───────────────────────────────────────
+    r_cob = ratio(float(seller.get("total_cobrado") or 0), float(suc.get("total_cobrado") or 0))
+    if r_cob is not None:
+        if r_cob >= 1.15:
+            fort.append({"titulo": f"Factura {(r_cob-1)*100:.0f}% sobre el promedio de {suc_nombre}", "detalle": f"Promedio por vendedor: {money_txt(suc.get('total_cobrado'))}.", "metric": "total_cobrado"})
+        elif r_cob <= 0.85:
+            opor.append({"titulo": f"{(1-r_cob)*100:.0f}% por debajo del promedio de {suc_nombre}", "detalle": f"Promedio por vendedor: {money_txt(suc.get('total_cobrado'))}.", "metric": "total_cobrado"})
+
+    r_tp = ratio(float(seller.get("ticket_promedio") or 0), float(suc.get("ticket_promedio") or 0))
+    if r_tp is not None:
+        if r_tp >= 1.10:
+            fort.append({"titulo": f"Ticket promedio {(r_tp-1)*100:.0f}% sobre la sucursal", "detalle": f"{money_txt(seller.get('ticket_promedio'))} vs {money_txt(suc.get('ticket_promedio'))} de {suc_nombre}.", "metric": "ticket_promedio"})
+        elif r_tp <= 0.90:
+            opor.append({"titulo": f"Ticket promedio {(1-r_tp)*100:.0f}% bajo la sucursal", "detalle": f"{money_txt(seller.get('ticket_promedio'))} vs {money_txt(suc.get('ticket_promedio'))} de {suc_nombre}.", "metric": "ticket_promedio"})
+
+    bench_upt = float(suc.get("unidades_por_ticket") or 0)
+    r_upt = ratio(units_per_ticket, bench_upt)
+    if r_upt is not None:
+        if r_upt >= 1.10:
+            fort.append({"titulo": "Buen cross-selling", "detalle": f"{units_per_ticket:.2f} unidades por ticket vs {bench_upt:.2f} de {suc_nombre}.", "metric": "unidades_por_ticket"})
+        elif r_upt <= 0.85:
+            opor.append({"titulo": "Poco cross-selling", "detalle": f"{units_per_ticket:.2f} unidades por ticket vs {bench_upt:.2f} de {suc_nombre}. Sumar accesorios/segundas unidades.", "metric": "unidades_por_ticket"})
+
+    # ── Concentración de marca (riesgo si depende de una sola) ────────────
+    brand_mix = breakdowns.get("brand_mix") or []
+    total_cob = float(seller.get("total_cobrado") or 0)
+    if brand_mix and total_cob > 0:
+        top_brand = brand_mix[0]
+        share = float(top_brand.get("total_cobrado") or 0) / total_cob
+        if share >= 0.6:
+            opor.append({"titulo": f"Ventas muy concentradas en {top_brand['name']}", "detalle": f"{share*100:.0f}% de lo que factura es una sola marca. Diversificar reduce riesgo.", "metric": "brand_mix"})
+
+    return {"fortalezas": fort[:5], "oportunidades": opor[:5], "alertas": aler[:5]}
+
+
+def money_txt(value: Any) -> str:
+    try:
+        return f"$ {float(value or 0):,.0f}".replace(",", ".")
+    except Exception:
+        return "$ 0"
+
+
+def build_seller_profile(
+    vendedor: str,
+    fecha_desde: str | None = None,
+    fecha_hasta: str | None = None,
+    sucursal: str | None = None,
+    tipo: str | None = None,
+    *,
+    empresa: str | None = None,
+    sucursales: list[str] | str | None = None,
+    compare_desde: str | None = None,
+    compare_hasta: str | None = None,
+) -> dict[str, Any]:
+    """Perfil individual con datos REALES del vendedor: sus marcas, categorías,
+    productos y evolución diaria; benchmarks reales de su sucursal/empresa;
+    comparación vs período anterior; y señales de coaching."""
+    report = build_sellers_report(fecha_desde, fecha_hasta, sucursal, tipo, None, empresa=empresa, sucursales=sucursales)
+    filters = report["filters"]
+    target = _normalize_seller(vendedor)
+    seller = next(
+        (s for s in report["sellers"]
+         if s["vendedor_normalized"] == vendedor or s["vendedor_normalized"] == target
+         or _normalize_seller(s["vendedor"]) == target),
+        None,
+    )
+    if not seller:
+        return {"found": False, "filters": filters, "vendedor": vendedor, "vendedores": report["sellers"]}
+
+    seller_norm = seller["vendedor_normalized"]
+    target_branch = seller.get("sucursal") or ""
+    total_cob = float(seller.get("total_cobrado") or 0)
+    tickets = int(seller.get("tickets") or 0)
+    units_per_ticket = round(float(seller.get("unidades") or 0) / tickets, 2) if tickets else 0.0
+
+    # Breakdowns reales del vendedor.
+    seller_rows = _sales_rows_for_report(
+        filters["fecha_desde"], filters["fecha_hasta"], sucursal, tipo, [seller_norm],
+        empresa=empresa, sucursales=sucursales,
+    )
+    breakdowns = _breakdowns_from_rows(seller_rows, total_cob)
+    seller_daily = {d["fecha"]: d for d in breakdowns["daily_series"]}
+
+    # Benchmarks reales: una pasada sobre todo el dataset del período.
+    all_rows = _sales_rows_for_report(
+        filters["fecha_desde"], filters["fecha_hasta"], sucursal, tipo, None,
+        empresa=empresa, sucursales=sucursales,
+    )
+    company_daily: dict[str, dict[str, Any]] = {}
+    branch_daily: dict[str, dict[str, Any]] = {}
+    company_sellers: set[str] = set()
+    branch_sellers: set[str] = set()
+    branch_bucket = _metric_bucket()
+    for record, imp in all_rows:
+        skey = str(record.vendedor_normalized or "") or _normalize_seller(record.vendedor)
+        company_sellers.add(skey)
+        day = _fmt_date(imp.fecha)
+        company_daily.setdefault(day, _metric_bucket())
+        _add_metric(company_daily[day], record)
+        if _branch_report_key(imp) == target_branch:
+            branch_sellers.add(skey)
+            _add_metric(branch_bucket, record)
+            branch_daily.setdefault(day, _metric_bucket())
+            _add_metric(branch_daily[day], record)
+
+    n_company = max(1, len(company_sellers))
+    n_branch = max(1, len(branch_sellers))
+    branch_metric = _finalize_metric(branch_bucket, include_margin=False)
+    company_metric = report["totals"]
+
+    def _per_seller(metric: dict[str, Any], count: int) -> dict[str, Any]:
+        tk = float(metric.get("tickets") or 0)
+        return {
+            "total_cobrado": round(float(metric.get("total_cobrado") or 0) / count, 2),
+            "unidades": round(float(metric.get("unidades") or 0) / count, 2),
+            "tickets": round(tk / count, 2),
+            "ticket_promedio": float(metric.get("ticket_promedio") or 0),
+            "unidades_por_ticket": round(float(metric.get("unidades") or 0) / tk, 2) if tk else 0.0,
+            "seller_count": count,
+        }
+
+    benchmarks = {
+        "sucursal": {**_per_seller(branch_metric, n_branch), "nombre": target_branch},
+        "empresa": {**_per_seller(company_metric, n_company), "nombre": "la empresa"},
+    }
+
+    # Serie diaria combinada: vendedor + promedio sucursal + promedio empresa.
+    all_days = sorted(set(seller_daily) | set(branch_daily) | set(company_daily))
+    daily_series = []
+    for day in all_days:
+        sd = seller_daily.get(day, {})
+        bd = branch_daily.get(day)
+        cd = company_daily.get(day)
+        daily_series.append({
+            "fecha": day,
+            "total_cobrado": round(float(sd.get("total_cobrado") or 0), 2),
+            "unidades": int(sd.get("unidades") or 0),
+            "sucursal_promedio": round(float(bd["total_cobrado"]) / n_branch, 2) if bd else 0.0,
+            "empresa_promedio": round(float(cd["total_cobrado"]) / n_company, 2) if cd else 0.0,
+        })
+
+    # Comparación vs período anterior.
+    previous = None
+    if compare_desde and compare_hasta:
+        prev_report = build_sellers_report(compare_desde, compare_hasta, sucursal, tipo, None, empresa=empresa, sucursales=sucursales)
+        prev_seller = next(
+            (s for s in prev_report["sellers"]
+             if s["vendedor_normalized"] == seller_norm or _normalize_seller(s["vendedor"]) == target),
+            None,
+        )
+        prev_metric = prev_seller or {}
+        prev_breakdowns = {"brand_mix": [], "category_mix": []}
+        if prev_seller:
+            prev_rows = _sales_rows_for_report(
+                prev_report["filters"]["fecha_desde"], prev_report["filters"]["fecha_hasta"],
+                sucursal, tipo, [seller_norm], empresa=empresa, sucursales=sucursales,
+            )
+            prev_breakdowns = _breakdowns_from_rows(prev_rows, float(prev_metric.get("total_cobrado") or 0))
+        previous = {
+            "filters": prev_report["filters"],
+            "seller": prev_metric or None,
+            "delta": _delta_metric(seller, prev_metric),
+            "brand_shifts": _mix_shifts(breakdowns["brand_mix"], prev_breakdowns.get("brand_mix", [])),
+            "category_shifts": _mix_shifts(breakdowns["category_mix"], prev_breakdowns.get("category_mix", [])),
+        }
+
+    insights = _seller_insights(seller, units_per_ticket, benchmarks, previous, breakdowns)
+
+    return {
+        "found": True,
+        "filters": filters,
+        "seller": {**seller, "unidades_por_ticket": units_per_ticket},
+        "breakdowns": {k: v for k, v in breakdowns.items() if k != "daily_series"},
+        "daily_series": daily_series,
+        "benchmarks": benchmarks,
+        "previous": previous,
+        "insights": insights,
+    }
+
+
 def get_sellers_filter_options() -> dict[str, Any]:
     """Devuelve empresas + sucursales disponibles para los filtros del dashboard.
 
