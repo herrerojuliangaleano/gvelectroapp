@@ -51,7 +51,7 @@ TOOLS: dict[str, ToolDef] = {
     "cer": {
         "id": "cer",
         "name": "Limpiar Comprobantes",
-        "description": "Procesa comprobantes emitidos y recibidos de ARCA y sube resultados a Drive. Los rangos largos se resumen en tablas por mes y total general.",
+        "description": "Procesa comprobantes emitidos y recibidos de ARCA y sube resultados a Drive. Los rangos largos se resumen en bloques visuales por mes y total general.",
         "icon": "🗂️",
         "color": "#8B5CF6",
         "script": "scripts/Limpiar Comprobantes Emitidos y Recibidos/cer.py",
@@ -74,7 +74,7 @@ TOOLS: dict[str, ToolDef] = {
             {"name": "fecha_referencia", "label": "Fecha de referencia", "type": "date", "required": False, "help": "Vacío = hoy. Sirve para decidir mes actual/anterior y nombrar el reporte."},
             {"name": "dia_corte_mes_anterior", "label": "Día de corte mes anterior", "type": "number", "required": False, "default": 11, "help": "Con 11: del día 1 al 10 procesa mes anterior + actual. Desde el 11 solo mes actual."},
             # ── Otro rango (colapsable) ───────────────────────────────────────
-            {"type": "section", "name": "_otro_rango", "label": "Seleccionar otro rango", "collapsible": True, "default_open": False, "help": "Para procesar un período distinto al flujo mensual: año completo, año pasado o un rango libre. El resultado queda en tablas con columna Período y total general."},
+            {"type": "section", "name": "_otro_rango", "label": "Seleccionar otro rango", "collapsible": True, "default_open": False, "help": "Para procesar un período distinto al flujo mensual: año completo, año pasado o un rango libre. El resultado queda en bloques visuales por mes y total general."},
             {"name": "rango_tipo", "label": "Tipo de período", "type": "select", "section": "_otro_rango", "default": "anio_pasado", "options": [
                 {"label": "Este año completo", "value": "anio_actual"},
                 {"label": "Año pasado completo", "value": "anio_pasado"},
