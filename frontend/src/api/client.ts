@@ -16,6 +16,7 @@ import type {
   SalesBISellersReport,
   SalesBISellersCompare,
   SalesBISellerProfile,
+  SalesBICategoryGap,
   SalesBISellersOptions,
   SalesBICommercialAnalyzeResponse,
   SalesBICommercialBatch,
@@ -990,6 +991,20 @@ export async function fetchSalesBISellerProfile(params: {
   compare_hasta?: string;
 }): Promise<SalesBISellerProfile> {
   return request(`/api/sales-bi/sellers/profile${buildQs(params)}`);
+}
+
+export async function fetchSalesBISellerCategoryGap(params: {
+  vendedor: string;
+  fecha_desde?: string;
+  fecha_hasta?: string;
+  sucursal?: string;
+  sucursales?: string;
+  empresa?: string;
+  tipo?: string;
+  referente?: string;
+  referente_vendedor?: string;
+}): Promise<SalesBICategoryGap> {
+  return request(`/api/sales-bi/sellers/category-gap${buildQs(params)}`);
 }
 
 export async function exportSalesBISellersPdf(payload: {

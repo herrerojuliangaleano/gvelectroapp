@@ -29,13 +29,14 @@ import {
 
 import {
   can, createSalesBIProductAlias, exportSalesBISellersPdf, exportSalesBISellersXlsx,
-  fetchSalesBISellerProfile, fetchSalesBISellersCompare, fetchSalesBISellersOptions,
-  fetchSalesBISellersReport, fetchSalesBIUnmatchedProducts, rematchSalesBIImport, searchProducts,
+  fetchSalesBISellerCategoryGap, fetchSalesBISellerProfile, fetchSalesBISellersCompare,
+  fetchSalesBISellersOptions, fetchSalesBISellersReport, fetchSalesBIUnmatchedProducts,
+  rematchSalesBIImport, searchProducts,
 } from '../api/client';
 import type {
-  ProductInfo, SalesBICoachingItem, SalesBIDailyMetric, SalesBIMixMetric, SalesBISellerMetric,
-  SalesBISellerProfile, SalesBISellersCompare, SalesBISellersOptions, SalesBISellersReport,
-  SalesBITopProduct, SalesBIUnmatchedProduct,
+  ProductInfo, SalesBICategoryGap, SalesBICoachingItem, SalesBIDailyMetric, SalesBIMixMetric,
+  SalesBISellerMetric, SalesBISellerProfile, SalesBISellersCompare, SalesBISellersOptions,
+  SalesBISellersReport, SalesBITopProduct, SalesBIUnmatchedProduct,
 } from '../types';
 import {
   CHART_ANIM, CHART_ANIM_FAST, CHART_TOOLTIP_STYLE, ChartCard, DeltaPill,
@@ -915,36 +916,6 @@ function SellerBrandBars({ data }: { data: SalesBIMixMetric[] }) {
   );
 }
 
-function CategoryBars({ data }: { data: SalesBIMixMetric[] }) {
-  const isDesktop = useIsDesktop();
-  if (!isDesktop) {
-    // Horizontal en mobile — las 5 categorías son "LINEA BLANCA",
-    // "CLIMATIZACION", "TV / AUDIO" etc. que rotadas no entran.
-    return (
-      <ResponsiveContainer width="100%" height={Math.max(180, data.length * 36 + 40)}>
-        <BarChart data={data} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" horizontal={false} />
-          <XAxis type="number" stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`} />
-          <YAxis type="category" dataKey="name" stroke="var(--text-3)" tick={{ fontSize: 11 }} width={110} interval={0} />
-          <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
-          <Bar dataKey="total_cobrado" fill="var(--chart-amber)" radius={[0, 4, 4, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
-        </BarChart>
-      </ResponsiveContainer>
-    );
-  }
-  return (
-    <ResponsiveContainer width="100%" height={220}>
-      <BarChart data={data}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-        <XAxis dataKey="name" stroke="var(--text-3)" tick={{ fontSize: 10 }} interval={0} angle={-15} textAnchor="end" height={50} />
-        <YAxis stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1_000_000).toFixed(1)}M`} />
-        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
-        <Bar dataKey="total_cobrado" fill="var(--chart-amber)" radius={[4, 4, 0, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
-      </BarChart>
-    </ResponsiveContainer>
-  );
-}
-
 function CompareBrandBars({ data, aName, bName }: { data: Array<{ name: string; A: number; B: number }>; aName: string; bName: string }) {
   const isDesktop = useIsDesktop();
   if (!isDesktop) {
@@ -1097,6 +1068,132 @@ function ClickableKpi({ onClick, disabled, children }: { onClick: () => void; di
         <Search size={9} /> detalle
       </span>
     </button>
+  );
+}
+
+// Análisis por categoría: qué vende y qué le falta vs un referente seleccionable.
+function CategoryGapCard({ sellerId, sellers, filters }: {
+  sellerId: string;
+  sellers: SalesBISellerMetric[];
+  filters: { desde: string; hasta: string; empresa: string; sucursales: string; tipo: string };
+}) {
+  const [referente, setReferente] = useState('sucursal');
+  const [refVendedor, setRefVendedor] = useState('');
+  const [data, setData] = useState<SalesBICategoryGap | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (referente === 'vendedor' && (!refVendedor || refVendedor === sellerId)) {
+      const other = sellers.find((s) => s.vendedor_normalized !== sellerId);
+      if (other) setRefVendedor(other.vendedor_normalized);
+    }
+  }, [referente, refVendedor, sellers, sellerId]);
+
+  useEffect(() => {
+    if (!sellerId) return;
+    if (referente === 'vendedor' && !refVendedor) return;
+    let cancelled = false;
+    setLoading(true);
+    fetchSalesBISellerCategoryGap({
+      vendedor: sellerId,
+      fecha_desde: filters.desde, fecha_hasta: filters.hasta,
+      empresa: filters.empresa || undefined,
+      sucursales: filters.sucursales || undefined,
+      tipo: filters.tipo || undefined,
+      referente,
+      referente_vendedor: referente === 'vendedor' ? refVendedor : undefined,
+    })
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch(() => { if (!cancelled) setData(null); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [sellerId, referente, refVendedor, filters.desde, filters.hasta, filters.empresa, filters.sucursales, filters.tipo]);
+
+  const cats = data?.categorias ?? [];
+  const maxMix = Math.max(1, ...cats.map((c) => Math.max(c.mix_pct, c.ref_mix_pct)));
+  const refName = data?.referente?.nombre || 'referente';
+  const hueco = [...cats].filter((c) => c.gap_pct <= -3).sort((a, b) => a.gap_pct - b.gap_pct)[0];
+  const selectCls = 'rounded-lg border border-[color:var(--border)] bg-[color:var(--surface-2)] px-2.5 py-1.5 text-xs text-[color:var(--text)] outline-none focus:border-[color:var(--chart-blue)]';
+
+  return (
+    <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)]/60 p-4 backdrop-blur sm:p-5">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-sm font-black text-[color:var(--text)]">Qué vende y qué le falta — por categoría</div>
+          <div className="text-[11px] text-[color:var(--text-3)]">Su mix vs el del referente. Gap negativo = sub-vende esa categoría.</div>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-[color:var(--text-3)]">Comparar vs</span>
+          <select className={selectCls} value={referente} onChange={(e) => setReferente(e.target.value)}>
+            <option value="sucursal">Promedio sucursal</option>
+            <option value="empresa">Promedio empresa</option>
+            <option value="online">Canal online</option>
+            <option value="top">Top de la sucursal</option>
+            <option value="vendedor">Otro vendedor…</option>
+          </select>
+          {referente === 'vendedor' && (
+            <select className={selectCls} value={refVendedor} onChange={(e) => setRefVendedor(e.target.value)}>
+              {sellers.filter((s) => s.vendedor_normalized !== sellerId).map((s) => (
+                <option key={s.vendedor_normalized} value={s.vendedor_normalized}>{s.vendedor}</option>
+              ))}
+            </select>
+          )}
+        </div>
+      </div>
+
+      {hueco && (
+        <div className="mb-3 rounded-xl border border-[color:var(--chart-amber)]/30 bg-[color:var(--chart-amber)]/10 px-3 py-2 text-xs text-[color:var(--chart-amber)]">
+          <b>Mayor oportunidad:</b> {hueco.categoria} — vende {hueco.mix_pct}% de su mix vs {hueco.ref_mix_pct}% de {refName}.
+        </div>
+      )}
+
+      {loading && !data ? (
+        <div className="flex items-center gap-2 py-6 text-sm text-[color:var(--text-3)]"><Loader2 size={14} className="animate-spin" /> Cargando…</div>
+      ) : cats.length === 0 ? (
+        <p className="py-6 text-center text-xs text-[color:var(--text-3)]">Sin datos de categorías en este período.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[color:var(--border)] text-left text-[10px] uppercase tracking-wide text-[color:var(--text-3)]">
+                <th className="py-2 pr-3">Categoría</th>
+                <th className="py-2 pr-3">Vos (mix)</th>
+                <th className="py-2 pr-3 text-right">{refName}</th>
+                <th className="py-2 pr-3 text-right">Gap</th>
+                <th className="py-2 text-right">En tus tickets</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cats.map((c) => {
+                const good = c.gap_pct >= 0;
+                const color = good ? 'var(--chart-positive)' : 'var(--chart-negative)';
+                return (
+                  <tr key={c.categoria} className="border-b border-[color:var(--border)]/50">
+                    <td className="py-2 pr-3 font-bold text-[color:var(--text)]">{c.categoria}</td>
+                    <td className="py-2 pr-3">
+                      <div className="flex items-center gap-2">
+                        <span className="w-12 shrink-0 tabular-nums text-[color:var(--text-2)]">{c.mix_pct}%</span>
+                        <span className="hidden h-1.5 flex-1 overflow-hidden rounded-full bg-[color:var(--surface-2)] sm:block">
+                          <span className="block h-full rounded-full bg-[color:var(--chart-blue)]" style={{ width: `${Math.max(2, c.mix_pct / maxMix * 100)}%` }} />
+                        </span>
+                      </div>
+                    </td>
+                    <td className="py-2 pr-3 text-right tabular-nums text-[color:var(--text-3)]">{c.ref_mix_pct}%</td>
+                    <td className="py-2 pr-3 text-right">
+                      <span className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-bold tabular-nums" style={{ color, background: `color-mix(in oklch, ${color} 13%, transparent)` }}>
+                        {good ? <ArrowUpRight size={11} /> : <ArrowDownRight size={11} />}{good ? '+' : ''}{c.gap_pct}%
+                      </span>
+                    </td>
+                    <td className="py-2 text-right tabular-nums text-[color:var(--text-3)]">{c.penetracion_pct}%</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p className="mt-2 text-[10px] text-[color:var(--text-3)]">"En tus tickets" = en qué % de sus ventas aparece esa categoría (si la ofrece o no).</p>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1325,36 +1422,33 @@ function ProfileTab({
         </p>
       )}
 
-      {/* Evolución triple — datos REALES del vendedor */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        <ChartCard title="Evolución diaria personal" subtitle="vs promedio sucursal / empresa" className="lg:col-span-2">
-          <ResponsiveContainer width="100%" height={260}>
-            <LineChart data={dailyData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-              <XAxis dataKey="fecha" stroke="var(--text-3)" tick={{ fontSize: 11 }} />
-              <YAxis stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
-              <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
-              <Legend wrapperStyle={{ fontSize: 12, color: 'var(--text-2)' }} />
-              <Line type="monotone" dataKey="vendedor" name={seller.vendedor} stroke="var(--chart-blue)" strokeWidth={2.5} dot={{ r: 3 }} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
-              <Line type="monotone" dataKey="sucursal" name="Prom. sucursal" stroke="var(--chart-teal)" strokeWidth={2} strokeDasharray="4 4" dot={false} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={120} animationEasing={CHART_ANIM.easing} />
-              <Line type="monotone" dataKey="empresa" name="Prom. empresa" stroke="var(--chart-ghost)" strokeWidth={2} strokeDasharray="2 3" dot={false} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={240} animationEasing={CHART_ANIM.easing} />
-            </LineChart>
-          </ResponsiveContainer>
-        </ChartCard>
+      {/* Análisis por categoría — qué vende y qué le falta (vs referente) */}
+      <CategoryGapCard sellerId={sellerId} sellers={sellers} filters={filters} />
 
-        <ChartCard title="Mix por categoría" subtitle="lo que vende, real">
-          <CategoryBars data={profile.breakdowns.category_mix} />
-        </ChartCard>
-      </div>
+      {/* Evolución diaria — datos REALES del vendedor */}
+      <ChartCard title="Evolución diaria personal" subtitle="vs promedio sucursal / empresa">
+        <ResponsiveContainer width="100%" height={260}>
+          <LineChart data={dailyData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+            <XAxis dataKey="fecha" stroke="var(--text-3)" tick={{ fontSize: 11 }} />
+            <YAxis stroke="var(--text-3)" tick={{ fontSize: 10 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+            <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v) => money(Number(v ?? 0))} />
+            <Legend wrapperStyle={{ fontSize: 12, color: 'var(--text-2)' }} />
+            <Line type="monotone" dataKey="vendedor" name={seller.vendedor} stroke="var(--chart-blue)" strokeWidth={2.5} dot={{ r: 3 }} isAnimationActive animationDuration={CHART_ANIM.duration} animationEasing={CHART_ANIM.easing} />
+            <Line type="monotone" dataKey="sucursal" name="Prom. sucursal" stroke="var(--chart-teal)" strokeWidth={2} strokeDasharray="4 4" dot={false} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={120} animationEasing={CHART_ANIM.easing} />
+            <Line type="monotone" dataKey="empresa" name="Prom. empresa" stroke="var(--chart-ghost)" strokeWidth={2} strokeDasharray="2 3" dot={false} isAnimationActive animationDuration={CHART_ANIM.duration} animationBegin={240} animationEasing={CHART_ANIM.easing} />
+          </LineChart>
+        </ResponsiveContainer>
+      </ChartCard>
 
-      {/* Marcas + top productos — REALES */}
+      {/* Top productos + marcas (marca secundaria — para campañas puntuales) */}
       <div className="grid gap-4 lg:grid-cols-2">
-        <ChartCard title="Marcas que más vende" subtitle="su mix real de marcas">
-          <SellerBrandBars data={profile.breakdowns.brand_mix.slice(0, 8)} />
-        </ChartCard>
-
         <ChartCard title="Top productos del vendedor" subtitle="lo que empuja sus números">
           <TopProductsList products={profile.breakdowns.top_products.slice(0, 6)} totalCobrado={seller.total_cobrado} />
+        </ChartCard>
+
+        <ChartCard title="Marcas que más vende" subtitle="dato secundario — útil para empujar una marca">
+          <SellerBrandBars data={profile.breakdowns.brand_mix.slice(0, 8)} />
         </ChartCard>
       </div>
 

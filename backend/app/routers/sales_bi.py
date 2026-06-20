@@ -14,6 +14,7 @@ from ..sales_bi import (
     delete_temp_file,
     delete_product_alias,
     find_branch,
+    build_category_gap,
     build_seller_profile,
     build_sellers_report,
     get_active_import,
@@ -862,6 +863,27 @@ def get_seller_profile(
         sucursales=sucursales,
         compare_desde=compare_desde,
         compare_hasta=compare_hasta,
+    )
+
+
+@router.get("/sellers/category-gap")
+def get_seller_category_gap(
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    vendedor: str = Query(..., description="vendedor_normalized o nombre"),
+    fecha_desde: str | None = Query(default=None),
+    fecha_hasta: str | None = Query(default=None),
+    sucursal: str | None = Query(default=None),
+    sucursales: str | None = Query(default=None),
+    empresa: str | None = Query(default=None),
+    tipo: str | None = Query(default=None),
+    referente: str = Query(default="sucursal", description="sucursal | empresa | online | top | vendedor"),
+    referente_vendedor: str = Query(default=""),
+):
+    _require(user, "sales_bi.view")
+    return build_category_gap(
+        vendedor, fecha_desde, fecha_hasta, sucursal, tipo,
+        empresa=empresa, sucursales=sucursales,
+        referente=referente, referente_vendedor=referente_vendedor,
     )
 
 

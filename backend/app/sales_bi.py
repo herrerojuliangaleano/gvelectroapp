@@ -2641,6 +2641,126 @@ def build_seller_profile(
     }
 
 
+def _category_buckets(rows) -> dict[str, dict[str, Any]]:
+    cats: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    for record, imp in rows:
+        _add_metric(cats[str(record.categoria or "Sin categoría")], record)
+    return cats
+
+
+def _category_penetration(rows) -> tuple[dict[str, float], int]:
+    """% de tickets (remitos) que incluyen cada categoría."""
+    ticket_cats: dict[str, set[str]] = defaultdict(set)
+    for record, imp in rows:
+        rk = str(record.remito or "").strip() or f"linea-{record.id}"
+        ticket_cats[rk].add(str(record.categoria or "Sin categoría"))
+    total = len(ticket_cats) or 1
+    pen: dict[str, int] = defaultdict(int)
+    for cats in ticket_cats.values():
+        for c in cats:
+            pen[c] += 1
+    return {c: round(n / total * 100, 1) for c, n in pen.items()}, len(ticket_cats)
+
+
+def build_category_gap(
+    vendedor: str,
+    fecha_desde: str | None = None,
+    fecha_hasta: str | None = None,
+    sucursal: str | None = None,
+    tipo: str | None = None,
+    *,
+    empresa: str | None = None,
+    sucursales: list[str] | str | None = None,
+    referente: str = "sucursal",
+    referente_vendedor: str = "",
+) -> dict[str, Any]:
+    """Compara el mix por categoría del vendedor contra un referente
+    (sucursal | empresa | online | top | otro vendedor) para ver qué vende y
+    qué le falta. Devuelve por categoría: cobrado/unidades/tickets del vendedor,
+    su % del mix, su penetración (% de tickets), el % del mix del referente y el
+    gap (negativo = sub-vende esa categoría = oportunidad)."""
+    report = build_sellers_report(fecha_desde, fecha_hasta, sucursal, tipo, None, empresa=empresa, sucursales=sucursales)
+    filters = report["filters"]
+    fd, fh = filters["fecha_desde"], filters["fecha_hasta"]
+    target = _normalize_seller(vendedor)
+    seller = next(
+        (s for s in report["sellers"]
+         if s["vendedor_normalized"] == vendedor or s["vendedor_normalized"] == target
+         or _normalize_seller(s["vendedor"]) == target),
+        None,
+    )
+    if not seller:
+        return {"found": False, "vendedor": vendedor}
+    seller_norm = seller["vendedor_normalized"]
+    branch = seller.get("sucursal") or ""
+
+    seller_rows = _sales_rows_for_report(fd, fh, sucursal, tipo, [seller_norm], empresa=empresa, sucursales=sucursales)
+    seller_cats = _category_buckets(seller_rows)
+    seller_pen, _ = _category_penetration(seller_rows)
+    seller_total = sum(float(_finalize_metric(b, include_margin=False)["total_cobrado"]) for b in seller_cats.values()) or 1.0
+
+    # ── Referente ────────────────────────────────────────────────────────
+    ref_label = "Promedio sucursal"
+    if referente == "empresa":
+        ref_rows = _sales_rows_for_report(fd, fh, None, tipo, None, empresa=empresa, sucursales=sucursales)
+        ref_label = "Promedio empresa"
+    elif referente == "online":
+        ref_rows = _sales_rows_for_report(fd, fh, None, "online", None, empresa=empresa, sucursales=sucursales)
+        ref_label = "Canal online"
+    elif referente == "vendedor" and referente_vendedor:
+        rv = _normalize_seller(referente_vendedor)
+        ref_rows = _sales_rows_for_report(fd, fh, None, None, [rv], empresa=empresa, sucursales=sucursales)
+        rv_seller = next((s for s in report["sellers"] if s["vendedor_normalized"] == rv), None)
+        ref_label = rv_seller["vendedor"] if rv_seller else referente_vendedor
+    elif referente == "top":
+        # top de la sucursal del vendedor (si es el mismo, tomar el #2)
+        branch_sellers = [s for s in report["sellers"] if (s.get("sucursal") or "") == branch]
+        branch_sellers.sort(key=lambda s: float(s.get("total_cobrado") or 0), reverse=True)
+        top = next((s for s in branch_sellers if s["vendedor_normalized"] != seller_norm), None)
+        if not top:
+            ref_rows = []
+            ref_label = "Sin referente"
+        else:
+            ref_rows = _sales_rows_for_report(fd, fh, None, None, [top["vendedor_normalized"]], empresa=empresa, sucursales=sucursales)
+            ref_label = f"{top['vendedor']} (top {branch})"
+    else:  # sucursal (default): filas de la sucursal del vendedor
+        referente = "sucursal"
+        all_rows = _sales_rows_for_report(fd, fh, None, tipo, None, empresa=empresa, sucursales=sucursales)
+        ref_rows = [(r, imp) for (r, imp) in all_rows if _branch_report_key(imp) == branch]
+        ref_label = f"Promedio {branch}" if branch else "Promedio sucursal"
+
+    ref_cats = _category_buckets(ref_rows)
+    ref_total = sum(float(_finalize_metric(b, include_margin=False)["total_cobrado"]) for b in ref_cats.values()) or 1.0
+
+    nombres = set(seller_cats) | set(ref_cats)
+    categorias = []
+    for cat in nombres:
+        sm = _finalize_metric(seller_cats[cat], include_margin=False) if cat in seller_cats else {"total_cobrado": 0.0, "unidades": 0, "tickets": 0}
+        rm = _finalize_metric(ref_cats[cat], include_margin=False) if cat in ref_cats else {"total_cobrado": 0.0}
+        seller_pct = round(float(sm["total_cobrado"]) / seller_total * 100, 1)
+        ref_pct = round(float(rm["total_cobrado"]) / ref_total * 100, 1)
+        categorias.append({
+            "categoria": cat,
+            "cobrado": float(sm["total_cobrado"]),
+            "unidades": int(sm.get("unidades") or 0),
+            "tickets": int(sm.get("tickets") or 0),
+            "mix_pct": seller_pct,
+            "penetracion_pct": seller_pen.get(cat, 0.0),
+            "ref_mix_pct": ref_pct,
+            "gap_pct": round(seller_pct - ref_pct, 1),
+        })
+    # Orden: por importancia en el referente (las categorías que mueven la aguja).
+    categorias.sort(key=lambda c: c["ref_mix_pct"], reverse=True)
+
+    return {
+        "found": True,
+        "vendedor": seller["vendedor"],
+        "filters": filters,
+        "referente": {"tipo": referente, "nombre": ref_label},
+        "categorias": categorias,
+    }
+
+
 def get_sellers_filter_options() -> dict[str, Any]:
     """Devuelve empresas + sucursales disponibles para los filtros del dashboard.
 

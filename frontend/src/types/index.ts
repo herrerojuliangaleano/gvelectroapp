@@ -698,6 +698,23 @@ export interface SalesBISellersCompare {
   }>;
 }
 
+export interface SalesBICategoryGapRow {
+  categoria: string;
+  cobrado: number;
+  unidades: number;
+  tickets: number;
+  mix_pct: number;
+  penetracion_pct: number;
+  ref_mix_pct: number;
+  gap_pct: number;
+}
+export interface SalesBICategoryGap {
+  found: boolean;
+  vendedor?: string;
+  referente?: { tipo: string; nombre: string };
+  categorias: SalesBICategoryGapRow[];
+}
+
 // ── Perfil individual del vendedor (datos reales + coaching) ────────────────
 export interface SalesBISellerBenchmark {
   total_cobrado: number;
