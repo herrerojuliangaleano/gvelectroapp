@@ -1276,6 +1276,20 @@ def escribir_hoja_proveedores(sheets_service, spreadsheet_id: str, sheet_id: int
 # =========================================================
 # PROCESAMIENTO
 # =========================================================
+def _filtrar_si_corresponde(raw: pd.DataFrame, range_start: date | None, range_end: date | None, etiqueta: str) -> pd.DataFrame:
+    """Filtra por fecha del comprobante al período pedido. Si el archivo no
+    tiene una columna de fecha usable, procesa el archivo completo (avisa)."""
+    if range_start is None or range_end is None:
+        return raw
+    try:
+        filtrado = filtrar_por_rango_fecha(raw, range_start, range_end, etiqueta)
+        print(f"[INFO] {etiqueta}: {len(filtrado)} de {len(raw)} filas en {range_start} a {range_end}.")
+        return filtrado
+    except Exception as e:
+        print(f"[AVISO] {etiqueta}: no se pudo filtrar por fecha ({e}); se procesa el archivo completo.")
+        return raw
+
+
 def procesar_sucursal(
     sucursal: str,
     ventas_path: Path | None,
@@ -1284,6 +1298,8 @@ def procesar_sucursal(
     sheets_service,
     titulo_drive: str,
     period_label: str = "Período",
+    range_start: date | None = None,
+    range_end: date | None = None,
 ) -> str:
     if sucursal not in DRIVE_FOLDER_IDS:
         raise ValueError(f"No hay carpeta de Drive configurada para la sucursal '{sucursal}'.")
@@ -1309,14 +1325,14 @@ def procesar_sucursal(
     hojas_generadas: list[str] = []
 
     if ventas_path:
-        # IMPORTANTE: no se filtran filas por fecha. Se procesa el archivo completo.
-        resumen_ventas = calcular_ventas(leer_emitidos(ventas_path))
+        ventas_raw = _filtrar_si_corresponde(leer_emitidos(ventas_path), range_start, range_end, f"Ventas {sucursal}")
+        resumen_ventas = calcular_ventas(ventas_raw)
         escribir_hoja_bloques(sheets_service, spreadsheet_id, mapa["Ventas"], "Ventas",
                               [(period_label, _bloques_metricas(resumen_ventas, "Ventas"))])
         hojas_generadas.append("Ventas")
 
     if compras_path:
-        compras_raw = leer_recibidos(compras_path)
+        compras_raw = _filtrar_si_corresponde(leer_recibidos(compras_path), range_start, range_end, f"Compras {sucursal}")
         escribir_hoja_bloques(sheets_service, spreadsheet_id, mapa["Compras"], "Compras",
                               [(period_label, _bloques_metricas(calcular_compras(compras_raw), "Compras"))])
         hojas_generadas.append("Compras")
@@ -1420,6 +1436,7 @@ def procesar_periodo(ctx: dict[str, Any], fecha_ref: date, cantidad_periodos: in
             print(f"[AVISO] {sucursal}: no se encontró archivo de compras — se procesará solo ventas.")
 
         try:
+            mes_ref = ctx.get("date") or fecha_ref
             procesar_sucursal(
                 sucursal=sucursal,
                 ventas_path=ventas_path,
@@ -1427,7 +1444,9 @@ def procesar_periodo(ctx: dict[str, Any], fecha_ref: date, cantidad_periodos: in
                 drive_service=drive_service,
                 sheets_service=sheets_service,
                 titulo_drive=titulo_reporte(sucursal, ctx, fecha_ref),
-                period_label=etiqueta_mes(ctx.get("date") or fecha_ref),
+                period_label=etiqueta_mes(mes_ref),
+                range_start=primer_dia_mes(mes_ref),
+                range_end=ultimo_dia_mes(mes_ref),
             )
         except HttpError as e:
             print(f"[ERROR GOOGLE API] {sucursal} {ctx['label']}: {e}")
@@ -1473,6 +1492,7 @@ def procesar_periodo_mensualizado(ctx: dict[str, Any], fecha_ref: date, cantidad
                     range_end=ctx["range_end"],
                 )
             else:
+                mes_ref = ctx.get("date") or fecha_ref
                 procesar_sucursal(
                     sucursal=sucursal,
                     ventas_path=ventas_path,
@@ -1480,7 +1500,9 @@ def procesar_periodo_mensualizado(ctx: dict[str, Any], fecha_ref: date, cantidad
                     drive_service=drive_service,
                     sheets_service=sheets_service,
                     titulo_drive=titulo_reporte(sucursal, ctx, fecha_ref),
-                    period_label=etiqueta_mes(ctx.get("date") or fecha_ref),
+                    period_label=etiqueta_mes(mes_ref),
+                    range_start=primer_dia_mes(mes_ref),
+                    range_end=ultimo_dia_mes(mes_ref),
                 )
         except HttpError as e:
             print(f"[ERROR GOOGLE API] {sucursal} {ctx['label']}: {e}")
