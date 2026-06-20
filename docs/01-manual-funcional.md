@@ -645,6 +645,13 @@ subida de archivos, logs y seguimiento de jobs.
 | `nvsc` | Normalizar Ventas VS Costos | Cruza ventas contra planilla madre. |
 | `vsc` | Ventas VS Costos | Sincroniza libro diario con mensual. |
 
+### Limpiar Comprobantes (`cer`)
+
+- El flujo mensual normal mantiene la lógica original: mes actual, mes pasado o ambos se procesan como archivos completos separados.
+- En **Seleccionar otro rango** (`este año`, `año pasado` o `rango personalizado`), el resultado se genera en Drive con pestañas por mes y pestañas `TOTAL`.
+- La separación mensual usa la fecha interna del comprobante de ARCA, no el nombre del archivo.
+- Para rangos largos, los archivos subidos deben incluir columna de fecha de comprobante/emisión en emitidos y recibidos.
+
 ### Permisos relevantes
 
 `tools.view`, `tools.run.*`, `jobs.view`, `jobs.cancel`.

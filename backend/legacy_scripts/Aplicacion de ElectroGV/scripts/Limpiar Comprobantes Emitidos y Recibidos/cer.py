@@ -54,6 +54,16 @@ PATRON_VENTAS = "emitidos"    # cualquier archivo que tenga "emitidos" en el nom
 PATRON_COMPRAS = "recibidos"  # cualquier archivo que tenga "recibidos" en el nombre
 EXTENSIONES_VALIDAS = {".csv", ".xlsx", ".xls"}
 GOOGLE_SHEETS_MIME = "application/vnd.google-apps.spreadsheet"
+FECHA_CANDIDATOS = [
+    "fecha_de_comprobante",
+    "fecha comprobante",
+    "fecha_comprobante",
+    "fecha_cbte",
+    "fecha_de_emision",
+    "fecha emision",
+    "fecha_emision",
+    "fecha",
+]
 
 # =========================================================
 # UTILIDADES DE TEXTO
@@ -96,6 +106,89 @@ def buscar_columna_flexible(df: pd.DataFrame, candidatos: list[str]) -> str | No
                 return col
 
     return None
+
+
+def buscar_columna_fecha(df: pd.DataFrame) -> str | None:
+    return buscar_columna_flexible(df, FECHA_CANDIDATOS)
+
+
+def serie_a_fechas(serie: pd.Series) -> pd.Series:
+    raw = serie.astype(str).str.strip()
+    raw = raw.replace({"": pd.NA, "nan": pd.NA, "NaN": pd.NA, "None": pd.NA, "none": pd.NA})
+
+    fechas = pd.to_datetime(raw, errors="coerce", dayfirst=True)
+
+    mask_iso = fechas.isna() & raw.str.fullmatch(r"\d{4}-\d{1,2}-\d{1,2}", na=False)
+    if mask_iso.any():
+        fechas.loc[mask_iso] = pd.to_datetime(raw.loc[mask_iso], format="%Y-%m-%d", errors="coerce")
+
+    mask_dmy_slash = fechas.isna() & raw.str.fullmatch(r"\d{1,2}/\d{1,2}/\d{4}", na=False)
+    if mask_dmy_slash.any():
+        fechas.loc[mask_dmy_slash] = pd.to_datetime(raw.loc[mask_dmy_slash], format="%d/%m/%Y", errors="coerce")
+
+    mask_dmy_dash = fechas.isna() & raw.str.fullmatch(r"\d{1,2}-\d{1,2}-\d{4}", na=False)
+    if mask_dmy_dash.any():
+        fechas.loc[mask_dmy_dash] = pd.to_datetime(raw.loc[mask_dmy_dash], format="%d-%m-%Y", errors="coerce")
+
+    mask_yyyymmdd = fechas.isna() & raw.str.fullmatch(r"\d{8}", na=False)
+    if mask_yyyymmdd.any():
+        fechas.loc[mask_yyyymmdd] = pd.to_datetime(raw.loc[mask_yyyymmdd], format="%Y%m%d", errors="coerce")
+
+    numericas = pd.to_numeric(raw.str.replace(",", ".", regex=False), errors="coerce")
+    mask_serial = fechas.isna() & numericas.between(25000, 70000)
+    if mask_serial.any():
+        fechas.loc[mask_serial] = pd.to_datetime(numericas.loc[mask_serial], unit="D", origin="1899-12-30", errors="coerce")
+
+    return fechas
+
+
+def filtrar_por_rango_fecha(df: pd.DataFrame, desde: date, hasta: date, etiqueta: str) -> pd.DataFrame:
+    col_fecha = buscar_columna_fecha(df)
+    if not col_fecha:
+        raise ValueError(
+            f"{etiqueta}: no se encontro una columna de fecha para mensualizar. "
+            f"Columnas encontradas: {list(df.columns)}"
+        )
+
+    fechas = serie_a_fechas(df[col_fecha])
+    if fechas.notna().sum() == 0:
+        raise ValueError(
+            f"{etiqueta}: se encontro la columna de fecha '{col_fecha}', "
+            "pero no se pudo interpretar ningun valor."
+        )
+
+    desde_ts = pd.Timestamp(desde)
+    hasta_ts = pd.Timestamp(hasta)
+    mask = (fechas >= desde_ts) & (fechas <= hasta_ts)
+    return df.loc[mask].copy().reset_index(drop=True)
+
+
+def primer_dia_mes(fecha: date) -> date:
+    return date(fecha.year, fecha.month, 1)
+
+
+def ultimo_dia_mes(fecha: date) -> date:
+    if fecha.month == 12:
+        return date(fecha.year, 12, 31)
+    siguiente = date(fecha.year, fecha.month + 1, 1)
+    return date.fromordinal(siguiente.toordinal() - 1)
+
+
+def iterar_meses(desde: date, hasta: date) -> list[date]:
+    meses: list[date] = []
+    cursor = primer_dia_mes(desde)
+    limite = primer_dia_mes(hasta)
+    while cursor <= limite:
+        meses.append(cursor)
+        if cursor.month == 12:
+            cursor = date(cursor.year + 1, 1, 1)
+        else:
+            cursor = date(cursor.year, cursor.month + 1, 1)
+    return meses
+
+
+def rango_mes_en_periodo(mes: date, desde: date, hasta: date) -> tuple[date, date]:
+    return max(mes, desde), min(ultimo_dia_mes(mes), hasta)
 
 
 def detectar_fila_encabezado(
@@ -300,7 +393,11 @@ def leer_emitidos(ruta: Path) -> pd.DataFrame:
         raw = pd.read_excel(ruta, header=None, dtype=str)
     else:
         raise ValueError(f"Formato no soportado para emitidos: {ruta.name}")
-    return _normalizar_emitidos(raw, ruta.name)
+    df = _normalizar_emitidos(raw, ruta.name)
+    col_fecha = buscar_columna_fecha(df)
+    if col_fecha and col_fecha != "fecha":
+        df["fecha"] = df[col_fecha]
+    return df
 
 
 def _seleccionar_recibidos(df: pd.DataFrame) -> pd.DataFrame | None:
@@ -316,7 +413,9 @@ def _seleccionar_recibidos(df: pd.DataFrame) -> pd.DataFrame | None:
     # Proveedor = quien emite el comprobante recibido. Candidatos específicos
     # primero para no agarrar "Denominación Receptor" ni "Tipo Doc. Emisor".
     col_prov = buscar_columna_flexible(df, ["denominacion_emisor", "denominacionemisor", "razon_social_emisor", "denominacion"])
+    col_fecha = buscar_columna_fecha(df)
     return pd.DataFrame({
+        "fecha": df[col_fecha] if col_fecha else "",
         "tipo": df[col_tipo],
         "total_iva": df[col_iva],
         "imp_neto_gravado": df[col_neto] if col_neto else "",
@@ -721,8 +820,10 @@ def resolver_periodos(
     actual = date(fecha_ref.year, fecha_ref.month, 1)
     anterior = mes_anterior(fecha_ref)
 
-    def ctx(period_date: date, key: str, label: str, title_suffix: str) -> dict[str, Any]:
-        return {"date": period_date, "key": key, "label": label, "title_suffix": title_suffix}
+    def ctx(period_date: date, key: str, label: str, title_suffix: str, **extra: Any) -> dict[str, Any]:
+        data = {"date": period_date, "key": key, "label": label, "title_suffix": title_suffix}
+        data.update(extra)
+        return data
 
     current = ctx(actual, "actual", "MES ACTUAL", "")
     prev = ctx(anterior, "mes_pasado", "MES PASADO", "MES PASADO")
@@ -753,6 +854,55 @@ def resolver_periodos(
         return [ctx(fecha_ref, "otro_periodo", label, label)]
 
     raise ValueError(f"Modo de períodos no reconocido: {modo}")
+
+
+def resolver_periodos_mensualizado(
+    modo: str,
+    fecha_ref: date,
+    cutoff_day: int,
+    fecha_desde_otro: str = "",
+    fecha_hasta_otro: str = "",
+) -> list[dict[str, Any]]:
+    modo = normalizar_modo_periodo(modo)
+    actual = date(fecha_ref.year, fecha_ref.month, 1)
+    anterior = mes_anterior(fecha_ref)
+
+    def ctx(period_date: date, key: str, label: str, title_suffix: str, **extra: Any) -> dict[str, Any]:
+        data = {"date": period_date, "key": key, "label": label, "title_suffix": title_suffix}
+        data.update(extra)
+        return data
+
+    current = ctx(actual, "actual", "MES ACTUAL", "")
+    prev = ctx(anterior, "mes_pasado", "MES PASADO", "MES PASADO")
+
+    if modo == "actual":
+        return [current]
+    if modo == "anterior":
+        return [prev]
+    if modo == "actual_y_anterior":
+        return [prev, current]
+    if modo == "auto":
+        if fecha_ref.day < cutoff_day:
+            return [prev, current]
+        return [current]
+    if modo == "anio_actual":
+        desde = date(fecha_ref.year, 1, 1)
+        hasta = date(fecha_ref.year, 12, 31)
+        return [ctx(desde, "otro_periodo", f"ANIO {fecha_ref.year}", f"{fecha_ref.year}", range_start=desde, range_end=hasta, monthly_breakdown=True)]
+    if modo == "anio_pasado":
+        anio = fecha_ref.year - 1
+        desde = date(anio, 1, 1)
+        hasta = date(anio, 12, 31)
+        return [ctx(desde, "otro_periodo", f"ANIO {anio}", f"{anio}", range_start=desde, range_end=hasta, monthly_breakdown=True)]
+    if modo == "personalizado":
+        desde = parse_fecha(fecha_desde_otro or fecha_ref.strftime("%Y-%m-%d"))
+        hasta = parse_fecha(fecha_hasta_otro or fecha_ref.strftime("%Y-%m-%d"))
+        if hasta < desde:
+            raise ValueError("En rango personalizado, la fecha hasta no puede ser anterior a la fecha desde.")
+        label = f"{desde.isoformat()} a {hasta.isoformat()}"
+        return [ctx(desde, "otro_periodo", label, label, range_start=desde, range_end=hasta, monthly_breakdown=True)]
+
+    raise ValueError(f"Modo de periodos no reconocido: {modo}")
 
 
 def buscar_dir_periodo(ctx: dict[str, Any], cantidad_periodos: int) -> Path:
@@ -802,6 +952,37 @@ def titulo_reporte(sucursal: str, ctx: dict[str, Any], fecha_ref: date) -> str:
         suffix = ctx.get("title_suffix") or ctx.get("label") or "OTRO PERIODO"
         return f"Comprobantes {sucursal} - {suffix} (generado {fecha_txt})"
     return f"Comprobantes {sucursal} - {mes_txt} (generado {fecha_txt})"
+
+
+def preparar_hojas_dinamicas(sheets_service, spreadsheet_id: str, nombres_hojas: list[str]) -> dict[str, int]:
+    if not nombres_hojas:
+        raise ValueError("No hay hojas para crear en el spreadsheet.")
+
+    meta_inicial = sheets_service.spreadsheets().get(
+        spreadsheetId=spreadsheet_id,
+        fields="sheets.properties.sheetId",
+    ).execute()
+    hoja_inicial_id = meta_inicial["sheets"][0]["properties"]["sheetId"]
+
+    requests: list[dict] = [
+        {"updateSheetProperties": {
+            "properties": {"sheetId": hoja_inicial_id, "title": nombres_hojas[0]},
+            "fields": "title",
+        }}
+    ]
+    for nombre in nombres_hojas[1:]:
+        requests.append({"addSheet": {"properties": {"title": nombre}}})
+
+    sheets_service.spreadsheets().batchUpdate(
+        spreadsheetId=spreadsheet_id, body={"requests": requests}
+    ).execute()
+
+    mapa = obtener_mapas_hojas(sheets_service, spreadsheet_id)
+    faltantes = [nombre for nombre in nombres_hojas if nombre not in mapa]
+    if faltantes:
+        raise ValueError(f"No se pudieron preparar hojas: {faltantes}")
+    return mapa
+
 
 # =========================================================
 # PROCESAMIENTO
@@ -887,6 +1068,84 @@ def procesar_sucursal(
     return url
 
 
+def procesar_sucursal_rango_mensual(
+    sucursal: str,
+    ventas_path: Path | None,
+    compras_path: Path | None,
+    drive_service,
+    sheets_service,
+    titulo_drive: str,
+    range_start: date,
+    range_end: date,
+) -> str:
+    if sucursal not in DRIVE_FOLDER_IDS:
+        raise ValueError(f"No hay carpeta de Drive configurada para la sucursal '{sucursal}'.")
+    if not ventas_path and not compras_path:
+        raise ValueError("Se requiere al menos un archivo (ventas o compras).")
+
+    folder_id = DRIVE_FOLDER_IDS[sucursal]
+    meses = iterar_meses(range_start, range_end)
+
+    print(f"\n[INFO] Sucursal: {sucursal}")
+    print(f"[INFO] Ventas:  {ventas_path.name if ventas_path else '(no encontrado)'}")
+    print(f"[INFO] Compras: {compras_path.name if compras_path else '(no encontrado)'}")
+    print(f"[INFO] Rango interno: {range_start.isoformat()} a {range_end.isoformat()} ({len(meses)} meses)")
+    print(f"[INFO] Titulo Drive: {titulo_drive}")
+
+    ventas_raw = leer_emitidos(ventas_path) if ventas_path else None
+    compras_raw = leer_recibidos(compras_path) if compras_path else None
+
+    hojas_a_crear: list[str] = []
+    if ventas_raw is not None:
+        hojas_a_crear.append("Ventas TOTAL")
+    if compras_raw is not None:
+        hojas_a_crear.append("Compras TOTAL")
+        hojas_a_crear.append("Proveedor TOTAL")
+
+    for mes in meses:
+        mes_key = f"{mes.year}-{mes.month:02d}"
+        if ventas_raw is not None:
+            hojas_a_crear.append(f"Ventas {mes_key}")
+        if compras_raw is not None:
+            hojas_a_crear.append(f"Compras {mes_key}")
+            hojas_a_crear.append(f"Proveedor {mes_key}")
+
+    spreadsheet_id = crear_google_sheet_en_drive(drive_service=drive_service, titulo=titulo_drive, folder_id=folder_id)
+    mapa = preparar_hojas_dinamicas(sheets_service, spreadsheet_id, hojas_a_crear)
+    hojas_generadas: list[str] = []
+
+    def escribir_resultado(nombre_hoja: str, df: pd.DataFrame) -> None:
+        escribir_hoja(sheets_service, spreadsheet_id, nombre_hoja, df)
+        aplicar_formato_hoja(sheets_service, spreadsheet_id, mapa[nombre_hoja], len(df.columns), len(df) + 1)
+        hojas_generadas.append(nombre_hoja)
+
+    if ventas_raw is not None:
+        ventas_total = filtrar_por_rango_fecha(ventas_raw, range_start, range_end, f"Ventas {sucursal}")
+        escribir_resultado("Ventas TOTAL", calcular_ventas(ventas_total))
+
+    if compras_raw is not None:
+        compras_total = filtrar_por_rango_fecha(compras_raw, range_start, range_end, f"Compras {sucursal}")
+        escribir_resultado("Compras TOTAL", calcular_compras(compras_total))
+        escribir_resultado("Proveedor TOTAL", calcular_compras_por_proveedor(compras_total))
+
+    for mes in meses:
+        mes_desde, mes_hasta = rango_mes_en_periodo(mes, range_start, range_end)
+        mes_key = f"{mes.year}-{mes.month:02d}"
+
+        if ventas_raw is not None:
+            ventas_mes = filtrar_por_rango_fecha(ventas_raw, mes_desde, mes_hasta, f"Ventas {sucursal} {mes_key}")
+            escribir_resultado(f"Ventas {mes_key}", calcular_ventas(ventas_mes))
+
+        if compras_raw is not None:
+            compras_mes = filtrar_por_rango_fecha(compras_raw, mes_desde, mes_hasta, f"Compras {sucursal} {mes_key}")
+            escribir_resultado(f"Compras {mes_key}", calcular_compras(compras_mes))
+            escribir_resultado(f"Proveedor {mes_key}", calcular_compras_por_proveedor(compras_mes))
+
+    url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit"
+    print(f"[OK] Generado en Drive ({len(hojas_generadas)} hojas mensualizadas): {url}")
+    return url
+
+
 def procesar_periodo(ctx: dict[str, Any], fecha_ref: date, cantidad_periodos: int, drive_service, sheets_service) -> None:
     base_periodo = buscar_dir_periodo(ctx, cantidad_periodos)
     print(f"\n[INFO] Procesando {ctx['label']} desde carpeta: {base_periodo}")
@@ -925,6 +1184,58 @@ def procesar_periodo(ctx: dict[str, Any], fecha_ref: date, cantidad_periodos: in
             print(f"[ERROR] {sucursal} {ctx['label']}: {e}")
 
 
+def procesar_periodo_mensualizado(ctx: dict[str, Any], fecha_ref: date, cantidad_periodos: int, drive_service, sheets_service) -> None:
+    base_periodo = buscar_dir_periodo(ctx, cantidad_periodos)
+    print(f"\n[INFO] Procesando {ctx['label']} desde carpeta: {base_periodo}")
+    if ctx.get("monthly_breakdown"):
+        print("[INFO] Regla: se filtra por fecha interna del comprobante y se generan hojas por mes + total.")
+    else:
+        print("[INFO] Regla: se procesa el archivo completo del periodo, sin filtrar filas por fecha interna.")
+
+    deteccion = detectar_archivos_por_sucursal(base_periodo)
+    if not deteccion:
+        raise SystemExit(
+            f"No se encontraron archivos validos para {ctx['label']} en {base_periodo}.\n"
+            f"Busco ventas (CSV) con: {PATRON_VENTAS} + CUIT\n"
+            f"Busco compras (XLSX) con: {PATRON_COMPRAS} + CUIT"
+        )
+
+    for sucursal, archivos in deteccion.items():
+        ventas_path = archivos.get("ventas")
+        compras_path = archivos.get("compras")
+
+        if ventas_path is None:
+            print(f"[AVISO] {sucursal}: no se encontro archivo de ventas; se procesara solo compras.")
+        if compras_path is None:
+            print(f"[AVISO] {sucursal}: no se encontro archivo de compras; se procesara solo ventas.")
+
+        try:
+            if ctx.get("monthly_breakdown"):
+                procesar_sucursal_rango_mensual(
+                    sucursal=sucursal,
+                    ventas_path=ventas_path,
+                    compras_path=compras_path,
+                    drive_service=drive_service,
+                    sheets_service=sheets_service,
+                    titulo_drive=titulo_reporte(sucursal, ctx, fecha_ref),
+                    range_start=ctx["range_start"],
+                    range_end=ctx["range_end"],
+                )
+            else:
+                procesar_sucursal(
+                    sucursal=sucursal,
+                    ventas_path=ventas_path,
+                    compras_path=compras_path,
+                    drive_service=drive_service,
+                    sheets_service=sheets_service,
+                    titulo_drive=titulo_reporte(sucursal, ctx, fecha_ref),
+                )
+        except HttpError as e:
+            print(f"[ERROR GOOGLE API] {sucursal} {ctx['label']}: {e}")
+        except Exception as e:
+            print(f"[ERROR] {sucursal} {ctx['label']}: {e}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Limpiar comprobantes ARCA con lógica original.")
     parser.add_argument("--period-mode", "--periodos", dest="period_mode", default="auto")
@@ -939,7 +1250,7 @@ def procesar_todo() -> None:
     args = parse_args()
     fecha_ref = parse_fecha(args.reference_date)
     cutoff_day = int(args.cutoff_day or 11)
-    periodos = resolver_periodos(
+    periodos = resolver_periodos_mensualizado(
         args.period_mode,
         fecha_ref,
         cutoff_day,
@@ -960,7 +1271,7 @@ def procesar_todo() -> None:
     drive_service, sheets_service = crear_services()
 
     for ctx in periodos:
-        procesar_periodo(ctx, fecha_ref, len(periodos), drive_service, sheets_service)
+        procesar_periodo_mensualizado(ctx, fecha_ref, len(periodos), drive_service, sheets_service)
 
 
 if __name__ == "__main__":

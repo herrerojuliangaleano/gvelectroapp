@@ -51,7 +51,7 @@ TOOLS: dict[str, ToolDef] = {
     "cer": {
         "id": "cer",
         "name": "Limpiar Comprobantes",
-        "description": "Procesa comprobantes emitidos y recibidos de ARCA con la lógica original y sube resultados a Drive.",
+        "description": "Procesa comprobantes emitidos y recibidos de ARCA y sube resultados a Drive. Los rangos largos se dividen por mes y total general.",
         "icon": "🗂️",
         "color": "#8B5CF6",
         "script": "scripts/Limpiar Comprobantes Emitidos y Recibidos/cer.py",
@@ -74,13 +74,13 @@ TOOLS: dict[str, ToolDef] = {
             {"name": "fecha_referencia", "label": "Fecha de referencia", "type": "date", "required": False, "help": "Vacío = hoy. Sirve para decidir mes actual/anterior y nombrar el reporte."},
             {"name": "dia_corte_mes_anterior", "label": "Día de corte mes anterior", "type": "number", "required": False, "default": 11, "help": "Con 11: del día 1 al 10 procesa mes anterior + actual. Desde el 11 solo mes actual."},
             # ── Otro rango (colapsable) ───────────────────────────────────────
-            {"type": "section", "name": "_otro_rango", "label": "Seleccionar otro rango", "collapsible": True, "default_open": False, "help": "Para procesar un período distinto al flujo mensual: año completo, año pasado o un rango libre."},
+            {"type": "section", "name": "_otro_rango", "label": "Seleccionar otro rango", "collapsible": True, "default_open": False, "help": "Para procesar un período distinto al flujo mensual: año completo, año pasado o un rango libre. El resultado se divide por meses y suma un total general."},
             {"name": "rango_tipo", "label": "Tipo de período", "type": "select", "section": "_otro_rango", "default": "anio_pasado", "options": [
                 {"label": "Este año completo", "value": "anio_actual"},
                 {"label": "Año pasado completo", "value": "anio_pasado"},
                 {"label": "Rango personalizado", "value": "personalizado"},
             ]},
-            {"name": "archivos_otro_periodo", "label": "Archivos del período", "type": "multi_file", "required": False, "section": "_otro_rango", "validate_filename": "arca", "help": "Subí los emitidos y recibidos correspondientes al rango elegido."},
+            {"name": "archivos_otro_periodo", "label": "Archivos del período", "type": "multi_file", "required": False, "section": "_otro_rango", "validate_filename": "arca", "help": "Subí los emitidos y recibidos correspondientes al rango elegido. Deben incluir fecha de comprobante para poder separar por mes."},
             {"name": "fecha_desde_otro", "label": "Desde (solo rango personalizado)", "type": "date", "required": False, "section": "_otro_rango"},
             {"name": "fecha_hasta_otro", "label": "Hasta (solo rango personalizado)", "type": "date", "required": False, "section": "_otro_rango"},
         ],
