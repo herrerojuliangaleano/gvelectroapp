@@ -116,9 +116,11 @@ def serie_a_fechas(serie: pd.Series) -> pd.Series:
     raw = serie.astype(str).str.strip()
     raw = raw.replace({"": pd.NA, "nan": pd.NA, "NaN": pd.NA, "None": pd.NA, "none": pd.NA})
 
-    fechas = pd.to_datetime(raw, errors="coerce", dayfirst=True)
+    fechas = pd.Series(pd.NaT, index=raw.index, dtype="datetime64[ns]")
 
-    mask_iso = fechas.isna() & raw.str.fullmatch(r"\d{4}-\d{1,2}-\d{1,2}", na=False)
+    # 1) ISO AAAA-MM-DD (lo que trae ARCA). Se parsea SIN dayfirst para no
+    #    invertir mes/día: "2025-06-01" debe ser 1 de junio, no 6 de enero.
+    mask_iso = raw.str.fullmatch(r"\d{4}-\d{1,2}-\d{1,2}", na=False)
     if mask_iso.any():
         fechas.loc[mask_iso] = pd.to_datetime(raw.loc[mask_iso], format="%Y-%m-%d", errors="coerce")
 
@@ -138,6 +140,11 @@ def serie_a_fechas(serie: pd.Series) -> pd.Series:
     mask_serial = fechas.isna() & numericas.between(25000, 70000)
     if mask_serial.any():
         fechas.loc[mask_serial] = pd.to_datetime(numericas.loc[mask_serial], unit="D", origin="1899-12-30", errors="coerce")
+
+    # 6) Fallback general (con dayfirst) para cualquier formato no contemplado.
+    mask_resto = fechas.isna() & raw.notna()
+    if mask_resto.any():
+        fechas.loc[mask_resto] = pd.to_datetime(raw.loc[mask_resto], errors="coerce", dayfirst=True)
 
     return fechas
 
@@ -1436,7 +1443,6 @@ def procesar_periodo(ctx: dict[str, Any], fecha_ref: date, cantidad_periodos: in
             print(f"[AVISO] {sucursal}: no se encontró archivo de compras — se procesará solo ventas.")
 
         try:
-            mes_ref = ctx.get("date") or fecha_ref
             procesar_sucursal(
                 sucursal=sucursal,
                 ventas_path=ventas_path,
@@ -1444,9 +1450,7 @@ def procesar_periodo(ctx: dict[str, Any], fecha_ref: date, cantidad_periodos: in
                 drive_service=drive_service,
                 sheets_service=sheets_service,
                 titulo_drive=titulo_reporte(sucursal, ctx, fecha_ref),
-                period_label=etiqueta_mes(mes_ref),
-                range_start=primer_dia_mes(mes_ref),
-                range_end=ultimo_dia_mes(mes_ref),
+                period_label=etiqueta_mes(ctx.get("date") or fecha_ref),
             )
         except HttpError as e:
             print(f"[ERROR GOOGLE API] {sucursal} {ctx['label']}: {e}")
@@ -1492,7 +1496,9 @@ def procesar_periodo_mensualizado(ctx: dict[str, Any], fecha_ref: date, cantidad
                     range_end=ctx["range_end"],
                 )
             else:
-                mes_ref = ctx.get("date") or fecha_ref
+                # Modo normal: se procesa el archivo COMPLETO (el usuario sube
+                # el export del período que quiere). El filtro por mes es solo
+                # del modo "rango/personalizado".
                 procesar_sucursal(
                     sucursal=sucursal,
                     ventas_path=ventas_path,
@@ -1500,9 +1506,7 @@ def procesar_periodo_mensualizado(ctx: dict[str, Any], fecha_ref: date, cantidad
                     drive_service=drive_service,
                     sheets_service=sheets_service,
                     titulo_drive=titulo_reporte(sucursal, ctx, fecha_ref),
-                    period_label=etiqueta_mes(mes_ref),
-                    range_start=primer_dia_mes(mes_ref),
-                    range_end=ultimo_dia_mes(mes_ref),
+                    period_label=etiqueta_mes(ctx.get("date") or fecha_ref),
                 )
         except HttpError as e:
             print(f"[ERROR GOOGLE API] {sucursal} {ctx['label']}: {e}")
