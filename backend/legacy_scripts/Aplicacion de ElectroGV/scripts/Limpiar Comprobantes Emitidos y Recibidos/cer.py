@@ -1150,6 +1150,18 @@ COLOR_ETIQUETA = {"red": 0.90, "green": 0.90, "blue": 0.90} # gris claro (Bruto/
 COLOR_HEADER = {"red": 0.78, "green": 0.88, "blue": 1.0}    # azul (headers tabla)
 
 
+def _aplicar_formato(sheets_service, spreadsheet_id: str, requests: list[dict[str, Any]], etiqueta: str) -> None:
+    """Aplica un lote de requests de formato. Si Google rechaza el lote (un
+    request invalido tira TODO abajo), se avisa pero no se corta el resto del
+    proceso — asi un detalle de formato no deja los numeros sin formatear."""
+    if not requests:
+        return
+    try:
+        sheets_service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute()
+    except Exception as e:
+        print(f"[AVISO] formato '{etiqueta}' fallo y se omitio: {e}")
+
+
 def _bloques_metricas(resumen_df: pd.DataFrame, sufijo: str) -> list[tuple[str, float, float, float]]:
     """De un resumen (filas Resto/NC/Diferencia) arma las fichas por métrica:
     (titulo, bruto, nc, neto)."""
@@ -1208,36 +1220,39 @@ def escribir_hoja_bloques(sheets_service, spreadsheet_id: str, sheet_id: int, no
         valores.append([""] * total_cols)
 
     valores_a_hoja(sheets_service, spreadsheet_id, nombre_hoja, valores)
-    n_rows = len(valores)
 
-    req: list[dict[str, Any]] = [
+    # Lote 1 — números (lo más importante): formato moneda SOLO en las celdas de
+    # datos (Bruto/NC/Neto), nunca en celdas combinadas. + anchos + negrita Neto.
+    nums: list[dict[str, Any]] = [
         {"updateSheetProperties": {"properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 0}}, "fields": "gridProperties.frozenRowCount"}},
     ]
-    # Anchos de columna: etiqueta / valor / separador
     for i in range(max_blocks):
         for col, w in ((i * 3, 95), (i * 3 + 1, 165), (i * 3 + 2, 26)):
             if col < total_cols:
-                req.append({"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": col, "endIndex": col + 1}, "properties": {"pixelSize": w}, "fields": "pixelSize"}})
-        # Formato moneda en la columna de valores de cada ficha
-        vcol = i * 3 + 1
-        if vcol < total_cols:
-            req.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": n_rows, "startColumnIndex": vcol, "endColumnIndex": vcol + 1}, "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": FMT_MONEDA}, "horizontalAlignment": "RIGHT"}}, "fields": "userEnteredFormat(numberFormat,horizontalAlignment)"}})
-
-    for (r, cs) in titulos:
-        req.append({"mergeCells": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": cs, "endColumnIndex": cs + 2}, "mergeType": "MERGE_ALL"}})
-        req.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": cs, "endColumnIndex": cs + 2}, "cell": {"userEnteredFormat": {"backgroundColor": COLOR_TITULO, "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE", "textFormat": {"bold": True, "italic": True, "fontSize": 11}}}, "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)"}})
-    for (r, cs) in meses:
-        req.append({"mergeCells": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": cs, "endColumnIndex": cs + 2}, "mergeType": "MERGE_ALL"}})
-        req.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": cs, "endColumnIndex": cs + 2}, "cell": {"userEnteredFormat": {"backgroundColor": COLOR_MES, "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE", "textFormat": {"bold": True}}}, "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)"}})
-    for (r, cs) in etiqueta_cols:
-        req.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 3, "startColumnIndex": cs, "endColumnIndex": cs + 1}, "cell": {"userEnteredFormat": {"backgroundColor": COLOR_ETIQUETA, "horizontalAlignment": "CENTER", "textFormat": {"bold": True, "italic": True}}}, "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,textFormat)"}})
+                nums.append({"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": col, "endIndex": col + 1}, "properties": {"pixelSize": w}, "fields": "pixelSize"}})
+    for (rb, cs) in etiqueta_cols:
+        nums.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": rb, "endRowIndex": rb + 3, "startColumnIndex": cs + 1, "endColumnIndex": cs + 2}, "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": FMT_MONEDA}, "horizontalAlignment": "RIGHT"}}, "fields": "userEnteredFormat(numberFormat,horizontalAlignment)"}})
     for r in neto_rows:
-        req.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": 0, "endColumnIndex": total_cols}, "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}}, "fields": "userEnteredFormat.textFormat.bold"}})
-    for (r, cs) in bloque_areas:
-        req.append({"updateBorders": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 5, "startColumnIndex": cs, "endColumnIndex": cs + 2}, "top": {"style": "SOLID", "color": {"red": 0.6, "green": 0.6, "blue": 0.6}}, "bottom": {"style": "SOLID", "color": {"red": 0.6, "green": 0.6, "blue": 0.6}}, "left": {"style": "SOLID", "color": {"red": 0.6, "green": 0.6, "blue": 0.6}}, "right": {"style": "SOLID", "color": {"red": 0.6, "green": 0.6, "blue": 0.6}}, "innerHorizontal": {"style": "SOLID", "color": {"red": 0.85, "green": 0.85, "blue": 0.85}}}})
+        nums.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": 0, "endColumnIndex": total_cols}, "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}}, "fields": "userEnteredFormat.textFormat.bold"}})
+    _aplicar_formato(sheets_service, spreadsheet_id, nums, f"{nombre_hoja}/numeros")
 
-    if req:
-        sheets_service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": req}).execute()
+    # Lote 2 — combinadas (título + mes) y etiquetas.
+    merges: list[dict[str, Any]] = []
+    for (r, cs) in titulos:
+        merges.append({"mergeCells": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": cs, "endColumnIndex": cs + 2}, "mergeType": "MERGE_ALL"}})
+        merges.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": cs, "endColumnIndex": cs + 2}, "cell": {"userEnteredFormat": {"backgroundColor": COLOR_TITULO, "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE", "textFormat": {"bold": True, "italic": True, "fontSize": 11}}}, "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)"}})
+    for (r, cs) in meses:
+        merges.append({"mergeCells": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": cs, "endColumnIndex": cs + 2}, "mergeType": "MERGE_ALL"}})
+        merges.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": cs, "endColumnIndex": cs + 2}, "cell": {"userEnteredFormat": {"backgroundColor": COLOR_MES, "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE", "textFormat": {"bold": True}}}, "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)"}})
+    for (r, cs) in etiqueta_cols:
+        merges.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 3, "startColumnIndex": cs, "endColumnIndex": cs + 1}, "cell": {"userEnteredFormat": {"backgroundColor": COLOR_ETIQUETA, "horizontalAlignment": "CENTER", "textFormat": {"bold": True, "italic": True}}}, "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,textFormat)"}})
+    _aplicar_formato(sheets_service, spreadsheet_id, merges, f"{nombre_hoja}/combinadas")
+
+    # Lote 3 — bordes de cada ficha.
+    bordes: list[dict[str, Any]] = []
+    for (r, cs) in bloque_areas:
+        bordes.append({"updateBorders": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 5, "startColumnIndex": cs, "endColumnIndex": cs + 2}, "top": {"style": "SOLID", "color": {"red": 0.6, "green": 0.6, "blue": 0.6}}, "bottom": {"style": "SOLID", "color": {"red": 0.6, "green": 0.6, "blue": 0.6}}, "left": {"style": "SOLID", "color": {"red": 0.6, "green": 0.6, "blue": 0.6}}, "right": {"style": "SOLID", "color": {"red": 0.6, "green": 0.6, "blue": 0.6}}, "innerHorizontal": {"style": "SOLID", "color": {"red": 0.85, "green": 0.85, "blue": 0.85}}}})
+    _aplicar_formato(sheets_service, spreadsheet_id, bordes, f"{nombre_hoja}/bordes")
 
 
 def escribir_hoja_proveedores(sheets_service, spreadsheet_id: str, sheet_id: int, nombre_hoja: str,
@@ -1248,36 +1263,44 @@ def escribir_hoja_proveedores(sheets_service, spreadsheet_id: str, sheet_id: int
     valores: list[list[Any]] = []
     titulos: list[int] = []
     headers: list[int] = []
+    data_ranges: list[tuple[int, int]] = []  # (start, end) de filas de proveedores
     for label, prov_df in periodos_prov:
         titulos.append(len(valores))
         valores.append([f"Compras por proveedor — {label}"] + [""] * (total_cols - 1))
         headers.append(len(valores))
         columnas = list(prov_df.columns) if not prov_df.empty else ["Proveedor", "Imp. Neto Gravado Total", "Total IVA", "Imp. Total"]
         valores.append(columnas)
+        d0 = len(valores)
         if prov_df.empty:
             valores.append(["(sin movimientos)"] + [""] * (total_cols - 1))
         else:
             for _, r in prov_df.iterrows():
-                valores.append(list(r))
+                # Proveedor como texto; montos como float real (numero).
+                valores.append([str(r.iloc[0])] + [float(x) if pd.notna(x) else "" for x in r.iloc[1:]])
+            data_ranges.append((d0, len(valores)))
         valores.append([""] * total_cols)
 
     padded = [row + [""] * (total_cols - len(row)) for row in valores]
     valores_a_hoja(sheets_service, spreadsheet_id, nombre_hoja, padded)
-    n_rows = len(padded)
 
-    req: list[dict[str, Any]] = [
+    # Lote 1 — números (formato moneda SOLO en las filas de datos) + anchos.
+    nums: list[dict[str, Any]] = [
         {"updateSheetProperties": {"properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 0}}, "fields": "gridProperties.frozenRowCount"}},
         {"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 1}, "properties": {"pixelSize": 320}, "fields": "pixelSize"}},
         {"updateDimensionProperties": {"range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 1, "endIndex": total_cols}, "properties": {"pixelSize": 175}, "fields": "pixelSize"}},
-        {"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": n_rows, "startColumnIndex": 1, "endColumnIndex": total_cols}, "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": FMT_MONEDA}}}, "fields": "userEnteredFormat.numberFormat"}},
     ]
-    for r in titulos:
-        req.append({"mergeCells": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": 0, "endColumnIndex": total_cols}, "mergeType": "MERGE_ALL"}})
-        req.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": 0, "endColumnIndex": total_cols}, "cell": {"userEnteredFormat": {"backgroundColor": COLOR_MES, "horizontalAlignment": "CENTER", "textFormat": {"bold": True, "italic": True, "fontSize": 11}}}, "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,textFormat)"}})
-    for r in headers:
-        req.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": 0, "endColumnIndex": total_cols}, "cell": {"userEnteredFormat": {"backgroundColor": COLOR_HEADER, "horizontalAlignment": "CENTER", "wrapStrategy": "WRAP", "textFormat": {"bold": True}}}, "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,wrapStrategy,textFormat)"}})
+    for (d0, d1) in data_ranges:
+        nums.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": d0, "endRowIndex": d1, "startColumnIndex": 1, "endColumnIndex": total_cols}, "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": FMT_MONEDA}}}, "fields": "userEnteredFormat.numberFormat"}})
+    _aplicar_formato(sheets_service, spreadsheet_id, nums, f"{nombre_hoja}/numeros")
 
-    sheets_service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": req}).execute()
+    # Lote 2 — título (combinado) + header.
+    merges: list[dict[str, Any]] = []
+    for r in titulos:
+        merges.append({"mergeCells": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": 0, "endColumnIndex": total_cols}, "mergeType": "MERGE_ALL"}})
+        merges.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": 0, "endColumnIndex": total_cols}, "cell": {"userEnteredFormat": {"backgroundColor": COLOR_MES, "horizontalAlignment": "CENTER", "textFormat": {"bold": True, "italic": True, "fontSize": 11}}}, "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,textFormat)"}})
+    for r in headers:
+        merges.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r + 1, "startColumnIndex": 0, "endColumnIndex": total_cols}, "cell": {"userEnteredFormat": {"backgroundColor": COLOR_HEADER, "horizontalAlignment": "CENTER", "wrapStrategy": "WRAP", "textFormat": {"bold": True}}}, "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,wrapStrategy,textFormat)"}})
+    _aplicar_formato(sheets_service, spreadsheet_id, merges, f"{nombre_hoja}/combinadas")
 
 
 # =========================================================
