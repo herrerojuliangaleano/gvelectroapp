@@ -2507,7 +2507,10 @@ def warranty_sheet_row(guarantee_row: dict[str, Any], item_row: dict[str, Any]) 
         i("marca"),
         i("serie"),
         i("falla"),
-        g("sucursal"),
+        # "SUCURSAL" = sucursal de venta (responsable). Fallback a la de carga
+        # para garantías viejas/cliente_sucursal sin responsable. La de carga
+        # queda disponible en la pestaña espejo GARANTIAS (SUCURSAL CARGA).
+        g("sucursal_responsable") or g("sucursal"),
         g("deposito"),
         g("status"),
         pending_days,
