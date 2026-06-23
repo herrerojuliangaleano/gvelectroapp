@@ -12,12 +12,16 @@ Endpoints:
 """
 from __future__ import annotations
 
+from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
 
 from ...audit import audit
 from ...auth import require_permission
@@ -25,6 +29,7 @@ from ...warranties_db import (
     pg_add_history,
     pg_collect_export_rows_by_codes,
     pg_create_export,
+    pg_fetch_all_guarantee_rows,
     pg_fetch_guarantee_rows_by_codes,
     pg_get_export,
     pg_list_counters,
@@ -41,8 +46,10 @@ from ...warranty_helpers import (
     now_ar,
 )
 from . import (
+    DEFAULT_FINAL_STATUSES,
     EXPORT_ELIGIBLE_STATUS,
     EXPORT_READY_STATUS,
+    RESOLUTION_OPTIONS,
     WarrantyBatchExportRequest,
     WarrantyCounterInfo,
     WarrantyCountersResponse,
@@ -352,6 +359,154 @@ def export_warranties_for_provider(
         details={"row_count": len(rows), "filters": filters, "file_name": file_name},
     )
     return export_info_from_row(export_row)
+
+
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _num_or_zero(value: Any) -> float:
+    try:
+        return float(str(value).replace(",", ".")) if str(value or "").strip() else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _build_resoluciones_xlsx(rows: list[dict[str, Any]]) -> bytes:
+    """Dos hojas: Detalle (plano, pivotable) + Resumen por marca × sucursal."""
+    money = '#,##0.00'
+    head_fill = PatternFill("solid", fgColor="C9E2FB")
+    sub_fill = PatternFill("solid", fgColor="E8E8E8")
+    bold = Font(bold=True)
+    wb = Workbook()
+
+    # ── Hoja Detalle ──────────────────────────────────────────────────────
+    ws = wb.active
+    ws.title = "Detalle"
+    cols = ["Marca", "Sucursal", "Garantía", "Producto", "Serie", "Resultado", "N° NC", "Importe NC", "Finalizada"]
+    ws.append(cols)
+    for c in range(1, len(cols) + 1):
+        ws.cell(1, c).font = bold
+        ws.cell(1, c).fill = head_fill
+    ordenadas = sorted(rows, key=lambda r: (r["marca"].lower(), r["sucursal"].lower(), r["warranty_code"]))
+    for r in ordenadas:
+        ws.append([
+            r["marca"], r["sucursal"], r["warranty_code"], r["producto"], r["serie"],
+            r["resultado"], r["nc_numero"], r["nc_importe"], r["finalizada"],
+        ])
+        ws.cell(ws.max_row, 8).number_format = money
+    widths = [22, 18, 18, 34, 18, 16, 14, 16, 12]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    ws.freeze_panes = "A2"
+
+    # ── Hoja Resumen (marca × sucursal) ───────────────────────────────────
+    rs = wb.create_sheet("Resumen")
+    rs.append(["Marca", "Sucursal", "Cantidad", "Total NC"])
+    for c in range(1, 5):
+        rs.cell(1, c).font = bold
+        rs.cell(1, c).fill = head_fill
+    # agrupar
+    agg: dict[tuple[str, str], dict[str, float]] = {}
+    for r in rows:
+        k = (r["marca"], r["sucursal"])
+        a = agg.setdefault(k, {"cant": 0, "nc": 0.0})
+        a["cant"] += 1
+        a["nc"] += r["nc_importe"]
+    total_cant = 0
+    total_nc = 0.0
+    for marca in sorted({m for m, _ in agg}, key=str.lower):
+        marca_cant = 0
+        marca_nc = 0.0
+        for (m, suc) in sorted([k for k in agg if k[0] == marca], key=lambda k: k[1].lower()):
+            a = agg[(m, suc)]
+            rs.append([m, suc, a["cant"], a["nc"]])
+            rs.cell(rs.max_row, 4).number_format = money
+            marca_cant += a["cant"]
+            marca_nc += a["nc"]
+        # subtotal de marca
+        rs.append([f"Total {marca}", "", marca_cant, marca_nc])
+        for c in range(1, 5):
+            rs.cell(rs.max_row, c).font = bold
+            rs.cell(rs.max_row, c).fill = sub_fill
+        rs.cell(rs.max_row, 4).number_format = money
+        total_cant += marca_cant
+        total_nc += marca_nc
+    rs.append(["TOTAL GENERAL", "", total_cant, total_nc])
+    for c in range(1, 5):
+        rs.cell(rs.max_row, c).font = bold
+    rs.cell(rs.max_row, 4).number_format = money
+    for i, w in enumerate([24, 20, 12, 16], start=1):
+        rs.column_dimensions[chr(64 + i)].width = w
+    rs.freeze_panes = "A2"
+
+    bio = BytesIO()
+    wb.save(bio)
+    return bio.getvalue()
+
+
+@router.get("/export/resoluciones")
+def export_resoluciones_por_marca(
+    user: Annotated[Any, Depends(require_permission("warranties.export"))],
+    fecha_desde: str | None = Query(default=None, description="Filtra por fecha de finalización (YYYY-MM-DD)"),
+    fecha_hasta: str | None = Query(default=None),
+    marca: str | None = Query(default=None),
+    proveedor: str | None = Query(default=None),
+):
+    """Excel de garantías FINALIZADAS agrupadas por marca y sucursal (responsable),
+    con el importe de NC, para repartir notas de crédito y llevar equipos a cada
+    sucursal."""
+    guarantees, items = pg_fetch_all_guarantee_rows()
+    items_by_gid: dict[Any, list[dict[str, Any]]] = {}
+    for it in items:
+        items_by_gid.setdefault(it["guarantee_id"], []).append(it)
+
+    fd = (fecha_desde or "").strip()
+    fh = (fecha_hasta or "").strip()
+    marca_f = normalize_text(marca) if marca else ""
+    prov_f = normalize_text(proveedor) if proveedor else ""
+
+    rows: list[dict[str, Any]] = []
+    for g in guarantees:
+        if g.get("status") not in DEFAULT_FINAL_STATUSES:
+            continue
+        if g.get("cancelled"):
+            continue
+        ffin = (g.get("fecha_finalizacion") or "")[:10]
+        if fd and (not ffin or ffin < fd):
+            continue
+        if fh and (not ffin or ffin > fh):
+            continue
+        gitems = items_by_gid.get(g["id"], [])
+        marca_g = (gitems[0]["marca"].strip() if gitems and gitems[0].get("marca") else "") or "Sin marca"
+        if marca_f and normalize_text(marca_g) != marca_f:
+            continue
+        if prov_f and normalize_text(g.get("provider_name") or "") != prov_f:
+            continue
+        sucursal = (g.get("sucursal_responsable") or g.get("sucursal") or "Sin sucursal").strip() or "Sin sucursal"
+        productos = "; ".join(dict.fromkeys(it["producto"].strip() for it in gitems if it.get("producto"))) or "—"
+        series = "; ".join(dict.fromkeys(it["serie"].strip() for it in gitems if it.get("serie"))) or "—"
+        rows.append({
+            "marca": marca_g,
+            "sucursal": sucursal,
+            "warranty_code": g.get("warranty_code") or "",
+            "producto": productos,
+            "serie": series,
+            "resultado": RESOLUTION_OPTIONS.get(g.get("resultado_resolucion") or "", g.get("resultado_resolucion") or "—"),
+            "nc_numero": g.get("numero_nota_credito") or "",
+            "nc_importe": _num_or_zero(g.get("importe_nota_credito")),
+            "finalizada": ffin,
+        })
+
+    xlsx = _build_resoluciones_xlsx(rows)
+    audit("warranties.export.resoluciones", user=user, resource_type="warranty_report", resource_id="resoluciones",
+          details={"filas": len(rows), "fecha_desde": fd, "fecha_hasta": fh, "marca": marca or "", "proveedor": proveedor or ""})
+    stamp = datetime.now().strftime("%Y-%m-%d")
+    filename = f"resoluciones-por-marca-{stamp}.xlsx"
+    return Response(
+        content=xlsx,
+        media_type=XLSX_MIME,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/exports", response_model=WarrantyExportListResponse)

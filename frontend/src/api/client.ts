@@ -528,6 +528,15 @@ export async function fetchWarrantyExports(limit = 50): Promise<WarrantyExportLi
 export async function downloadWarrantyExport(exportId: number): Promise<Blob> {
   return requestBlob(`/api/warranties/exports/${encodeURIComponent(String(exportId))}/download`);
 }
+export async function downloadWarrantyResoluciones(params: { fecha_desde?: string; fecha_hasta?: string; marca?: string; proveedor?: string } = {}): Promise<Blob> {
+  const qs = new URLSearchParams();
+  if (params.fecha_desde) qs.set('fecha_desde', params.fecha_desde);
+  if (params.fecha_hasta) qs.set('fecha_hasta', params.fecha_hasta);
+  if (params.marca) qs.set('marca', params.marca);
+  if (params.proveedor) qs.set('proveedor', params.proveedor);
+  const q = qs.toString();
+  return requestBlob(`/api/warranties/export/resoluciones${q ? `?${q}` : ''}`);
+}
 export async function regenerateWarrantyExport(exportId: number, payload: WarrantyExportRegeneratePayload = {}): Promise<WarrantyExportInfo> {
   return request(`/api/warranties/exports/${encodeURIComponent(String(exportId))}/regenerate`, { method: 'POST', body: JSON.stringify(payload) });
 }

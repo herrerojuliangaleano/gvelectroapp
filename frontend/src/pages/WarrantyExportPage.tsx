@@ -3,6 +3,7 @@ import { CheckSquare, Download, FileSpreadsheet, FileText, Filter, PackageCheck,
 import {
   createBatchExport,
   downloadWarrantyExport,
+  downloadWarrantyResoluciones,
   fetchEligibleWarranties,
   fetchExportProviderSuggestions,
   fetchWarrantyExports,
@@ -275,6 +276,30 @@ export function WarrantyExportPage({ embedded = false }: { embedded?: boolean } 
   const [lastExport, setLastExport] = useState<WarrantyExportInfo | null>(null);
   const [error, setError] = useState('');
 
+  // Reporte de resoluciones finalizadas por marca y sucursal
+  const [resolDesde, setResolDesde] = useState('');
+  const [resolHasta, setResolHasta] = useState('');
+  const [resolMarca, setResolMarca] = useState('');
+  const [downloadingResol, setDownloadingResol] = useState(false);
+
+  async function onDownloadResoluciones() {
+    setDownloadingResol(true);
+    setError('');
+    try {
+      const blob = await downloadWarrantyResoluciones({
+        fecha_desde: resolDesde || undefined,
+        fecha_hasta: resolHasta || undefined,
+        marca: resolMarca.trim() || undefined,
+      });
+      const stamp = new Date().toISOString().slice(0, 10);
+      saveBlob(blob, `resoluciones-por-marca-${stamp}.xlsx`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo generar el reporte de resoluciones');
+    } finally {
+      setDownloadingResol(false);
+    }
+  }
+
   // Auto-fill proveedor batch from filter when user types
   const items = useMemo(() => searchResult?.items || [], [searchResult]);
   const selectedCount = selected.size;
@@ -473,6 +498,57 @@ export function WarrantyExportPage({ embedded = false }: { embedded?: boolean } 
           <div className="text-xs font-black uppercase tracking-wide text-amber-300">3. Gestión</div>
           <p className="mt-1 text-sm text-slate-400">El mail enviado, retiro proveedor, respuesta y resolución se registran después desde Gestión.</p>
         </div>
+      </section>
+
+      {/* Reporte: resoluciones finalizadas por marca y sucursal */}
+      <section className="rounded-2xl border border-violet-500/30 bg-violet-500/5 p-5">
+        <div className="flex flex-col gap-1">
+          <div className="inline-flex items-center gap-2 text-xs font-black uppercase tracking-wide text-violet-200">
+            <FileSpreadsheet size={14} /> Resoluciones finalizadas · por marca y sucursal
+          </div>
+          <p className="text-sm text-slate-400">
+            Excel de garantías <strong>finalizadas</strong> agrupadas por <strong>marca</strong> y <strong>sucursal de venta</strong> (responsable),
+            con el importe de NC. Sirve para repartir notas de crédito y llevar los equipos a cada sucursal. Hoja <em>Detalle</em> (plano) + hoja <em>Resumen</em> (totales por marca y sucursal).
+          </p>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="flex flex-col gap-1 text-xs font-bold text-slate-300">
+            Finalizada desde
+            <input
+              type="date"
+              value={resolDesde}
+              onChange={(e) => setResolDesde(e.target.value)}
+              className="rounded-xl border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-bold text-slate-300">
+            Finalizada hasta
+            <input
+              type="date"
+              value={resolHasta}
+              onChange={(e) => setResolHasta(e.target.value)}
+              className="rounded-xl border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-bold text-slate-300">
+            Marca (opcional)
+            <input
+              type="text"
+              value={resolMarca}
+              onChange={(e) => setResolMarca(e.target.value)}
+              placeholder="Todas"
+              className="rounded-xl border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+            />
+          </label>
+          <button
+            onClick={onDownloadResoluciones}
+            disabled={downloadingResol}
+            className="mt-auto inline-flex items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 py-2 font-bold text-white hover:bg-violet-500 disabled:opacity-50"
+          >
+            <Download size={18} /> {downloadingResol ? 'Generando…' : 'Descargar Excel'}
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-slate-500">Sin fechas trae todas las finalizadas. La fecha filtra por la fecha de finalización.</p>
       </section>
 
       {/* Success banner after export */}
