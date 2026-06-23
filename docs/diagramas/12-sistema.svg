@@ -1,0 +1,17 @@
+<svg viewBox="0 0 900 360" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <title>MER — Sistema y Notificaciones</title>
+  <desc>notifications, push_subscriptions, fcm_tokens, jobs y app_events cuelgan de users; notifications también referencia sales_web_requests y branches.</desc>
+  <style>
+    .ent{fill:#ffffff;stroke:#cbd5e1;stroke-width:1.5;} .ref{fill:#475569;} .ttl{fill:#fff;font-size:12.5px;font-weight:700;}
+    .fld{fill:#1e293b;font-size:11px;} .key{fill:#64748b;font-size:9.5px;font-weight:700;}
+    .rel{stroke:#94a3b8;stroke-width:1.5;fill:none;} .card{fill:#64748b;font-size:11px;font-weight:700;} .note{fill:#64748b;font-size:10px;}
+  </style>
+  <g><rect class="ent" x="370" y="40" width="160" height="64" rx="8" style="stroke:#475569;stroke-width:2.5"/><path class="ref" d="M370,48 a8,8 0 0 1 8,-8 h144 a8,8 0 0 1 8,8 v16 h-160 z"/><text class="ttl" x="382" y="60">users</text><text class="note" x="382" y="86">CASCADE / SET NULL</text></g>
+  <line class="rel" x1="200" y1="200" x2="450" y2="104"/><line class="rel" x1="380" y1="200" x2="450" y2="104"/><line class="rel" x1="560" y1="200" x2="450" y2="104"/><line class="rel" x1="720" y1="200" x2="470" y2="104"/><line class="rel" x1="450" y1="260" x2="450" y2="104"/>
+  <g><rect class="ent" x="40" y="200" width="200" height="100" rx="8"/><path class="ref" d="M40,208 a8,8 0 0 1 8,-8 h184 a8,8 0 0 1 8,8 v16 h-200 z"/><text class="ttl" x="52" y="220">notifications</text><text class="fld" x="52" y="244">user_id (CASCADE)</text><text class="fld" x="52" y="262">type · module · priority</text><text class="fld" x="52" y="280">metadata [jsonb] · read</text><text class="fld" x="52" y="296">sales_request_id · branch_id</text></g>
+  <g><rect class="ent" x="300" y="200" width="170" height="80" rx="8"/><path class="ref" d="M300,208 a8,8 0 0 1 8,-8 h154 a8,8 0 0 1 8,8 v16 h-170 z"/><text class="ttl" x="312" y="220">push_subscriptions</text><text class="fld" x="312" y="244">user_id (CASCADE)</text><text class="fld" x="312" y="262">endpoint · UNIQUE(user,ep)</text></g>
+  <g><rect class="ent" x="500" y="200" width="150" height="74" rx="8"/><path class="ref" d="M500,208 a8,8 0 0 1 8,-8 h134 a8,8 0 0 1 8,8 v16 h-150 z"/><text class="ttl" x="512" y="220">fcm_tokens</text><text class="fld" x="512" y="244">user_id (CASCADE)</text><text class="fld" x="512" y="262">token (UNIQUE)</text></g>
+  <g><rect class="ent" x="680" y="200" width="180" height="80" rx="8"/><path class="ref" d="M680,208 a8,8 0 0 1 8,-8 h164 a8,8 0 0 1 8,8 v16 h-180 z"/><text class="ttl" x="692" y="220">jobs</text><text class="key" x="692" y="244">PK</text><text class="fld" x="715" y="244">id (TEXT)</text><text class="fld" x="692" y="262">tool · status · payload [jsonb]</text></g>
+  <g><rect class="ent" x="350" y="280" width="200" height="64" rx="8"/><path class="ref" d="M350,288 a8,8 0 0 1 8,-8 h184 a8,8 0 0 1 8,8 v16 h-200 z"/><text class="ttl" x="362" y="300">app_events</text><text class="fld" x="362" y="324">actor_user_id · detail [jsonb]</text></g>
+  <text class="note" x="20" y="350">Dominio 12 · Sistema &amp; Notificaciones (5 tablas). Todas cuelgan de users. jobs usa PK de texto (id del registry de tools).</text>
+</svg>

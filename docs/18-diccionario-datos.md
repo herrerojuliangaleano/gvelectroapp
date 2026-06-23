@@ -11,7 +11,7 @@ Tipos: `bigint`, `text`, `bool`, `int`, `numeric(14,2)`, `date`, `timestamptz`,
 `jsonb`, `float`. Todas las tablas con `id bigint` lo tienen como PK autoincrement
 salvo que se indique otra cosa.
 
-**Estado de este documento (por tandas):** ✅ Dominios 1–8 · ⏳ 9–12 en preparación.
+**Estado de este documento:** ✅ Completo — los 12 dominios (52 tablas).
 
 Índice de dominios: 1 Organización & Acceso · 2 RRHH · 3 Garantías · 4 Remitos ·
 5 Ventas Web · 6 Productos · 7 Catálogo Maestro · 8 Sales BI operativo ·
@@ -522,3 +522,233 @@ salvo que se indique otra cosa.
 | import_id | bigint | no | — | FK→sales_imports (CASCADE), IDX | |
 | remito | text | no | `''` | | |
 | efectivo / transferencia / tarjeta / usd / otros / total | numeric(14,2) | no | `0` | | Saldos por medio de pago. |
+
+---
+
+## Dominio 9 — Sales BI (comercial · Ventas vs Costos)
+
+![MER Sales BI comercial](diagramas/09-sales-bi-comercial.svg)
+
+### sales_bi_commercial_batches
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| source_kind | text | no | `ventas_vs_costos` | IDX | |
+| fuente_nombre / fuente_url | text | no | `''` | | |
+| status | text | no | `activo` | IDX | |
+| period_start / period_end | date | sí | — | IDX | |
+| total_records / total_units | int | no | `0` | | |
+| total_pvp / total_costo / total_diferencia | numeric(14,2) | no | `0` | | |
+| imported_by / voided_by `_user_id` | bigint | sí | — | FK→users (SET NULL) | |
+| created_at / voided_at | timestamptz | — | `now()`/— | | |
+| void_reason | text | no | `''` | | |
+| warnings | jsonb | no | `[]` | | |
+
+### sales_bi_commercial_records
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| batch_id | bigint | no | — | FK→sales_bi_commercial_batches (CASCADE), IDX | |
+| source_sheet | text | no | `''` | IDX | |
+| row_number | int | no | `0` | | |
+| fecha | date | no | — | IDX | |
+| sucursal | text | no | — | IDX | |
+| branch_id | text | sí | — | FK→branches (SET NULL), IDX | |
+| tipo_venta | text | no | `''` | IDX | |
+| marca_raw / tipo_raw / descripcion_raw / sku_raw | text | no | `''` | | Crudo de la planilla. |
+| marca / tipo_producto / categoria | text | no | `''` | IDX | Normalizado / derivado. |
+| descripcion | text | no | `''` | | |
+| sku / sku_normalized / descripcion_normalized | text | no | `''` | IDX | |
+| product_id | bigint | sí | — | FK→products (SET NULL), IDX | Match. |
+| correction_id | bigint | sí | — | FK→sales_bi_commercial_corrections (SET NULL), IDX | |
+| match_status | text | no | `unmatched` | IDX | |
+| cantidad | int | no | `1` | | |
+| pvp / costo / diferencia / margen_porcentaje | numeric(14,2) | no | `0` | | |
+
+### sales_bi_commercial_corrections
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| match_sku_norm / match_desc_norm / match_brand_norm / match_type_norm | text | no | `''` | IDX | Claves de match. |
+| corrected_sku / corrected_description / corrected_brand / corrected_type / note | text | no | `''` | | Corrección aplicada. |
+| product_id | bigint | sí | — | FK→products (SET NULL), IDX | |
+| created_by_user_id | bigint | sí | — | FK→users (SET NULL) | |
+| created_at | timestamptz | no | `now()` | | |
+
+---
+
+## Dominio 10 — PSI (planificación de ventas e inventario)
+
+![MER PSI](diagramas/10-psi.svg)
+
+### sales_psi_adjustments
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| product_id | bigint | no | — | FK→products (RESTRICT), IDX | |
+| sku_snapshot / marca_snapshot / tipo_snapshot / condicion_snapshot | text | no | — | | Snapshots (sobreviven a cambios). |
+| descripcion_snapshot | text | no | `''` | | |
+| periodo_semana | date | no | — | IDX | Semana del ajuste. |
+| inserted_date | date | no | — | | |
+| sucursal | text | no | — | IDX | `CASEROS|SUR|NORTE|CANNING`. |
+| cantidad_delta | int | no | — | | + o − (≠0). |
+| valor_estimado | numeric(14,2) | sí | — | | |
+| reason | text | no | `''` | | |
+| target | text | no | `sell_out` | | `sell_out|stock|both`. |
+| fecha_mode | text | no | — | | `manual|random`. |
+| status | text | no | `pending` | IDX | `pending|applied_to_sheet|reverted|failed`. |
+| applied_at / reverted_at | timestamptz | sí | — | | |
+| applied_to_book / applied_to_sheet_range | text | sí | — | | |
+| applied_by / reverted_by / created_by `_user_id` | bigint | sí | — | FK→users (SET NULL) | |
+| created_at (IDX) / updated_at | timestamptz | no | `now()` | | |
+
+### psi_product_aliases
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| product_id | bigint | no | — | FK→products (CASCADE), IDX | |
+| alias_sku_norm / alias_desc_norm | text | sí | — | IDX | Al menos uno (constraint en migración). |
+| alias_sku_raw / alias_desc_raw | text | no | `''` | | Snapshot. |
+| created_by_user_id | bigint | sí | — | FK→users (SET NULL) | |
+| created_at | timestamptz | no | `now()` | | |
+
+---
+
+## Dominio 11 — Precios & Anuncios
+
+![MER Precios y Anuncios](diagramas/11-precios-anuncios.svg)
+
+### price_cost_updates
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| type | text | no | — | IDX | `precio|costo`. |
+| producto | text | no | — | | |
+| sku | text | no | — | IDX | |
+| marca | text | sí | — | | |
+| valor_anterior | numeric(14,2) | sí | — | | |
+| valor_nuevo | numeric(14,2) | no | — | | |
+| estado | text | no | — | IDX | |
+| lookup_warning | text | sí | — | | |
+| created_by / cancelled_by / archived_by / announcement_archived_by `_user_id` | bigint | sí | — | FK→users (SET NULL) | |
+| created_at (IDX) / updated_at / cancelled_at / archived_at (IDX) / announcement_archived_at (IDX) | timestamptz | — | `now()`/— | | |
+| cancel_reason / archive_reason | text | sí | — | | |
+| source | text | no | `''` | | Origen (sync). |
+| source_product_id | bigint | sí | — | FK→products (SET NULL) | |
+| source_sync_log_id | bigint | sí | — | FK→product_sync_logs (SET NULL) | |
+| auto_created | bool | no | `false` | | |
+
+### price_cost_update_checks
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| update_id | bigint | no | — | FK→price_cost_updates (CASCADE), IDX | |
+| check_key / label | text | no | — | | |
+| checked | bool | no | `false` | | |
+| checked_by_user_id | bigint | sí | — | FK→users (SET NULL) | |
+| checked_at | timestamptz | sí | — | | |
+| | | | | **UNIQUE(update_id, check_key)** | |
+
+### price_cost_update_history
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| update_id | bigint | no | — | FK→price_cost_updates (CASCADE), IDX | |
+| action | text | no | — | | |
+| detail | jsonb | sí | — | | |
+| user_id | bigint | sí | — | FK→users (SET NULL) | |
+| created_at | timestamptz | no | `now()` | | |
+
+### price_announcement_batches
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| title / message / vigencia | text | no | `''` | | |
+| logo_brand | text | no | `gv_electro` | | |
+| brand_names | jsonb | no | `[]` | | Marcas del lote. |
+| product_count / image_count | int | no | `0` | | |
+| generated_by_user_id | bigint | sí | — | FK→users (SET NULL) | |
+| generated_at | timestamptz | no | `now()` | IDX | |
+
+### price_announcement_batch_items
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| batch_id | bigint | no | — | FK→price_announcement_batches (CASCADE), IDX | |
+| update_id | bigint | sí | — | FK→price_cost_updates (SET NULL), IDX | |
+| sort_order | int | no | `0` | | |
+| type | text | no | `price` | | |
+| producto / sku | text | no | — | | Snapshot. |
+| marca | text | sí | — | | |
+| valor_anterior | numeric(14,2) | sí | — | | |
+| valor_nuevo | numeric(14,2) | no | — | | |
+| change_kind | text | no | `NUEVO` | | |
+| auto_created | bool | no | `false` | | |
+
+---
+
+## Dominio 12 — Sistema & Notificaciones
+
+![MER Sistema](diagramas/12-sistema.svg)
+
+### notifications
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| user_id | bigint | no | — | FK→users (CASCADE), IDX | Destinatario. |
+| title / message / type | text | no | — | | |
+| module | text | no | `general` | IDX | |
+| event_type | text | no | `general` | | |
+| priority | text | no | `normal` | IDX | |
+| entity_type / entity_id | text | sí | — | | Referencia genérica (no FK). |
+| sales_request_id | bigint | sí | — | FK→sales_web_requests (SET NULL) | |
+| link_url / branch_name / target_role / push_status | text | sí | — | | |
+| branch_id | text | sí | — | FK→branches (SET NULL) | |
+| metadata | jsonb | sí | — | | (columna `metadata`). |
+| read | bool | no | `false` | | |
+| read_at / delivered_push_at | timestamptz | sí | — | | |
+| created_at | timestamptz | no | `now()` | IDX | |
+
+### push_subscriptions
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| user_id | bigint | no | — | FK→users (CASCADE), IDX | |
+| endpoint | text | no | — | | |
+| p256dh / auth | text | sí | — | | Claves web-push. |
+| created_at | timestamptz | no | `now()` | | |
+| | | | | **UNIQUE(user_id, endpoint)** | |
+
+### fcm_tokens
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| user_id | bigint | no | — | FK→users (CASCADE), IDX | |
+| token | text | no | — | UNIQUE | Token FCM (push móvil). |
+| created_at / updated_at | timestamptz | no | `now()` | | |
+
+### jobs
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | text | no | — | **PK** | Id del registry de tools. |
+| tool_id / tool_name | text | no | — | | |
+| status | text | no | — | IDX | |
+| user_id | bigint | sí | — | FK→users (SET NULL) | |
+| created_at (IDX) / started_at / finished_at | timestamptz | — | `now()`/— | | |
+| duration_seconds | float | sí | — | | |
+| payload | jsonb | sí | — | | Parámetros de la ejecución. |
+| log_path / error | text | sí | — | | |
+| pid | int | sí | — | | |
+
+### app_events *(auditoría)*
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| event_type | text | no | — | IDX | |
+| actor_user_id | bigint | sí | — | FK→users (SET NULL), IDX | |
+| detail | jsonb | no | `{}` | | Detalle del evento. |
+| created_at | timestamptz | no | `now()` | IDX | |
+
+---
+
+*Fin del diccionario — 52 tablas, 12 dominios. Para la visión MER + normalización, ver [`17-modelo-datos-mer.md`](17-modelo-datos-mer.md).*

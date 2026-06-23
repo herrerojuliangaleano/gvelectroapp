@@ -1,0 +1,16 @@
+<svg viewBox="0 0 820 360" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <title>MER — PSI (Planificación de Ventas e Inventario)</title>
+  <desc>sales_psi_adjustments y psi_product_aliases referencian products; no se relacionan entre sí.</desc>
+  <style>
+    .ent{fill:#ffffff;stroke:#cbd5e1;stroke-width:1.5;} .hub{fill:#ffffff;stroke:#ca8a04;stroke-width:2.5;}
+    .hdr{fill:#ca8a04;} .ref{fill:#94a3b8;} .ttl{fill:#fff;font-size:13px;font-weight:700;}
+    .fld{fill:#1e293b;font-size:11px;} .key{fill:#64748b;font-size:9.5px;font-weight:700;}
+    .rel{stroke:#94a3b8;stroke-width:1.5;fill:none;} .card{fill:#64748b;font-size:11px;font-weight:700;} .note{fill:#64748b;font-size:10px;}
+  </style>
+  <path class="rel" d="M250,120 H560"/><text class="card" x="540" y="113">1</text><text class="card" x="262" y="113">N</text><text class="note" x="330" y="113">RESTRICT</text>
+  <path class="rel" d="M250,270 H560 V160"/><text class="card" x="262" y="263">N</text><text class="note" x="330" y="263">CASCADE</text>
+  <g><rect class="hub" x="40" y="70" width="210" height="110" rx="8"/><path class="hdr" d="M40,78 a8,8 0 0 1 8,-8 h194 a8,8 0 0 1 8,8 v18 h-210 z"/><text class="ttl" x="52" y="90">sales_psi_adjustments</text><text class="key" x="52" y="114">FK</text><text class="fld" x="75" y="114">product_id (RESTRICT)</text><text class="fld" x="52" y="132">snapshots · periodo · sucursal</text><text class="fld" x="52" y="150">cantidad_delta · target</text><text class="fld" x="52" y="168">status · fecha_mode</text></g>
+  <g><rect class="hub" x="40" y="220" width="210" height="100" rx="8"/><path class="hdr" d="M40,228 a8,8 0 0 1 8,-8 h194 a8,8 0 0 1 8,8 v18 h-210 z"/><text class="ttl" x="52" y="240">psi_product_aliases</text><text class="key" x="52" y="264">FK</text><text class="fld" x="75" y="264">product_id (CASCADE)</text><text class="fld" x="52" y="282">alias_sku_norm / desc_norm</text><text class="fld" x="52" y="300">alias_*_raw (snapshot)</text></g>
+  <g><rect class="ent" x="560" y="120" width="180" height="80" rx="8"/><path class="ref" d="M560,128 a8,8 0 0 1 8,-8 h164 a8,8 0 0 1 8,8 v16 h-180 z"/><text class="ttl" x="572" y="140">products</text><text class="note" x="572" y="166">otro dominio</text><text class="note" x="572" y="184">catálogo</text></g>
+  <text class="note" x="20" y="345">Dominio 10 · PSI (2 tablas). Ambas cuelgan de products; no se relacionan entre sí. Amarillo = entidades del dominio.</text>
+</svg>
