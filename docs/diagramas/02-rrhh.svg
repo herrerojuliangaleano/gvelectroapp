@@ -1,0 +1,31 @@
+<svg viewBox="0 0 980 520" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <title>MER — RRHH (Empleados)</title>
+  <desc>employees 1:1 opcional con users; auto-ref manager; tiene status_history y payroll_receipts; los recibos tienen observations.</desc>
+  <style>
+    .ent {fill:#ffffff;stroke:#cbd5e1;stroke-width:1.5;} .hub{fill:#ffffff;stroke:#0d9488;stroke-width:2.5;}
+    .hdr{fill:#0d9488;} .ref{fill:#94a3b8;} .ttl{fill:#fff;font-size:13px;font-weight:700;}
+    .fld{fill:#1e293b;font-size:11px;} .key{fill:#64748b;font-size:9.5px;font-weight:700;}
+    .rel{stroke:#94a3b8;stroke-width:1.5;fill:none;} .card{fill:#64748b;font-size:11px;font-weight:700;} .note{fill:#64748b;font-size:10px;}
+  </style>
+  <!-- rels -->
+  <path class="rel" d="M150,95 H330"/><text class="card" x="160" y="88">1</text><text class="card" x="312" y="88">1</text><text class="note" x="210" y="88">user_id (UNIQUE)</text>
+  <path class="rel" d="M150,235 H330"/><text class="card" x="160" y="228">1</text><text class="card" x="312" y="228">N</text>
+  <path class="rel" d="M150,345 H330"/><text class="card" x="160" y="338">1</text><text class="card" x="312" y="262">N</text>
+  <path class="rel" d="M360,300 V380"/><text class="card" x="366" y="320">1</text><text class="card" x="366" y="375">N</text>
+  <path class="rel" d="M470,180 q120,-30 170,-40"/><text class="card" x="486" y="170">1</text><text class="card" x="625" y="135">N</text>
+  <path class="rel" d="M715,200 V320"/><text class="card" x="721" y="220">1</text><text class="card" x="721" y="315">N</text>
+  <path class="rel" d="M455,250 q40,0 40,30 q0,30 -40,30"/><text class="note" x="500" y="285">manager</text>
+  <!-- referenced (left) -->
+  <g><rect class="ent" x="20" y="60" width="130" height="70" rx="8"/><path class="ref" d="M20,68 a8,8 0 0 1 8,-8 h114 a8,8 0 0 1 8,8 v16 h-130 z"/><text class="ttl" x="30" y="80">users</text><text class="key" x="30" y="102">PK</text><text class="fld" x="52" y="102">id</text><text class="note" x="30" y="120">(acceso)</text></g>
+  <g><rect class="ent" x="20" y="200" width="130" height="64" rx="8"/><path class="ref" d="M20,208 a8,8 0 0 1 8,-8 h114 a8,8 0 0 1 8,8 v16 h-130 z"/><text class="ttl" x="30" y="220">companies</text><text class="note" x="30" y="248">(RESTRICT)</text></g>
+  <g><rect class="ent" x="20" y="310" width="130" height="70" rx="8"/><path class="ref" d="M20,318 a8,8 0 0 1 8,-8 h114 a8,8 0 0 1 8,8 v16 h-130 z"/><text class="ttl" x="30" y="330">branches</text><text class="note" x="30" y="358">company +</text><text class="note" x="30" y="372">work_branch</text></g>
+  <!-- employees hub -->
+  <g><rect class="hub" x="330" y="150" width="140" height="150" rx="8"/><path class="hdr" d="M330,158 a8,8 0 0 1 8,-8 h124 a8,8 0 0 1 8,8 v18 h-140 z"/><text class="ttl" x="342" y="170">employees</text><text class="key" x="342" y="194">PK</text><text class="fld" x="365" y="194">id</text><text class="fld" x="342" y="212">dni (UNIQUE)</text><text class="key" x="342" y="230">FK</text><text class="fld" x="365" y="230">user_id 1:1</text><text class="fld" x="342" y="248">company/branch</text><text class="fld" x="342" y="266">manager_id ↺</text><text class="fld" x="342" y="284">status</text></g>
+  <!-- status history -->
+  <g><rect class="ent" x="300" y="380" width="200" height="76" rx="8"/><path class="hdr" d="M300,388 a8,8 0 0 1 8,-8 h184 a8,8 0 0 1 8,8 v18 h-200 z"/><text class="ttl" x="312" y="400">employee_status_history</text><text class="key" x="312" y="424">FK</text><text class="fld" x="335" y="424">employee_id</text><text class="fld" x="312" y="442">status · motivo · fechas</text></g>
+  <!-- payroll receipts -->
+  <g><rect class="ent" x="640" y="120" width="200" height="80" rx="8"/><path class="hdr" d="M640,128 a8,8 0 0 1 8,-8 h184 a8,8 0 0 1 8,8 v18 h-200 z"/><text class="ttl" x="652" y="140">payroll_receipts</text><text class="key" x="652" y="164">FK</text><text class="fld" x="675" y="164">employee_id (RESTRICT)</text><text class="fld" x="652" y="182">period · file · status</text></g>
+  <!-- observations -->
+  <g><rect class="ent" x="640" y="320" width="220" height="80" rx="8"/><path class="hdr" d="M640,328 a8,8 0 0 1 8,-8 h204 a8,8 0 0 1 8,8 v18 h-220 z"/><text class="ttl" x="652" y="340">payroll_receipt_observations</text><text class="key" x="652" y="364">FK</text><text class="fld" x="675" y="364">receipt_id · employee_id</text><text class="fld" x="652" y="382">message · status</text></g>
+  <text class="note" x="20" y="495">Notación: 1 — N · 1:1 = vínculo único · ↺ = auto-referencia. Verde = entidad central. Gris = tabla de otro dominio.</text>
+</svg>

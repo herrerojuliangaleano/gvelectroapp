@@ -1,0 +1,32 @@
+<svg viewBox="0 0 980 560" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <title>MER — Organización y Acceso</title>
+  <desc>companies tiene branches; role_groups agrupa roles; users N–N roles (user_roles) y N–N branches (user_branches).</desc>
+  <style>
+    .ent  { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+    .hub  { fill: #ffffff; stroke: #6366f1; stroke-width: 2.5; }
+    .hdr  { fill: #6366f1; }
+    .jhdr { fill: #64748b; }
+    .ttl  { fill: #ffffff; font-size: 13px; font-weight: 700; }
+    .fld  { fill: #1e293b; font-size: 11px; }
+    .key  { fill: #64748b; font-size: 9.5px; font-weight: 700; }
+    .rel  { stroke: #94a3b8; stroke-width: 1.5; fill: none; }
+    .card { fill: #64748b; font-size: 11px; font-weight: 700; }
+    .note { fill: #64748b; font-size: 10px; }
+  </style>
+  <path class="rel" d="M820,150 V210"/><text class="card" x="826" y="170">1</text><text class="card" x="826" y="205">N</text>
+  <path class="rel" d="M900,232 q40,0 40,40 q0,40 -40,40"/><text class="note" x="912" y="276">parent</text>
+  <path class="rel" d="M95,150 V210"/><text class="card" x="101" y="170">1</text><text class="card" x="101" y="205">N</text>
+  <path class="rel" d="M190,250 H300"/><text class="card" x="200" y="243">1</text><text class="card" x="285" y="243">N</text>
+  <path class="rel" d="M540,250 H470"/><text class="card" x="527" y="243">1</text><text class="card" x="478" y="243">N</text>
+  <path class="rel" d="M560,330 q-80,90 -180,90"/><text class="card" x="548" y="360">1</text><text class="card" x="408" y="430">N</text>
+  <path class="rel" d="M760,330 q-160,140 -290,90"/><text class="card" x="742" y="360">1</text><text class="card" x="478" y="430">N</text>
+  <g><rect class="ent" x="740" y="60" width="200" height="90" rx="8"/><path class="hdr" d="M740,68 a8,8 0 0 1 8,-8 h184 a8,8 0 0 1 8,8 v18 h-200 z"/><text class="ttl" x="752" y="80">companies</text><text class="key" x="752" y="104">PK</text><text class="fld" x="775" y="104">id (slug)</text><text class="fld" x="752" y="122">name · cuit</text><text class="fld" x="752" y="140">is_active</text></g>
+  <g><rect class="ent" x="740" y="210" width="200" height="105" rx="8"/><path class="hdr" d="M740,218 a8,8 0 0 1 8,-8 h184 a8,8 0 0 1 8,8 v18 h-200 z"/><text class="ttl" x="752" y="230">branches</text><text class="key" x="752" y="254">PK</text><text class="fld" x="775" y="254">id (slug)</text><text class="key" x="752" y="272">FK</text><text class="fld" x="775" y="272">company_id</text><text class="fld" x="752" y="290">code (UNIQUE)</text><text class="fld" x="752" y="308">type · parent_branch_id</text></g>
+  <g><rect class="ent" x="20" y="60" width="175" height="90" rx="8"/><path class="hdr" d="M20,68 a8,8 0 0 1 8,-8 h159 a8,8 0 0 1 8,8 v18 h-175 z"/><text class="ttl" x="32" y="80">role_groups</text><text class="key" x="32" y="104">PK</text><text class="fld" x="55" y="104">id</text><text class="fld" x="32" y="122">name (UNIQUE)</text><text class="note" x="32" y="140">departamentos</text></g>
+  <g><rect class="ent" x="20" y="210" width="175" height="95" rx="8"/><path class="hdr" d="M20,218 a8,8 0 0 1 8,-8 h159 a8,8 0 0 1 8,8 v18 h-175 z"/><text class="ttl" x="32" y="230">roles</text><text class="key" x="32" y="254">PK</text><text class="fld" x="55" y="254">id</text><text class="key" x="32" y="272">FK</text><text class="fld" x="55" y="272">group_id</text><text class="fld" x="32" y="290">permissions [jsonb]</text></g>
+  <g><rect class="ent" x="300" y="212" width="168" height="80" rx="8"/><path class="jhdr" d="M300,220 a8,8 0 0 1 8,-8 h152 a8,8 0 0 1 8,8 v18 h-168 z"/><text class="ttl" x="312" y="232">user_roles</text><text class="key" x="312" y="256">FK</text><text class="fld" x="335" y="256">user_id · role_id</text><text class="fld" x="312" y="274">is_primary</text></g>
+  <g><rect class="ent" x="296" y="392" width="178" height="80" rx="8"/><path class="jhdr" d="M296,400 a8,8 0 0 1 8,-8 h162 a8,8 0 0 1 8,8 v18 h-178 z"/><text class="ttl" x="308" y="412">user_branches</text><text class="key" x="308" y="436">FK</text><text class="fld" x="331" y="436">user_id · branch_id</text><text class="fld" x="308" y="454">is_primary (alcance)</text></g>
+  <g><rect class="hub" x="540" y="200" width="200" height="130" rx="8"/><path class="hdr" d="M540,208 a8,8 0 0 1 8,-8 h184 a8,8 0 0 1 8,8 v18 h-200 z"/><text class="ttl" x="552" y="220">users</text><text class="key" x="552" y="244">PK</text><text class="fld" x="575" y="244">id</text><text class="fld" x="552" y="262">username (UNIQUE)</text><text class="fld" x="552" y="280">display_name</text><text class="fld" x="552" y="298">password_hash</text><text class="note" x="552" y="318">hub de auditoría</text></g>
+  <text class="note" x="20" y="510">Notación: 1 — N. Cajas grises = tablas puente (N–N). Borde violeta = entidad central.</text>
+  <text class="note" x="20" y="528">Dominio 1 · Organización &amp; Acceso (7 tablas).</text>
+</svg>

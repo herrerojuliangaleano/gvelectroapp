@@ -1,0 +1,24 @@
+<svg viewBox="0 0 820 400" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <title>MER — Remitos</title>
+  <desc>remitos contiene remito_items (N–N con guarantees); origen/destino apuntan a branches.</desc>
+  <style>
+    .ent{fill:#ffffff;stroke:#cbd5e1;stroke-width:1.5;} .hub{fill:#ffffff;stroke:#2563eb;stroke-width:2.5;}
+    .hdr{fill:#2563eb;} .jhdr{fill:#64748b;} .ref{fill:#94a3b8;} .ttl{fill:#fff;font-size:13px;font-weight:700;}
+    .fld{fill:#1e293b;font-size:11px;} .key{fill:#64748b;font-size:9.5px;font-weight:700;}
+    .rel{stroke:#94a3b8;stroke-width:1.5;fill:none;} .card{fill:#64748b;font-size:11px;font-weight:700;} .note{fill:#64748b;font-size:10px;}
+  </style>
+  <path class="rel" d="M250,150 H360"/><text class="card" x="260" y="143">1</text><text class="card" x="345" y="143">N</text>
+  <path class="rel" d="M610,150 H520"/><text class="card" x="595" y="143">1</text><text class="card" x="528" y="143">N</text>
+  <path class="rel" d="M120,200 V250"/><text class="note" x="126" y="230">origen/destino</text>
+  <path class="rel" d="M150,180 q-20,40 -20,70"/>
+  <!-- remitos hub -->
+  <g><rect class="hub" x="50" y="60" width="200" height="120" rx="8"/><path class="hdr" d="M50,68 a8,8 0 0 1 8,-8 h184 a8,8 0 0 1 8,8 v18 h-200 z"/><text class="ttl" x="62" y="80">remitos</text><text class="key" x="62" y="104">PK</text><text class="fld" x="85" y="104">id</text><text class="fld" x="62" y="122">remito_code (UNIQUE)</text><text class="fld" x="62" y="140">tipo_remito · status</text><text class="key" x="62" y="158">FK</text><text class="fld" x="85" y="158">origen/destino_branch</text></g>
+  <!-- remito_items (junction) -->
+  <g><rect class="ent" x="360" y="100" width="160" height="100" rx="8"/><path class="jhdr" d="M360,108 a8,8 0 0 1 8,-8 h144 a8,8 0 0 1 8,8 v18 h-160 z"/><text class="ttl" x="372" y="120">remito_items</text><text class="key" x="372" y="144">FK</text><text class="fld" x="395" y="144">remito_id</text><text class="fld" x="372" y="162">guarantee_id</text><text class="fld" x="372" y="184">UNIQUE(r, g)</text></g>
+  <!-- guarantees ref -->
+  <g><rect class="ent" x="610" y="100" width="160" height="80" rx="8"/><path class="ref" d="M610,108 a8,8 0 0 1 8,-8 h144 a8,8 0 0 1 8,8 v18 h-160 z"/><text class="ttl" x="622" y="120">guarantees</text><text class="note" x="622" y="146">(otro dominio)</text><text class="note" x="622" y="164">RESTRICT</text></g>
+  <!-- branches ref -->
+  <g><rect class="ent" x="50" y="250" width="160" height="64" rx="8"/><path class="ref" d="M50,258 a8,8 0 0 1 8,-8 h144 a8,8 0 0 1 8,8 v16 h-160 z"/><text class="ttl" x="62" y="270">branches</text><text class="note" x="62" y="296">RESTRICT</text></g>
+  <text class="note" x="50" y="350">Notación: 1 — N. Azul = entidad central. Gris medio = tabla puente (N–N remito↔garantía). Gris = otro dominio.</text>
+  <text class="note" x="50" y="368">Dominio 4 · Remitos (2 tablas). Normaliza el viejo warranty_ids_json.</text>
+</svg>
