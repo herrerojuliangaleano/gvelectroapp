@@ -1,5 +1,10 @@
 # Modelo de datos — ElectroGV (PostgreSQL)
 
+> ⚠️ **Reemplazado por [`docs/17-modelo-datos-mer.md`](../17-modelo-datos-mer.md)**,
+> que cubre las 52 tablas actuales (MER por dominio + análisis de normalización).
+> Este doc describe solo el núcleo de la migración inicial (Fase 2) y se conserva
+> como referencia histórica.
+
 Fuente de verdad del esquema relacional para la migración a PostgreSQL
 (Fase 2: SQLAlchemy + Alembic). Se construye **desde cero** (sin migrar datos).
 
