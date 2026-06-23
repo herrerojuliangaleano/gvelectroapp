@@ -1,5 +1,5 @@
 import {
-  AlertTriangle, ArrowRight, BarChart3, Building2, CalendarRange, Check, Download, Eye,
+  AlertTriangle, ArrowRight, BarChart3, Boxes, Building2, CalendarRange, Check, Download, Eye,
   FileSpreadsheet, GitCompare, Layers3, Loader2, MoreVertical, MousePointerClick, Package,
   Presentation, RefreshCw, Search, Settings2, Tags, Target, Trophy,
 } from 'lucide-react';
@@ -31,7 +31,7 @@ import {
 } from '../components/SalesBIWidgets';
 
 type CommercialKind = 'brands' | 'lines' | 'branches';
-type CommercialTab = 'overview' | 'brands' | 'lines' | 'branches' | 'products' | 'compare' | 'periods' | 'opportunities' | 'presentation';
+type CommercialTab = 'overview' | 'brands' | 'lines' | 'tipos' | 'branches' | 'products' | 'compare' | 'periods' | 'opportunities' | 'presentation';
 type MetricMode = 'units' | 'pvp' | 'both';
 type OpportunityLevel = 'critica' | 'alta' | 'media' | 'info';
 
@@ -89,6 +89,8 @@ function tabFromKind(kind: CommercialKind): CommercialTab {
 function kindForTab(tab: CommercialTab): CommercialKind {
   if (tab === 'lines') return 'lines';
   if (tab === 'branches' || tab === 'opportunities') return 'branches';
+  // 'tipos' usa el reporte de marcas: todos los reportes incluyen `tipo_mix`,
+  // así que no hace falta un endpoint propio.
   return 'brands';
 }
 
@@ -628,6 +630,113 @@ function MixList({
         {rows.length === 0 && <div className="rounded-xl border border-dashed border-white/10 p-5 text-center text-sm text-[color:var(--text-3)]">Sin datos.</div>}
       </div>
     </section>
+  );
+}
+
+function TiposDashboard({
+  report,
+  previousReport,
+  mode,
+}: {
+  report: SalesBICommercialReport;
+  previousReport?: SalesBICommercialReport | null;
+  mode: MetricMode;
+}) {
+  const [query, setQuery] = useState('');
+  const tipos = useMemo(() => report.tipo_mix || [], [report.tipo_mix]);
+  const prevByName = useMemo(() => {
+    const map = new Map<string, SalesBICommercialMix>();
+    (previousReport?.tipo_mix || []).forEach((row) => map.set(row.name, row));
+    return map;
+  }, [previousReport]);
+  const sorted = useMemo(() => [...tipos].sort((a, b) => metricValue(b, mode) - metricValue(a, mode)), [tipos, mode]);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q ? sorted.filter((row) => row.name.toLowerCase().includes(q)) : sorted;
+  }, [sorted, query]);
+
+  const totalUnidades = tipos.reduce((acc, row) => acc + (row.unidades || 0), 0);
+  const totalVendido = tipos.reduce((acc, row) => acc + (row.total_vendido || 0), 0);
+  const topTipo = sorted[0];
+
+  if (tipos.length === 0) {
+    return <EmptyChartState minHeight={320} description="No hay tipos para los filtros actuales." />;
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <KpiCard label="Tipos distintos" value={tipos.length} format={num} accent="violet" />
+        <KpiCard label="Unidades totales" value={totalUnidades} format={num} accent="teal" />
+        <KpiCard label="PVP vendido" value={totalVendido} format={money} accent="blue" />
+        <KpiCard label={`Tipo top: ${topTipo?.name || '-'}`} value={topTipo ? metricValue(topTipo, mode) : 0} format={metricFormatter(mode)} accent="positive" />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <ChartCard title="Top tipos" subtitle={metricLabel(mode)}>
+          <RankingBars data={sorted} color="var(--chart-violet)" mode={mode} />
+        </ChartCard>
+        <ChartCard title="Participacion por tipo" subtitle={metricLabel(mode)}>
+          <ShareBars rows={sorted} mode={mode} />
+        </ChartCard>
+      </div>
+
+      <section className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)]/60 p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-[color:var(--text-3)]">
+            Todos los tipos ({filtered.length})
+          </div>
+          <div className="relative">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[color:var(--text-3)]" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Buscar tipo..."
+              className="h-9 w-56 rounded-xl border border-white/15 bg-slate-950/40 pl-9 pr-3 text-sm text-white outline-none focus:border-[color:var(--chart-violet)]"
+            />
+          </div>
+        </div>
+        <div className="max-h-[520px] overflow-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 z-10 bg-[color:var(--surface)] text-[11px] uppercase tracking-wide text-[color:var(--text-3)]">
+              <tr>
+                <th className="px-3 py-2 text-left">#</th>
+                <th className="px-3 py-2 text-left">Tipo</th>
+                <th className="px-3 py-2 text-right">Unidades</th>
+                <th className="px-3 py-2 text-right">PVP vendido</th>
+                <th className="px-3 py-2 text-right">PVP prom.</th>
+                <th className="px-3 py-2 text-right">Part. %</th>
+                {previousReport && <th className="px-3 py-2 text-right">vs ant.</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((row, index) => {
+                const prev = prevByName.get(row.name);
+                const delta = prev ? metricValue(row, mode) - metricValue(prev, mode) : null;
+                return (
+                  <tr key={row.name} className="border-t border-white/5 hover:bg-white/[0.04]">
+                    <td className="px-3 py-2 text-[color:var(--text-3)]">{index + 1}</td>
+                    <td className="px-3 py-2 font-black text-[color:var(--text)]">{row.name}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{num(row.unidades)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{money(row.total_vendido)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[color:var(--text-2)]">{money(row.pvp_promedio)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[color:var(--text-2)]">{(row.participacion_pct || 0).toFixed(1)}%</td>
+                    {previousReport && (
+                      <td className={cn('px-3 py-2 text-right tabular-nums', delta == null ? 'text-[color:var(--text-3)]' : delta > 0 ? 'text-[color:var(--chart-positive)]' : delta < 0 ? 'text-[color:var(--chart-negative)]' : 'text-[color:var(--text-3)]')}>
+                        {delta == null ? '-' : `${delta > 0 ? '+' : ''}${metricFormatter(mode)(delta)}`}
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+              {filtered.length === 0 && (
+                <tr><td colSpan={previousReport ? 7 : 6} className="px-3 py-6 text-center text-[color:var(--text-3)]">Sin coincidencias.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -2876,6 +2985,7 @@ export function SalesBICommercialPage() {
     { value: 'overview', label: 'Resumen', shortLabel: 'Resumen', icon: <BarChart3 size={14} /> },
     { value: 'brands', label: 'Marcas', shortLabel: 'Marcas', icon: <Tags size={14} /> },
     { value: 'lines', label: 'Categorias', shortLabel: 'Categ.', icon: <Layers3 size={14} /> },
+    { value: 'tipos', label: 'Tipos', shortLabel: 'Tipos', icon: <Boxes size={14} /> },
     { value: 'branches', label: 'Sucursales', shortLabel: 'Suc.', icon: <Building2 size={14} /> },
     { value: 'products', label: 'Productos', shortLabel: 'Prod.', icon: <Package size={14} /> },
     { value: 'compare', label: 'Comparador', shortLabel: 'Comp.', icon: <Trophy size={14} /> },
@@ -3049,6 +3159,10 @@ export function SalesBICommercialPage() {
 
           {activeTab === 'lines' && linesReport && (
             <LinesDetail report={linesReport} selectedLine={selectedLine} setSelectedLine={setSelectedLine} mode={metricMode} previousReport={previousReport} />
+          )}
+
+          {activeTab === 'tipos' && (
+            <TiposDashboard report={brandsReport} previousReport={previousReport} mode={metricMode} />
           )}
 
           {activeTab === 'branches' && branchesReport && (

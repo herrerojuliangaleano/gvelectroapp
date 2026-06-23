@@ -840,10 +840,11 @@ def _common_report(
         "brand_mix": _ranked(brands, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference),
         # `line_mix` = mix por las 5 categorías comerciales.
         "line_mix": _ranked(lines, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference),
-        # `tipo_mix` = mix por tipo_producto granular (drill-down debajo de
-        # la línea/categoria). El frontend lo usa cuando el usuario hace
-        # click en una categoria para ver el desglose por tipo.
-        "tipo_mix": _ranked(tipos, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference),
+        # `tipo_mix` = mix por tipo_producto granular (~54 tipos: HELADERA,
+        # LAVARROPAS, ...). Tiene su propia pestaña "Tipos" en el frontend y
+        # también se usa como drill-down debajo de la categoria. Límite alto
+        # para que entren TODOS los tipos (no solo el top 20 por defecto).
+        "tipo_mix": _ranked(tipos, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference, limit=200),
         "branch_mix": _ranked(branches, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference),
         "sale_type_mix": _ranked(tipo_venta, include_costs=include_costs, include_margin=include_margin, total_reference=total_reference),
         "branch_line_matrix": _cross_matrix(
