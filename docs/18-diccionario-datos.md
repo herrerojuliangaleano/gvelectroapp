@@ -11,7 +11,7 @@ Tipos: `bigint`, `text`, `bool`, `int`, `numeric(14,2)`, `date`, `timestamptz`,
 `jsonb`, `float`. Todas las tablas con `id bigint` lo tienen como PK autoincrement
 salvo que se indique otra cosa.
 
-**Estado de este documento (por tandas):** ✅ Dominios 1–4 · ⏳ 5–12 en preparación.
+**Estado de este documento (por tandas):** ✅ Dominios 1–8 · ⏳ 9–12 en preparación.
 
 Índice de dominios: 1 Organización & Acceso · 2 RRHH · 3 Garantías · 4 Remitos ·
 5 Ventas Web · 6 Productos · 7 Catálogo Maestro · 8 Sales BI operativo ·
@@ -281,3 +281,244 @@ salvo que se indique otra cosa.
 | guarantee_id | bigint | no | — | FK→guarantees (RESTRICT), IDX | |
 | created_at | timestamptz | no | `now()` | | |
 | | | | | **UNIQUE(remito_id, guarantee_id)** | Normaliza el viejo `warranty_ids_json`. |
+
+---
+
+## Dominio 5 — Ventas Web
+
+![MER Ventas Web](diagramas/05-ventas-web.svg)
+
+### sales_web_requests
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| numero_solicitud | text | no | — | UNIQUE | |
+| numero_remito_prefactura | text | no | `''` | | |
+| estado | text | no | — | IDX | `pendiente|tomado|completado|enviado|cancelado`. |
+| vendedor_user_id | bigint | sí | — | FK→users (SET NULL) | Vendedor. |
+| vendedor_nombre | text | no | `''` | | Snapshot. |
+| branch_id | text | sí | — | FK→branches (SET NULL), IDX | |
+| sucursal / canal | text | no | `''` | | |
+| dni / apellido_nombre / telefono / correo_electronico / domicilio / codigo_postal / localidad | text | no | — | | Cliente. |
+| barrio / entre_calles / observaciones | text | no | `''` | | |
+| pago_tipo / entrega_tipo | text | no | — | | |
+| costo_envio / senia_monto / saldo_restante | numeric(14,2) | sí | — | | |
+| observacion_admin / cancel_reason | text | no | `''` | | |
+| taken_by / completed_by / sent_to_sales_by / cancelled_by `_user_id` | bigint | sí | — | FK→users (SET NULL) | Workflow. |
+| created_at (IDX) / updated_at / taken_at / completed_at / sent_to_sales_at / cancelled_at | timestamptz | — | `now()`/— | | |
+
+### sales_web_items
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| request_id | bigint | no | — | FK→sales_web_requests (CASCADE), IDX | |
+| sku / marca / tipo / condicion | text | no | `''` | | |
+| producto | text | no | — | | |
+| cantidad | int | no | `1` | | |
+| precio_unitario / total_linea | numeric(14,2) | sí | — | | |
+
+---
+
+## Dominio 6 — Productos (legacy)
+
+![MER Productos](diagramas/06-productos.svg)
+
+### products
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| sku | text | no | — | | SKU crudo. |
+| sku_normalized | text | no | — | UNIQUE | Clave de match. |
+| marca / descripcion / condicion_producto / search_text / source_sheet | text | no | `''` | | |
+| marca_normalized | text | no | `''` | IDX | |
+| tipo | text | no | `''` | IDX | |
+| pvp / costo_vigente | numeric(14,2) | sí | — | | |
+| pvp_text / costo_text | text | no | `''` | | Snapshot textual de la planilla. |
+| source_row | int | sí | — | | |
+| is_active | bool | no | `true` | IDX | |
+| last_synced_at | timestamptz | sí | — | | |
+| catalog_product_id | bigint | sí | — | FK→catalog_products (SET NULL), IDX | **Puente al maestro nuevo.** |
+| created_at / updated_at | timestamptz | no | `now()` | | |
+
+### product_brands
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| name | text | no | — | | |
+| normalized_name | text | no | — | UNIQUE | |
+| is_active | bool | no | `true` | IDX | |
+| created_at / updated_at | timestamptz | no | `now()` | | |
+
+### providers
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| name | text | no | — | | |
+| normalized_name | text | no | — | UNIQUE | |
+| contact_name / email / phone / notes | text | no | `''` | | |
+| is_active | bool | no | `true` | IDX | |
+| created_at / updated_at | timestamptz | no | `now()` | | |
+
+### brand_providers *(N–N marca ↔ proveedor)*
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| brand_id | bigint | no | — | FK→product_brands (CASCADE), IDX | |
+| provider_id | bigint | no | — | FK→providers (CASCADE), IDX | |
+| is_default | bool | no | `true` | | Proveedor por defecto. |
+| created_at / updated_at | timestamptz | no | `now()` | | |
+| | | | | **UNIQUE(brand_id, provider_id)** | |
+
+### product_sync_logs
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| source | text | no | `google_sheet` | | |
+| status | text | no | — | | |
+| actor_user_id | bigint | sí | — | FK→users (SET NULL) | |
+| started_at | timestamptz | no | — | IDX | |
+| finished_at | timestamptz | sí | — | | |
+| rows_processed/created/updated/skipped · brands_created · price/cost_changes_detected · price_cost_updates_created/skipped | int | no | `0` | | Contadores. |
+| errors | jsonb | no | `[]` | | |
+| spreadsheet_id / sheet_name | text | no | `''` | | |
+
+---
+
+## Dominio 7 — Catálogo Maestro
+
+![MER Catálogo Maestro](diagramas/07-catalogo-maestro.svg)
+
+### catalog_products *(maestro nuevo)*
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| codigo_puma | text | no | `''` | IDX | Manual. |
+| sku_base / sku_comercial | text | no | `''` | | |
+| sku_comercial_normalized | text | no | `''` | IDX | |
+| descripcion_base / descripcion_comercial / descripcion_erp / descripcion_original | text | no | `''` | | 4 descripciones derivadas. |
+| marca | text | no | `''` | | |
+| marca_normalized | text | no | `''` | IDX | |
+| familia_app / rubro_app | text | no | `''` | IDX | Clasificación comercial (manda). |
+| subrubro_app · familia_erp · rubro_erp · subrubro_erp | text | no | `''` | | ERP = referencia. |
+| condicion | text | no | `PRIMERA` | IDX | `PRIMERA|OUTLET`. |
+| estado | text | no | `BORRADOR` | IDX | BORRADOR…ACTIVO…DISCONTINUADO. |
+| activo | bool | no | `false` | IDX | |
+| producto_base_id | bigint | sí | — | FK→catalog_products (SET NULL) | Base del outlet (auto-ref). |
+| datos | jsonb | no | `{}` | | Armado de la descripción (orden + extras). |
+| created_by / updated_by `_user_id` | bigint | sí | — | FK→users (SET NULL) | |
+| created_at / updated_at | timestamptz | no | `now()` | | |
+
+### catalog_aliases
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| catalog_product_id | bigint | no | — | FK→catalog_products (CASCADE), IDX | |
+| sku_anterior | text | no | `''` | IDX | |
+| descripcion_anterior / codigo_puma_anterior / origen / tipo_equivalencia / observacion | text | no | `''` | | |
+| confianza | int | no | `100` | | |
+| revisado | bool | no | `false` | | |
+| created_by_user_id | bigint | sí | — | FK→users (SET NULL) | |
+| created_at | timestamptz | no | `now()` | | |
+
+### catalog_price_history / catalog_cost_history
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| catalog_product_id | bigint | no | — | FK→catalog_products (CASCADE), IDX | |
+| pvp *(price)* / costo *(cost)* | numeric(14,2) | no | — | | |
+| moneda / proveedor *(solo cost)* | text | no | `ARS`/`''` | | |
+| fecha_desde | date | no | — | | |
+| fecha_hasta | date | sí | — | | NULL = vigente. |
+| motivo | text | no | `''` | | |
+| created_by_user_id | bigint | sí | — | FK→users (SET NULL) | |
+| created_at | timestamptz | no | `now()` | | |
+
+### catalog_templates
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| familia_app / rubro_app | text | no | `''` | **UNIQUE(familia_app, rubro_app)** | |
+| campos_obligatorios | jsonb | no | `[]` | | Definición de campos por rubro. |
+| formato_descripcion_base / comercial / erp / subrubro | text | no | `''` | | Patrones. |
+| activo | bool | no | `true` | | |
+| created_at / updated_at | timestamptz | no | `now()` | | |
+
+### catalog_abbreviations
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| texto_original | text | no | — | **UNIQUE** | |
+| abreviatura_erp | text | no | — | | |
+| activo | bool | no | `true` | | |
+| created_at | timestamptz | no | `now()` | | |
+
+### catalog_change_log
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| catalog_product_id | bigint | no | — | FK→catalog_products (CASCADE), IDX | |
+| campo | text | no | — | | |
+| valor_anterior / valor_nuevo / motivo | text | no | `''` | | |
+| changed_by_user_id | bigint | sí | — | FK→users (SET NULL) | |
+| changed_at | timestamptz | no | `now()` | IDX | |
+
+---
+
+## Dominio 8 — Sales BI (operativo)
+
+![MER Sales BI operativo](diagramas/08-sales-bi-operativo.svg)
+
+### sales_imports
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| fecha | date | no | — | IDX | |
+| sucursal | text | no | — | IDX | Texto legacy. |
+| branch_id | text | sí | — | FK→branches (SET NULL), IDX | Canónico. |
+| tipo / fuente | text | no | — | | |
+| fuente_url / fuente_nombre | text | no | `''` | | |
+| status | text | no | `activo` | IDX | `activo|anulado`. |
+| total_records | int | no | `0` | | |
+| total_pvp / total_costo / total_efectivo / total_transferencia / total_tarjeta / total_usd / total_cuenta_corriente / total_otros | numeric(14,2) | no | `0` | | Totales pre-agregados por medio de pago. |
+| cotizacion_dolar | numeric(14,2) | sí | — | | |
+| imported_by / voided_by `_user_id` | bigint | sí | — | FK→users (SET NULL) | |
+| created_at / voided_at | timestamptz | — | `now()`/— | | |
+| void_reason | text | no | `''` | | |
+| warnings | jsonb | no | `[]` | | |
+
+### sales_records
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| import_id | bigint | no | — | FK→sales_imports (CASCADE), IDX | |
+| nro_linea | int | no | — | | |
+| remito / producto | text | no | `''` | | |
+| vendedor | text | no | `''` | IDX | |
+| vendedor_normalized | text | no | `''` | IDX | |
+| seller_user_id | bigint | sí | — | FK→users (SET NULL), IDX | |
+| sku | text | no | `''` | IDX | |
+| sku_normalized | text | no | `''` | IDX | |
+| product_id | bigint | sí | — | FK→products (SET NULL), IDX | Match. |
+| product_alias_id | bigint | sí | — | FK→sales_bi_product_aliases (SET NULL), IDX | |
+| product_match_status | text | no | `unmatched` | IDX | |
+| marca / tipo_producto / condicion / categoria / linea | text | no | `''` | | Dimensiones (derivadas). |
+| cantidad | int | no | `1` | | |
+| pvp / costo / diferencia / margen_porcentaje / efectivo / transferencia / tarjeta / usd / cuenta_corriente / otros / total_cobrado / saldo | numeric(14,2) | no | `0` | | Importes y medios de pago. |
+
+### sales_bi_product_aliases
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| product_id | bigint | no | — | FK→products (CASCADE), IDX | |
+| alias_sku_norm / alias_desc_norm | text | sí | — | IDX | Uno o ambos. |
+| alias_sku_raw / alias_desc_raw | text | no | `''` | | Snapshot. |
+| created_by_user_id | bigint | sí | — | FK→users (SET NULL) | |
+| created_at | timestamptz | no | `now()` | | |
+
+### sales_balances
+| Columna | Tipo | Null | Default | Clave | Descripción |
+|---|---|---|---|---|---|
+| id | bigint | no | auto | **PK** | |
+| import_id | bigint | no | — | FK→sales_imports (CASCADE), IDX | |
+| remito | text | no | `''` | | |
+| efectivo / transferencia / tarjeta / usd / otros / total | numeric(14,2) | no | `0` | | Saldos por medio de pago. |

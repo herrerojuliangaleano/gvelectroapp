@@ -1,0 +1,18 @@
+<svg viewBox="0 0 820 380" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <title>MER — Ventas Web</title>
+  <desc>sales_web_requests tiene sales_web_items (CASCADE); referencia users (vendedor) y branches.</desc>
+  <style>
+    .ent{fill:#ffffff;stroke:#cbd5e1;stroke-width:1.5;} .hub{fill:#ffffff;stroke:#7c3aed;stroke-width:2.5;}
+    .hdr{fill:#7c3aed;} .ref{fill:#94a3b8;} .ttl{fill:#fff;font-size:13px;font-weight:700;}
+    .fld{fill:#1e293b;font-size:11px;} .key{fill:#64748b;font-size:9.5px;font-weight:700;}
+    .rel{stroke:#94a3b8;stroke-width:1.5;fill:none;} .card{fill:#64748b;font-size:11px;font-weight:700;} .note{fill:#64748b;font-size:10px;}
+  </style>
+  <path class="rel" d="M380,160 H470"/><text class="card" x="390" y="153">1</text><text class="card" x="455" y="153">N</text>
+  <path class="rel" d="M150,95 q120,10 150,40"/><text class="card" x="160" y="90">1</text><text class="card" x="285" y="120">N</text>
+  <path class="rel" d="M150,300 q120,-10 150,-40"/><text class="card" x="160" y="305">1</text><text class="card" x="285" y="220">N</text>
+  <g><rect class="ent" x="20" y="60" width="130" height="60" rx="8"/><path class="ref" d="M20,68 a8,8 0 0 1 8,-8 h114 a8,8 0 0 1 8,8 v16 h-130 z"/><text class="ttl" x="30" y="80">users</text><text class="note" x="30" y="106">vendedor/actores</text></g>
+  <g><rect class="ent" x="20" y="260" width="130" height="60" rx="8"/><path class="ref" d="M20,268 a8,8 0 0 1 8,-8 h114 a8,8 0 0 1 8,8 v16 h-130 z"/><text class="ttl" x="30" y="280">branches</text><text class="note" x="30" y="306">SET NULL</text></g>
+  <g><rect class="hub" x="180" y="100" width="200" height="150" rx="8"/><path class="hdr" d="M180,108 a8,8 0 0 1 8,-8 h184 a8,8 0 0 1 8,8 v18 h-200 z"/><text class="ttl" x="192" y="120">sales_web_requests</text><text class="key" x="192" y="144">PK</text><text class="fld" x="215" y="144">id</text><text class="fld" x="192" y="162">numero_solicitud (UNIQUE)</text><text class="fld" x="192" y="180">estado</text><text class="key" x="192" y="198">FK</text><text class="fld" x="215" y="198">vendedor_user_id</text><text class="fld" x="192" y="216">cliente · pago · entrega</text><text class="fld" x="192" y="234">senia · saldo · workflow</text></g>
+  <g><rect class="ent" x="470" y="110" width="190" height="100" rx="8"/><path class="hdr" d="M470,118 a8,8 0 0 1 8,-8 h174 a8,8 0 0 1 8,8 v18 h-190 z"/><text class="ttl" x="482" y="130">sales_web_items</text><text class="key" x="482" y="154">FK</text><text class="fld" x="505" y="154">request_id (CASCADE)</text><text class="fld" x="482" y="172">sku · producto · cantidad</text><text class="fld" x="482" y="190">precio_unitario · total</text></g>
+  <text class="note" x="20" y="360">Dominio 5 · Ventas Web (2 tablas). Violeta = entidad central · gris = otro dominio.</text>
+</svg>

@@ -1,0 +1,23 @@
+<svg viewBox="0 0 980 480" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
+  <title>MER — Catálogo Maestro</title>
+  <desc>catalog_products es el maestro; tiene aliases, price_history, cost_history y change_log (CASCADE) y auto-ref producto_base. templates y abbreviations son tablas de apoyo.</desc>
+  <style>
+    .ent{fill:#ffffff;stroke:#cbd5e1;stroke-width:1.5;} .hub{fill:#ffffff;stroke:#0891b2;stroke-width:2.5;}
+    .hdr{fill:#0891b2;} .aux{fill:#a3a3a3;} .ttl{fill:#fff;font-size:13px;font-weight:700;}
+    .fld{fill:#1e293b;font-size:11px;} .key{fill:#64748b;font-size:9.5px;font-weight:700;}
+    .rel{stroke:#94a3b8;stroke-width:1.5;fill:none;} .card{fill:#64748b;font-size:11px;font-weight:700;} .note{fill:#64748b;font-size:10px;}
+  </style>
+  <path class="rel" d="M340,130 H560"/><text class="card" x="350" y="123">1</text><text class="card" x="545" y="123">N</text>
+  <path class="rel" d="M340,210 H560"/><text class="card" x="350" y="203">1</text><text class="card" x="545" y="203">N</text>
+  <path class="rel" d="M340,270 H560"/><text class="card" x="350" y="290">1</text><text class="card" x="545" y="263">N</text>
+  <path class="rel" d="M340,330 H560"/><text class="card" x="350" y="350">1</text><text class="card" x="545" y="323">N</text>
+  <path class="rel" d="M150,330 q-30,40 0,60 q20,15 40,0"/><text class="note" x="60" y="400">producto_base ↺</text>
+  <g><rect class="hub" x="140" y="110" width="200" height="230" rx="8"/><path class="hdr" d="M140,118 a8,8 0 0 1 8,-8 h184 a8,8 0 0 1 8,8 v18 h-200 z"/><text class="ttl" x="152" y="130">catalog_products</text><text class="key" x="152" y="154">PK</text><text class="fld" x="175" y="154">id</text><text class="fld" x="152" y="172">codigo_puma · sku_base</text><text class="fld" x="152" y="190">sku_comercial (+norm)</text><text class="fld" x="152" y="208">4 descripciones</text><text class="fld" x="152" y="226">marca · familia/rubro_app</text><text class="fld" x="152" y="244">condicion · estado · activo</text><text class="key" x="152" y="262">FK</text><text class="fld" x="175" y="262">producto_base_id ↺</text><text class="fld" x="152" y="280">datos [jsonb] (armador)</text><text class="fld" x="152" y="298">created/updated_by</text></g>
+  <g><rect class="ent" x="560" y="92" width="220" height="64" rx="8"/><path class="hdr" d="M560,100 a8,8 0 0 1 8,-8 h204 a8,8 0 0 1 8,8 v16 h-220 z"/><text class="ttl" x="572" y="112">catalog_aliases</text><text class="fld" x="572" y="136">sku/desc/puma_anterior</text><text class="fld" x="572" y="152">tipo_equivalencia · origen</text></g>
+  <g><rect class="ent" x="560" y="172" width="220" height="58" rx="8"/><path class="hdr" d="M560,180 a8,8 0 0 1 8,-8 h204 a8,8 0 0 1 8,8 v16 h-220 z"/><text class="ttl" x="572" y="192">catalog_price_history</text><text class="fld" x="572" y="216">pvp · fecha_desde/hasta</text></g>
+  <g><rect class="ent" x="560" y="244" width="220" height="58" rx="8"/><path class="hdr" d="M560,252 a8,8 0 0 1 8,-8 h204 a8,8 0 0 1 8,8 v16 h-220 z"/><text class="ttl" x="572" y="264">catalog_cost_history</text><text class="fld" x="572" y="288">costo · moneda · proveedor</text></g>
+  <g><rect class="ent" x="560" y="316" width="220" height="58" rx="8"/><path class="hdr" d="M560,324 a8,8 0 0 1 8,-8 h204 a8,8 0 0 1 8,8 v16 h-220 z"/><text class="ttl" x="572" y="336">catalog_change_log</text><text class="fld" x="572" y="360">campo · valor ant/nuevo</text></g>
+  <g><rect class="ent" x="800" y="120" width="160" height="80" rx="8"/><path class="aux" d="M800,128 a8,8 0 0 1 8,-8 h144 a8,8 0 0 1 8,8 v16 h-160 z"/><text class="ttl" x="812" y="140">catalog_templates</text><text class="fld" x="812" y="164">UNIQUE(fam, rubro)</text><text class="fld" x="812" y="182">campos_oblig. [jsonb]</text></g>
+  <g><rect class="ent" x="800" y="240" width="160" height="70" rx="8"/><path class="aux" d="M800,248 a8,8 0 0 1 8,-8 h144 a8,8 0 0 1 8,8 v16 h-160 z"/><text class="ttl" x="812" y="260">catalog_abbreviations</text><text class="fld" x="812" y="284">texto_original (UNIQUE)</text><text class="fld" x="812" y="300">abreviatura_erp</text></g>
+  <text class="note" x="20" y="450">Dominio 7 · Catálogo Maestro (7 tablas). Cyan = maestro · gris claro = apoyo (plantillas / abreviaturas, sin FK al producto).</text>
+</svg>
