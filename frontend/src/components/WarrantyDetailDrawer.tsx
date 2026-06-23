@@ -820,7 +820,7 @@ export function WarrantyDetailDrawer({
             <ErpInfoGrid columns={2}>
               <ErpInfoRow label="Producto" value={<span className="block">{summary.producto_principal || '—'}{summary.cantidad_items > 1 && <span className="text-[color:var(--text-3)]"> · {summary.cantidad_items} ítems</span>}</span>} />
               <ErpInfoRow label="N.º de serie" value={<span className="font-mono">{summary.serie || '—'}</span>} />
-              <ErpInfoRow label="Sucursal venta" value={summary.sucursal || '—'} />
+              <ErpInfoRow label="Sucursal venta" value={summary.sucursal_responsable || summary.sucursal || '—'} />
               <ErpInfoRow label="Vendedor" value={summary.responsable || '—'} />
               <ErpInfoRow label="Proveedor" value={summary.provider_name || '—'} />
               <ErpInfoRow label="ID caso proveedor" value={summary.id_de_caso || '—'} />
