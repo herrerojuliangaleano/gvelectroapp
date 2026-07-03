@@ -48,6 +48,58 @@ def _share(part: float, whole: float) -> float:
     return round(part / whole * 100, 2) if whole else 0.0
 
 
+def _price_bands(
+    market_prices: list[tuple[float, int]],
+    brand_prices: list[tuple[float, int]],
+) -> dict[str, Any] | None:
+    """Bandas Entrada/Media/Premium con cortes = terciles del mercado
+    ponderados por unidades. Muestra dónde juega la marca vs el mercado."""
+    total_units = sum(u for _, u in market_prices)
+    if not total_units:
+        return None
+    ordered = sorted(market_prices)
+    c1: float | None = None
+    c2: float | None = None
+    acc = 0
+    for price, units in ordered:
+        acc += units
+        if c1 is None and acc >= total_units / 3:
+            c1 = price
+        if c2 is None and acc >= 2 * total_units / 3:
+            c2 = price
+    c1 = float(c1 or 0)
+    c2 = float(c2 or c1)
+
+    def bucketize(pairs: list[tuple[float, int]]) -> list[dict[str, float]]:
+        out = [{"unidades": 0, "pvp": 0.0} for _ in range(3)]
+        for price, units in pairs:
+            idx = 0 if price <= c1 else (1 if price <= c2 else 2)
+            out[idx]["unidades"] += units
+            out[idx]["pvp"] += price * units
+        return out
+
+    mk = bucketize(market_prices)
+    br = bucketize(brand_prices)
+    brand_units_total = sum(b["unidades"] for b in br)
+    names = ["Entrada", "Media", "Premium"]
+    bands = []
+    for i, nombre in enumerate(names):
+        bands.append({
+            "banda": nombre,
+            "corte_min": 0.0 if i == 0 else (c1 if i == 1 else c2),
+            "corte_max": c1 if i == 0 else (c2 if i == 1 else None),
+            "brand_unidades": int(br[i]["unidades"]),
+            "brand_pvp": round(br[i]["pvp"], 2),
+            "market_unidades": int(mk[i]["unidades"]),
+            "market_pvp": round(mk[i]["pvp"], 2),
+            "share_units_pct": _share(br[i]["unidades"], mk[i]["unidades"]),
+            "share_pvp_pct": _share(br[i]["pvp"], mk[i]["pvp"]),
+            "brand_mix_units_pct": _share(br[i]["unidades"], brand_units_total),
+            "market_mix_units_pct": _share(mk[i]["unidades"], total_units),
+        })
+    return {"cortes": {"entrada_hasta": round(c1, 2), "media_hasta": round(c2, 2)}, "bands": bands}
+
+
 def _resolve_brand_name(marca: str, names: list[str]) -> str:
     """Match exacto primero; después case-insensitive (canonicaliza)."""
     wanted = (marca or "").strip()
@@ -97,6 +149,13 @@ def build_brand_dossier(
     branch_market: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
     branch_brand: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
     products_brand: dict[tuple[str, str], dict[str, Any]] = {}
+    # Serie DIARIA completa (marca vs mercado): el frontend la re-agrupa en
+    # mensual/bimestral/trimestral y permite drill-down de un mes al día a día.
+    daily_brand: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    daily_market: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    # (pvp unitario, unidades) para bandas de precio Entrada/Media/Premium.
+    market_prices: list[tuple[float, int]] = []
+    brand_prices: list[tuple[float, int]] = []
 
     brand_names_seen: set[str] = set()
     for r in records:
@@ -120,8 +179,17 @@ def build_brand_dossier(
         _add_metric(cat_brands[cat][name], r)
         _add_metric(tipo_market[tipo], r)
         _add_metric(branch_market[suc], r)
+        dia = r.fecha.isoformat()
+        _add_metric(daily_market[dia], r)
+        unidades_r = int(r.cantidad or 0)
+        precio_r = float(r.pvp or 0)
+        if unidades_r > 0 and precio_r > 0:
+            market_prices.append((precio_r, unidades_r))
 
         if name == brand_name:
+            _add_metric(daily_brand[dia], r)
+            if unidades_r > 0 and precio_r > 0:
+                brand_prices.append((precio_r, unidades_r))
             sem = _week_key(r.fecha)
             _add_metric(weekly_brand[sem], r)
             _add_metric(tipo_brands[tipo][name], r)
@@ -145,6 +213,7 @@ def build_brand_dossier(
     prev_brands: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
     prev_cat_market: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
     prev_cat_brand: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    prev_products_units: dict[tuple[str, str], int] = defaultdict(int)
     for r in prev_records:
         name = str(r.marca or "Sin marca")
         _add_metric(prev_market, r)
@@ -153,6 +222,7 @@ def build_brand_dossier(
         _add_metric(prev_cat_market[cat], r)
         if name == brand_name:
             _add_metric(prev_cat_brand[cat], r)
+            prev_products_units[(str(r.sku or ""), str(r.descripcion or ""))] += int(r.cantidad or 0)
 
     prev_brand_tot = _fin(prev_brands.get(brand_name) or _metric_bucket())
     prev_market_tot = _fin(prev_market)
@@ -302,6 +372,70 @@ def build_brand_dossier(
         key=lambda p: float(p["total_vendido"]), reverse=True,
     )[:12]
 
+    # ── Serie diaria (para granularidad libre + drill-down en el front) ──
+    daily_series: list[dict[str, Any]] = []
+    for dia in sorted(daily_market.keys()):
+        mk = _fin(daily_market[dia])
+        br = _fin(daily_brand.get(dia) or _metric_bucket())
+        daily_series.append({
+            "fecha": dia,
+            "brand_unidades": br["unidades"],
+            "brand_pvp": br["total_vendido"],
+            "market_unidades": mk["unidades"],
+            "market_pvp": mk["total_vendido"],
+            "share_pvp_pct": _share(br["total_vendido"], mk["total_vendido"]),
+        })
+
+    # ── Bandas de precio ─────────────────────────────────────────────────
+    price_bands = _price_bands(market_prices, brand_prices)
+
+    # ── Momentum por categoría (crece más o menos que el mercado) ────────
+    category_momentum: list[dict[str, Any]] = []
+    for cat in cat_market.keys():
+        now_b = float(_fin(cat_brands[cat].get(brand_name) or _metric_bucket())["total_vendido"])
+        prev_b = float(_fin(prev_cat_brand.get(cat) or _metric_bucket())["total_vendido"])
+        now_m = float(_fin(cat_market[cat])["total_vendido"])
+        prev_m = float(_fin(prev_cat_market.get(cat) or _metric_bucket())["total_vendido"])
+        if prev_m <= 0 or (now_b <= 0 and prev_b <= 0):
+            continue
+        brand_g = ((now_b - prev_b) / prev_b * 100) if prev_b > 0 else (100.0 if now_b > 0 else 0.0)
+        market_g = (now_m - prev_m) / prev_m * 100
+        category_momentum.append({
+            "categoria": cat,
+            "brand_growth_pct": round(brand_g, 1),
+            "market_growth_pct": round(market_g, 1),
+            "outperform_pts": round(brand_g - market_g, 1),
+            "brand_pvp": round(now_b, 2),
+        })
+    category_momentum.sort(key=lambda m: float(m["brand_pvp"]), reverse=True)
+
+    # ── Productos en alza / en baja vs período anterior (por unidades) ───
+    cur_units: dict[tuple[str, str], int] = {
+        k: int(v.get("unidades") or 0) for k, v in products_brand.items()
+    }
+    movers: list[dict[str, Any]] = []
+    # Sin período anterior no hay "alza/baja" (todo daría alza falsa).
+    keys_movers = (set(cur_units) | set(prev_products_units)) if int(prev_market_tot["unidades"] or 0) > 0 else set()
+    for key in keys_movers:
+        now_u = cur_units.get(key, 0)
+        prev_u = prev_products_units.get(key, 0)
+        delta = now_u - prev_u
+        if delta == 0:
+            continue
+        meta = products_brand.get(key)
+        movers.append({
+            "sku": key[0],
+            "producto": key[1],
+            "tipo_producto": str(meta.get("tipo_producto") if meta else ""),
+            "unidades": now_u,
+            "unidades_prev": prev_u,
+            "delta_unidades": delta,
+        })
+    product_movers = {
+        "up": sorted([m for m in movers if m["delta_unidades"] > 0], key=lambda m: -m["delta_unidades"])[:6],
+        "down": sorted([m for m in movers if m["delta_unidades"] < 0], key=lambda m: m["delta_unidades"])[:6],
+    }
+
     # ── Share global y precio ────────────────────────────────────────────
     share_pvp = _share(float(brand_tot["total_vendido"] or 0.0), float(market_tot["total_vendido"] or 0.0))
     share_units = _share(float(brand_tot["unidades"] or 0), float(market_tot["unidades"] or 0))
@@ -361,6 +495,58 @@ def build_brand_dossier(
         star = top_products[0]
         highlights.append(f"Producto estrella: {star['producto']} ({star['unidades']} u)")
 
+    # ── Conclusiones estructuradas (slide final del deck) ────────────────
+    has_prev_data = int(prev_market_tot["unidades"] or 0) > 0
+    conclusions: dict[str, list[str]] = {"fortalezas": [], "oportunidades": [], "acciones": []}
+    for c in lider_en[:2]:
+        conclusions["fortalezas"].append(
+            f"Líder en {c['categoria']} con {c['share_pvp_pct']:.1f}% de share (compiten {c['marcas_en_categoria']} marcas)"
+        )
+    if has_prev_data and prev_brand_tot["unidades"]:
+        growth_u = (brand_tot["unidades"] - prev_brand_tot["unidades"]) / prev_brand_tot["unidades"] * 100
+        if growth_u > 0:
+            conclusions["fortalezas"].append(f"Crecimiento de {growth_u:.1f}% en unidades vs el período anterior")
+    best_branch = max(branches, key=lambda b: float(b["share_in_branch_pct"])) if branches else None
+    if best_branch and float(best_branch["share_in_branch_pct"]) > share_pvp:
+        conclusions["fortalezas"].append(
+            f"Plaza fuerte: {best_branch['sucursal']} con {best_branch['share_in_branch_pct']:.1f}% de share (global {share_pvp:.1f}%)"
+        )
+    if price_index_global >= 110:
+        conclusions["fortalezas"].append(
+            f"Posicionamiento premium consolidado (precio {price_index_global - 100:.0f}% sobre el mercado)"
+        )
+    for opp in sorted(oportunidades, key=lambda c: -float(c["market_pvp"]))[:2]:
+        conclusions["oportunidades"].append(
+            f"{opp['categoria']}: {opp['share_pvp_pct']:.1f}% de share en una categoría que mueve {opp['market_pvp']:,.0f}".replace(",", ".")
+        )
+    if price_bands:
+        for band in price_bands["bands"]:
+            if float(band["market_mix_units_pct"]) >= 25 and float(band["share_units_pct"]) < share_units * 0.6:
+                conclusions["oportunidades"].append(
+                    f"Banda {band['banda']}: {band['share_units_pct']:.1f}% de share en unidades vs {share_units:.1f}% global — hueco de surtido"
+                )
+                break
+    worst_branch = min(branches, key=lambda b: float(b["share_in_branch_pct"])) if len(branches) > 1 else None
+    if worst_branch and float(worst_branch["share_in_branch_pct"]) < share_pvp * 0.5:
+        conclusions["oportunidades"].append(
+            f"{worst_branch['sucursal']}: share de {worst_branch['share_in_branch_pct']:.1f}%, muy por debajo del global"
+        )
+    if product_movers["down"]:
+        d = product_movers["down"][0]
+        conclusions["oportunidades"].append(
+            f"Recuperar volumen de {d['producto']} ({d['unidades_prev']} → {d['unidades']} u)"
+        )
+    if oportunidades:
+        opp = max(oportunidades, key=lambda c: float(c["market_pvp"]))
+        conclusions["acciones"].append(f"Ampliar surtido y exhibición en {opp['categoria']}")
+    if price_bands:
+        weak_band = min(price_bands["bands"], key=lambda b: float(b["share_units_pct"]))
+        conclusions["acciones"].append(f"Evaluar modelos para la banda {weak_band['banda']}")
+    if worst_branch and float(worst_branch["share_in_branch_pct"]) < share_pvp * 0.5:
+        conclusions["acciones"].append(f"Plan comercial específico en {worst_branch['sucursal']}")
+    if not conclusions["acciones"]:
+        conclusions["acciones"].append("Sostener el mix actual y monitorear el share mensual")
+
     return {
         "marca": brand_name,
         "filters": {
@@ -394,6 +580,11 @@ def build_brand_dossier(
         "price_index_global": price_index_global,
         "monthly_series": monthly_series,
         "weekly_series": weekly_series,
+        "daily_series": daily_series,
+        "price_bands": price_bands,
+        "category_momentum": category_momentum,
+        "product_movers": product_movers,
+        "conclusions": conclusions,
         "ranking": ranking_rows,
         "categories": categories,
         "tipos_top": tipos_top,

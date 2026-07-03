@@ -864,6 +864,42 @@ export interface SalesBIBrandDossier {
     market_pvp: number;
     share_pvp_pct: number;
   }>;
+  daily_series: Array<{
+    fecha: string;
+    brand_unidades: number;
+    brand_pvp: number;
+    market_unidades: number;
+    market_pvp: number;
+    share_pvp_pct: number;
+  }>;
+  price_bands: {
+    cortes: { entrada_hasta: number; media_hasta: number };
+    bands: Array<{
+      banda: string;
+      corte_min: number;
+      corte_max: number | null;
+      brand_unidades: number;
+      brand_pvp: number;
+      market_unidades: number;
+      market_pvp: number;
+      share_units_pct: number;
+      share_pvp_pct: number;
+      brand_mix_units_pct: number;
+      market_mix_units_pct: number;
+    }>;
+  } | null;
+  category_momentum: Array<{
+    categoria: string;
+    brand_growth_pct: number;
+    market_growth_pct: number;
+    outperform_pts: number;
+    brand_pvp: number;
+  }>;
+  product_movers: {
+    up: Array<{ sku: string; producto: string; tipo_producto: string; unidades: number; unidades_prev: number; delta_unidades: number }>;
+    down: Array<{ sku: string; producto: string; tipo_producto: string; unidades: number; unidades_prev: number; delta_unidades: number }>;
+  };
+  conclusions: { fortalezas: string[]; oportunidades: string[]; acciones: string[] };
   ranking: Array<SalesBICommercialMix & { is_brand: boolean; is_competitor: boolean }>;
   categories: BrandDossierCategory[];
   tipos_top: Array<{ tipo: string; unidades: number; total_vendido: number; share_pvp_pct: number; market_pvp: number }>;
