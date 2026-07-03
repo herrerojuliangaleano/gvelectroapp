@@ -153,6 +153,7 @@ def build_brand_dossier(
     branch_market: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
     branch_brand: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
     products_brand: dict[tuple[str, str], dict[str, Any]] = {}
+    product_branch_metrics: dict[tuple[str, str], dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
     # Serie DIARIA completa (marca vs mercado): el frontend la re-agrupa en
     # mensual/bimestral/trimestral y permite drill-down de un mes al día a día.
     daily_brand: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
@@ -215,6 +216,7 @@ def build_brand_dossier(
                     "tipo_producto": tipo, **_metric_bucket(),
                 }
             _add_metric(products_brand[key], r)
+            _add_metric(product_branch_metrics[key][suc], r)
         sem = _week_key(r.fecha)
         _add_metric(weekly_market[sem], r)
 
@@ -367,7 +369,9 @@ def build_brand_dossier(
             "sucursal": suc,
             "brand_unidades": br["unidades"],
             "brand_pvp": br["total_vendido"],
+            "market_unidades": mk["unidades"],
             "share_in_branch_pct": _share(br["total_vendido"], mk["total_vendido"]),
+            "share_units_in_branch_pct": _share(br["unidades"], mk["unidades"]),
             "brand_mix_pct": _share(br["total_vendido"], float(brand_tot["total_vendido"] or 0.0)),
             "market_pvp": mk["total_vendido"],
         })
@@ -385,6 +389,25 @@ def build_brand_dossier(
         ),
         key=lambda p: float(p["total_vendido"]), reverse=True,
     )[:12]
+
+    product_branch_metric_rows = []
+    for product in top_products:
+        key = (str(product["sku"] or ""), str(product["producto"] or ""))
+        branch_values = {}
+        for branch_name, bucket in (product_branch_metrics.get(key) or {}).items():
+            metric = _fin(bucket)
+            branch_values[branch_name] = {
+                "unidades": metric["unidades"],
+                "total_vendido": metric["total_vendido"],
+            }
+        product_branch_metric_rows.append({
+            "sku": product["sku"],
+            "producto": product["producto"],
+            "tipo_producto": product["tipo_producto"],
+            "total_unidades": int(product.get("unidades") or 0),
+            "total_vendido": float(product.get("total_vendido") or 0.0),
+            "branches": branch_values,
+        })
 
     # ── Serie diaria (para granularidad libre + drill-down en el front) ──
     daily_series: list[dict[str, Any]] = []
@@ -724,5 +747,6 @@ def build_brand_dossier(
         "tipos_top": tipos_top,
         "branches": branches,
         "top_products": top_products,
+        "product_branch_metrics": product_branch_metric_rows,
         "highlights": highlights[:6],
     }

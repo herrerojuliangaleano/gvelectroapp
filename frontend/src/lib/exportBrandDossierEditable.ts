@@ -17,6 +17,7 @@ const CARD = 'FFFFFF';
 const SOFT_BLUE = 'DBEAFE';
 
 const COLORS = [BLUE, VIOLET, TEAL, AMBER, 'E11D48', '0891B2', '65A30D', '9333EA'];
+const MONTH_LABELS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
 function money(value: number): string {
   return new Intl.NumberFormat('es-AR', {
@@ -50,8 +51,7 @@ function fmtDate(iso: string): string {
 
 function monthLabel(mes: string): string {
   const [year, month] = mes.split('-').map(Number);
-  const labels = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-  return `${labels[(month || 1) - 1]} ${String(year || '').slice(2)}`;
+  return `${MONTH_LABELS[(month || 1) - 1]} ${String(year || '').slice(2)}`;
 }
 
 function cleanFileName(value: string): string {
@@ -67,16 +67,36 @@ function chartData(name: string, labels: string[], values: number[]) {
   return [{ name, labels, values }];
 }
 
-function valueAt<T>(rows: T[], pick: (row: T) => number, mode: 'max' | 'min'): T | null {
-  if (!rows.length) return null;
-  return rows.reduce((best, row) => {
-    const current = pick(row);
-    const bestValue = pick(best);
-    return mode === 'max' ? (current > bestValue ? row : best) : (current < bestValue ? row : best);
-  }, rows[0]);
+function monthlyComparisonData(
+  rows: SalesBIBrandDossier['monthly_series'],
+  key: 'brand_unidades' | 'brand_pvp',
+  fallbackName: string,
+) {
+  const years = Array.from(new Set(rows.map((row) => row.mes.slice(0, 4)))).sort();
+  if (years.length > 1) {
+    return years.map((year) => ({
+      name: year,
+      labels: MONTH_LABELS,
+      values: MONTH_LABELS.map((_, index) => {
+        const mes = `${year}-${String(index + 1).padStart(2, '0')}`;
+        const row = rows.find((item) => item.mes === mes);
+        return Number(row?.[key] || 0);
+      }),
+    }));
+  }
+  return [{
+    name: fallbackName,
+    labels: rows.map((row) => monthLabel(row.mes)),
+    values: rows.map((row) => Number(row[key] || 0)),
+  }];
 }
 
-function textCell(text: string, bold = false, color = INK, fill = 'FFFFFF') {
+function branchShareUnits(row: SalesBIBrandDossier['branches'][number]): number {
+  if (typeof row.share_units_in_branch_pct === 'number') return row.share_units_in_branch_pct;
+  return row.market_unidades ? (row.brand_unidades / row.market_unidades) * 100 : 0;
+}
+
+function textCell(text: string, bold = false, color = INK, fill = 'FFFFFF', fontSize = bold ? 8.5 : 8) {
   return {
     text,
     options: {
@@ -84,7 +104,7 @@ function textCell(text: string, bold = false, color = INK, fill = 'FFFFFF') {
       color,
       fill,
       fontFace: FONT,
-      fontSize: bold ? 8.5 : 8,
+      fontSize,
       margin: 0.05,
       border: { type: 'solid', color: LINE, pt: 0.5 },
     },
@@ -149,9 +169,9 @@ function addChart(slide: any, type: string, data: any[], options: Record<string,
   });
 }
 
-function addTable(slide: any, rows: Array<Array<string>>, x: number, y: number, w: number, h: number, widths?: number[]) {
+function addTable(slide: any, rows: Array<Array<string>>, x: number, y: number, w: number, h: number, widths?: number[], fontSize = 8) {
   const tableRows = rows.map((row, rowIndex) => row.map((cell) => (
-    textCell(cell, rowIndex === 0, rowIndex === 0 ? 'FFFFFF' : INK, rowIndex === 0 ? BLUE : 'FFFFFF')
+    textCell(cell, rowIndex === 0, rowIndex === 0 ? 'FFFFFF' : INK, rowIndex === 0 ? BLUE : 'FFFFFF', rowIndex === 0 ? Math.max(fontSize, 7.5) : fontSize)
   )));
   slide.addTable(tableRows, {
     x, y, w, h,
@@ -209,7 +229,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
   cover.addText('INFORME COMERCIAL EDITABLE', { x: 0.75, y: 1.55, w: 9.5, h: 0.32, fontFace: FONT, fontSize: 13, bold: true, color: '93C5FD', charSpacing: 2.5, margin: 0 });
   cover.addText(dossier.marca, { x: 0.75, y: 2.05, w: 11.7, h: 0.95, fontFace: FONT, fontSize: 42, bold: true, color: 'FFFFFF', margin: 0, fit: 'shrink' });
   cover.addText(period, { x: 0.78, y: 3.08, w: 8.5, h: 0.35, fontFace: FONT, fontSize: 15, color: 'CBD5E1', margin: 0 });
-  cover.addText('Fuente: Ventas Vs. Costos · gráficos editables con datos visibles para lectura sin hover', { x: 0.78, y: 6.75, w: 9.9, h: 0.28, fontFace: FONT, fontSize: 9, color: 'CBD5E1', margin: 0 });
+  cover.addText('Fuente: Ventas Vs. Costos · gráficos y tablas editables en PowerPoint', { x: 0.78, y: 6.75, w: 9.5, h: 0.28, fontFace: FONT, fontSize: 9, color: 'CBD5E1', margin: 0 });
   cover.addShape('roundRect', { x: 9.75, y: 1.55, w: 2.5, h: 2.5, rectRadius: 0.18, fill: { color: '1E3A8A' }, line: { color: '60A5FA', pt: 1.2 } });
   cover.addText('GV\nElectro', { x: 10.12, y: 2.05, w: 1.75, h: 0.95, fontFace: FONT, fontSize: 22, bold: true, color: 'FFFFFF', align: 'center', margin: 0 });
   page.value += 1;
@@ -234,39 +254,108 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
   ], 6.55, 2.35, 6.15, 2.35, [1.55, 1.55, 1.6, 1.45]);
   addTakeaway(summary, dossier.narratives?.resumen || dossier.highlights[0], 6.55, 5.15, 6.15);
 
+  const branchRowsForProvider = [...dossier.branches].sort((a, b) => b.brand_unidades - a.brand_unidades);
+  const branchColumns = branchRowsForProvider.map((row) => row.sucursal).slice(0, 4);
+  const productBranchRows = (dossier.product_branch_metrics?.length
+    ? [...dossier.product_branch_metrics]
+    : dossier.top_products.map((product) => ({
+        sku: product.sku,
+        producto: product.producto,
+        tipo_producto: product.tipo_producto,
+        total_unidades: product.unidades,
+        total_vendido: product.total_vendido,
+        branches: {} as Record<string, { unidades: number; total_vendido: number }>,
+      }))
+  ).sort((a, b) => (b.total_unidades - a.total_unidades) || (b.total_vendido - a.total_vendido));
+
+  const providerMonthly = addBase('Ventas mensuales', `${dossier.marca} por mes · unidades y pesos`);
+  addChart(providerMonthly, 'line', monthlyComparisonData(dossier.monthly_series, 'brand_unidades', 'Unidades'), {
+    x: 0.55, y: 1.15, w: 5.85, h: 4.85,
+    catAxisLabelRotate: 45,
+    valAxisLabelFormatCode: '#,##0',
+    lineSize: 2.4,
+    showMarker: true,
+  });
+  addChart(providerMonthly, 'line', monthlyComparisonData(dossier.monthly_series, 'brand_pvp', 'Pesos'), {
+    x: 6.85, y: 1.15, w: 5.85, h: 4.85,
+    catAxisLabelRotate: 45,
+    valAxisLabelFormatCode: '$ #,##0',
+    lineSize: 2.4,
+    showMarker: true,
+  });
+  addTakeaway(providerMonthly, `Vista proveedor: evolucion mensual de ${dossier.marca}; si el rango incluye 2025 y 2026, las series se comparan por año.`, 0.55, 6.35, 12.15);
+
+  const providerBranches = addBase('Puntos de venta', `${dossier.marca} por sucursal · unidades y pesos`);
+  addChart(providerBranches, 'bar', chartData('Unidades', branchRowsForProvider.map((row) => row.sucursal), branchRowsForProvider.map((row) => row.brand_unidades)), {
+    x: 0.55, y: 1.15, w: 5.85, h: 4.85,
+    barDir: 'bar',
+    showLegend: false,
+    valAxisLabelFormatCode: '#,##0',
+  });
+  addChart(providerBranches, 'bar', chartData('Pesos', branchRowsForProvider.map((row) => row.sucursal), branchRowsForProvider.map((row) => row.brand_pvp)), {
+    x: 6.85, y: 1.15, w: 5.85, h: 4.85,
+    barDir: 'bar',
+    showLegend: false,
+    valAxisLabelFormatCode: '$ #,##0',
+  });
+  addTakeaway(providerBranches, 'Lectura para visita: peso de la marca en cada punto de venta, separado en volumen y facturacion.', 0.55, 6.35, 12.15);
+
+  const providerShare = addBase('In-house share por punto de venta', `Participacion de ${dossier.marca} sobre la venta total de cada sucursal`);
+  addChart(providerShare, 'bar', chartData('Share unidades %', branchRowsForProvider.map((row) => row.sucursal), branchRowsForProvider.map((row) => branchShareUnits(row))), {
+    x: 0.55, y: 1.1, w: 5.7, h: 3.8,
+    barDir: 'bar',
+    showLegend: false,
+    valAxisLabelFormatCode: '0.0%',
+  });
+  addChart(providerShare, 'bar', chartData('Share pesos %', branchRowsForProvider.map((row) => row.sucursal), branchRowsForProvider.map((row) => row.share_in_branch_pct)), {
+    x: 6.95, y: 1.1, w: 5.7, h: 3.8,
+    barDir: 'bar',
+    showLegend: false,
+    valAxisLabelFormatCode: '0.0%',
+  });
+  addTable(providerShare, [
+    ['Sucursal', `${dossier.marca} u`, 'Total u', 'Share u', `${dossier.marca} $`, 'Share $'],
+    ...branchRowsForProvider.map((row) => [
+      row.sucursal,
+      num(row.brand_unidades),
+      row.market_unidades != null ? num(row.market_unidades) : 's/d',
+      pct(branchShareUnits(row)),
+      compactMoney(row.brand_pvp),
+      pct(row.share_in_branch_pct),
+    ]),
+  ], 0.75, 5.25, 11.75, 1.15, [1.8, 1.2, 1.2, 1.1, 1.5, 1.1], 6.8);
+
+  const providerProductBranch = addBase('Producto x punto de venta', 'Unidades y pesos por producto y sucursal');
+  addTable(providerProductBranch, [
+    ['Producto', 'Total', ...branchColumns],
+    ...productBranchRows.slice(0, 8).map((row) => [
+      `${row.sku}\n${row.producto}`,
+      `${num(row.total_unidades)} u\n${compactMoney(row.total_vendido)}`,
+      ...branchColumns.map((branchName) => {
+        const value = row.branches?.[branchName];
+        return value ? `${num(value.unidades)} u\n${compactMoney(value.total_vendido)}` : '0 u\n$ 0';
+      }),
+    ]),
+  ], 0.55, 1.1, 12.2, 5.75, [3.2, 1.35, ...branchColumns.map(() => 1.9)], 6.2);
+  addTakeaway(providerProductBranch, 'Detalle solicitado: permite ver que productos empujan la marca en cada punto de venta.', 0.55, 6.55, 12.15);
+
   const evolution = addBase('Evolución de ventas', 'Facturación de la marca contra el mercado');
   const monthly = dossier.monthly_series.slice(-12);
   const evoLabels = monthly.map((row) => monthLabel(row.mes));
-  const latestMonth = monthly.length ? monthly[monthly.length - 1] : null;
-  const peakMonth = valueAt(monthly, (row) => row.brand_pvp, 'max');
-  const lowMonth = valueAt(monthly, (row) => row.brand_pvp, 'min');
   addChart(evolution, 'line', [
     { name: dossier.marca, labels: evoLabels, values: monthly.map((row) => row.brand_pvp) },
     { name: 'Mercado total', labels: evoLabels, values: monthly.map((row) => row.market_pvp) },
   ], {
-    x: 0.55, y: 1.15, w: 7.35, h: 4.65,
+    x: 0.55, y: 1.15, w: 7.55, h: 4.8,
     catAxisLabelRotate: 45,
     valAxisLabelFormatCode: '$ #,##0',
     lineSize: 2.5,
     showMarker: true,
-    showDataTable: true,
-    showDataTableKeys: true,
-    showDataTableHorzBorder: true,
-    showDataTableVertBorder: false,
-    dataTableFontSize: 6,
-    dataTableFormatCode: '$ #,##0',
   });
   addTable(evolution, [
-    ['Lectura del grafico', 'Valor'],
-    ['Ultimo mes', latestMonth ? `${monthLabel(latestMonth.mes)} · ${compactMoney(latestMonth.brand_pvp)}` : 's/d'],
-    ['Pico marca', peakMonth ? `${monthLabel(peakMonth.mes)} · ${compactMoney(peakMonth.brand_pvp)}` : 's/d'],
-    ['Piso marca', lowMonth ? `${monthLabel(lowMonth.mes)} · ${compactMoney(lowMonth.brand_pvp)}` : 's/d'],
-    ['Share final', latestMonth ? pct(latestMonth.share_pvp_pct) : 's/d'],
-  ], 8.15, 1.15, 4.45, 1.85, [1.45, 3.0]);
-  addTable(evolution, [
     ['Mes', 'Marca', 'Mercado', 'Share'],
-    ...monthly.slice(-6).map((row) => [monthLabel(row.mes), compactMoney(row.brand_pvp), compactMoney(row.market_pvp), pct(row.share_pvp_pct)]),
-  ], 8.15, 3.15, 4.45, 2.95, [0.8, 1.1, 1.2, 0.85]);
+    ...monthly.slice(-8).map((row) => [monthLabel(row.mes), compactMoney(row.brand_pvp), compactMoney(row.market_pvp), pct(row.share_pvp_pct)]),
+  ], 8.35, 1.15, 4.15, 4.8, [0.85, 1.1, 1.2, 1]);
   addTakeaway(evolution, dossier.narratives?.evolucion);
 
   const ranking = addBase('Ranking competitivo', `${dossier.marca} frente al resto de marcas`);
@@ -277,9 +366,6 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
     showLegend: false,
     valAxisLabelFormatCode: '$ #,##0',
     catAxisLabelFontSize: 7,
-    showValue: true,
-    dataLabelFormatCode: '$ #,##0',
-    dataLabelPosition: 'outEnd',
   });
   addTable(ranking, [
     ['Marca', 'Facturación', 'Unidades', 'Productos', 'Share'],
@@ -299,12 +385,6 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
       valAxisLabelFormatCode: '$ #,##0',
       lineSize: 2.25,
       showMarker: true,
-      showDataTable: true,
-      showDataTableKeys: true,
-      showDataTableHorzBorder: true,
-      showDataTableVertBorder: false,
-      dataTableFontSize: 6,
-      dataTableFormatCode: '$ #,##0',
     });
     const duelRows = [dossier.marca, ...competitors]
       .map((name) => dossier.ranking.find((row) => row.name === name))
@@ -323,9 +403,6 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
     barDir: 'bar',
     valAxisLabelFormatCode: '0.0%',
     showLegend: false,
-    showValue: true,
-    dataLabelFormatCode: '0.0%',
-    dataLabelPosition: 'outEnd',
   });
   addTable(cats, [
     ['Categoría', 'Facturación marca', 'Share', 'Rank', 'Líder', 'Índice'],
@@ -350,9 +427,6 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
       x: 0.55, y: 1.1, w: 6.1, h: 4.8,
       barDir: 'col',
       valAxisLabelFormatCode: '0.0%',
-      showValue: true,
-      dataLabelFormatCode: '0.0%',
-      dataLabelPosition: 'outEnd',
     });
     addTable(bands, [
       ['Banda', `Unid. ${dossier.marca}`, 'Share unid.', 'Facturación'],
@@ -382,9 +456,6 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
     barDir: 'bar',
     showLegend: false,
     valAxisLabelFormatCode: '$ #,##0',
-    showValue: true,
-    dataLabelFormatCode: '$ #,##0',
-    dataLabelPosition: 'outEnd',
   });
   addTable(branches, [
     ['Sucursal', 'Facturación', 'Unidades', 'Share suc.', 'Mix marca'],

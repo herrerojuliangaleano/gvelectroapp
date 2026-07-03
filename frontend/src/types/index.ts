@@ -911,8 +911,25 @@ export interface SalesBIBrandDossier {
   ranking: Array<SalesBICommercialMix & { is_brand: boolean; is_competitor: boolean }>;
   categories: BrandDossierCategory[];
   tipos_top: Array<{ tipo: string; unidades: number; total_vendido: number; share_pvp_pct: number; market_pvp: number }>;
-  branches: Array<{ sucursal: string; brand_unidades: number; brand_pvp: number; share_in_branch_pct: number; brand_mix_pct: number; market_pvp: number }>;
+  branches: Array<{
+    sucursal: string;
+    brand_unidades: number;
+    brand_pvp: number;
+    market_unidades?: number;
+    share_in_branch_pct: number;
+    share_units_in_branch_pct?: number;
+    brand_mix_pct: number;
+    market_pvp: number;
+  }>;
   top_products: Array<SalesBICommercialMetric & { sku: string; producto: string; tipo_producto: string }>;
+  product_branch_metrics?: Array<{
+    sku: string;
+    producto: string;
+    tipo_producto: string;
+    total_unidades: number;
+    total_vendido: number;
+    branches: Record<string, { unidades: number; total_vendido: number }>;
+  }>;
   highlights: string[];
 }
 
