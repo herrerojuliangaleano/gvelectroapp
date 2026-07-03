@@ -25,6 +25,7 @@ import {
   CHART_ANIM, CHART_TOOLTIP_ITEM_STYLE, CHART_TOOLTIP_LABEL_STYLE, CHART_TOOLTIP_STYLE,
   DeltaPill, EmptyChartState, KpiCard, ParticipationBar, cn, money, num,
 } from './SalesBIWidgets';
+import { exportBrandDossierEditablePptx } from '../lib/exportBrandDossierEditable';
 import { exportDeckToPdf, exportDeckToPptx, type DeckSection } from '../lib/exportDeck';
 
 const BRAND_COLOR = 'var(--chart-blue)';
@@ -146,7 +147,7 @@ export function BrandDossierView({
   const [dossier, setDossier] = useState<SalesBIBrandDossier | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [exporting, setExporting] = useState<'ppt' | 'pdf' | null>(null);
+  const [exporting, setExporting] = useState<'ppt' | 'ppt-editable' | 'pdf' | null>(null);
   const [exportProgress, setExportProgress] = useState('');
   const [gran, setGran] = useState<Granularity>('monthly');
   const [drill, setDrill] = useState<string | null>(null);
@@ -352,8 +353,21 @@ export function BrandDossierView({
   const refCb = (id: string) => (el: HTMLElement | null) => { slideRefs.current[id] = el; };
 
   // ── Export ────────────────────────────────────────────────────────────
-  async function handleExport(kind: 'ppt' | 'pdf') {
+  async function handleExport(kind: 'ppt' | 'ppt-editable' | 'pdf') {
     if (!dossier || exporting) return;
+    if (kind === 'ppt-editable') {
+      setExporting(kind);
+      setExportProgress('Armando deck editable...');
+      try {
+        await exportBrandDossierEditablePptx(dossier);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'No se pudo exportar el informe editable');
+      } finally {
+        setExporting(null);
+        setExportProgress('');
+      }
+      return;
+    }
     const sections: DeckSection[] = slides
       .map((s) => {
         const node = slideRefs.current[s.id];
@@ -448,12 +462,22 @@ export function BrandDossierView({
           </span>
           <button
             type="button"
+            onClick={() => handleExport('ppt-editable')}
+            disabled={!dossier || !!exporting}
+            className="inline-flex h-10 items-center gap-2 rounded-xl bg-emerald-500 px-3.5 text-sm font-bold text-slate-950 hover:brightness-110 disabled:opacity-40"
+            title="Genera un PowerPoint con graficos y tablas editables"
+          >
+            {exporting === 'ppt-editable' ? <Loader2 size={16} className="animate-spin" /> : <Presentation size={16} />}
+            {exporting === 'ppt-editable' ? exportProgress : 'PowerPoint editable'}
+          </button>
+          <button
+            type="button"
             onClick={() => handleExport('ppt')}
             disabled={!dossier || !!exporting}
             className="inline-flex h-10 items-center gap-2 rounded-xl bg-[color:var(--chart-blue)] px-3.5 text-sm font-bold text-white hover:brightness-110 disabled:opacity-40"
           >
             {exporting === 'ppt' ? <Loader2 size={16} className="animate-spin" /> : <Presentation size={16} />}
-            {exporting === 'ppt' ? exportProgress : 'PowerPoint'}
+            {exporting === 'ppt' ? exportProgress : 'PowerPoint visual'}
           </button>
           <button
             type="button"

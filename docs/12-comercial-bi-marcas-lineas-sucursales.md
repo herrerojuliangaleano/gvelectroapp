@@ -102,6 +102,22 @@ Implementacion real:
     esta activo;
   - linea desbalanceada por volumen alto y PVP relativo bajo.
 
+Exportaciones del informe de marca:
+
+- `PowerPoint editable`: genera un `.pptx` con graficos nativos de PowerPoint
+  y tablas editables. Es la opcion recomendada para reuniones rapidas porque
+  permite ajustar datos, colores, leyendas y textos desde PowerPoint. Incluye
+  resumen ejecutivo, evolucion, ranking competitivo, comparacion con
+  competidores, categorias, bandas de precio cuando existan, productos
+  destacados, sucursales y conclusiones.
+- `PowerPoint visual`: captura las secciones del dashboard como imagen y las
+  inserta en slides. Sirve cuando se quiere conservar el aspecto exacto de la
+  pantalla, pero los graficos no quedan editables.
+
+Limitacion: PowerPoint no conserva interacciones web como hover, tooltips,
+drill-down o filtros por click. Para eso la fuente de verdad sigue siendo el
+dashboard de la app.
+
 ## Fase 1 - estabilizacion de metricas y lectura visual
 
 Fecha de implementacion: 2026-06-09.
