@@ -593,6 +593,26 @@ function ShareBars({
   );
 }
 
+function TabStory({ question, insights }: { question: string; insights: string[] }) {
+  // Encabezado narrativo de cada pestaña: la PREGUNTA que responde la vista +
+  // la lectura automática de los datos. Orienta a quien mira el tablero.
+  return (
+    <div className="rounded-2xl border border-[color:var(--chart-blue)]/25 bg-[color:var(--chart-blue)]/[0.06] px-4 py-3">
+      <div className="text-[11px] font-black uppercase tracking-[0.18em] text-[color:var(--chart-blue)]">{question}</div>
+      {insights.length > 0 && (
+        <ul className="mt-1.5 flex flex-wrap gap-x-6 gap-y-1">
+          {insights.map((text) => (
+            <li key={text} className="flex items-start gap-1.5 text-[13px] leading-5 text-[color:var(--text-2)]">
+              <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-[color:var(--chart-blue)]" />
+              {text}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function MixList({
   title,
   rows,
@@ -3002,6 +3022,52 @@ export function SalesBICommercialPage() {
   const linesReport = reports.lines || brandsReport;
   const branchesReport = reports.branches || brandsReport;
 
+  // "Historia" de cada pestaña: lectura automática de los datos ya cargados.
+  const tabStories = useMemo(() => {
+    const out: Record<string, string[]> = { overview: [], brands: [], lines: [], tipos: [], branches: [], products: [] };
+    const r = brandsReport;
+    if (!r) return out;
+    const t = r.totals;
+    out.overview.push(`${num(t.unidades)} unidades · ${money(t.total_vendido)} vendidos en ${r.filters.fecha_desde} → ${r.filters.fecha_hasta}`);
+    const b0 = r.brand_mix[0];
+    const l0 = r.line_mix[0];
+    if (b0 && l0) out.overview.push(`${b0.name} lidera marcas (${(b0.participacion_pct || 0).toFixed(1)}%) y ${l0.name} es la categoría más fuerte (${(l0.participacion_pct || 0).toFixed(1)}%)`);
+
+    const top3 = r.brand_mix.slice(0, 3);
+    if (top3.length === 3) {
+      const conc = top3.reduce((acc, row) => acc + (row.participacion_pct || 0), 0);
+      out.brands.push(`${top3.map((row) => row.name).join(', ')} concentran el ${conc.toFixed(0)}% de la venta`);
+      out.brands.push(`Compiten ${r.brand_mix.length}+ marcas; mirá "Impacto en la empresa" para ver quién gana terreno`);
+    }
+
+    if (l0) {
+      out.lines.push(`${l0.name} pesa ${(l0.participacion_pct || 0).toFixed(1)}% del total`);
+      const l2 = r.line_mix.slice(0, 2).reduce((acc, row) => acc + (row.participacion_pct || 0), 0);
+      if (r.line_mix.length > 1) out.lines.push(`Las 2 primeras categorías explican el ${l2.toFixed(0)}% de la venta`);
+    }
+
+    const tp0 = (r.tipo_mix || [])[0];
+    if (tp0) {
+      out.tipos.push(`${tp0.name} manda: ${num(tp0.unidades)} unidades (${(tp0.participacion_pct || 0).toFixed(1)}% del total)`);
+      const t5 = (r.tipo_mix || []).slice(0, 5).reduce((acc, row) => acc + (row.participacion_pct || 0), 0);
+      out.tipos.push(`El top 5 de tipos concentra el ${t5.toFixed(0)}%; la cola larga son ${Math.max(0, (r.tipo_mix || []).length - 5)} tipos más`);
+    }
+
+    const br = (branchesReport || r).branch_mix;
+    if (br.length > 1) {
+      out.branches.push(`${br[0].name} lidera con ${(br[0].participacion_pct || 0).toFixed(1)}% de la venta`);
+      out.branches.push(`Brecha entre la mejor y la más floja: ${((br[0].participacion_pct || 0) - (br[br.length - 1].participacion_pct || 0)).toFixed(1)} pts`);
+    }
+
+    const prods = r.top_products || [];
+    if (prods.length >= 10) {
+      const p10 = prods.slice(0, 10).reduce((acc, row) => acc + (row.participacion_pct || 0), 0);
+      out.products.push(`Los 10 productos top concentran el ${p10.toFixed(0)}% de la venta`);
+      out.products.push(`#1: ${prods[0].producto} (${num(prods[0].unidades)} u)`);
+    }
+    return out;
+  }, [brandsReport, branchesReport]);
+
   function handleTabChange(value: string) {
     const tab = value as CommercialTab;
     setActiveTab(tab);
@@ -3128,6 +3194,8 @@ export function SalesBICommercialPage() {
       ) : activeReport && brandsReport ? (
         <>
           {activeTab === 'overview' && (
+            <>
+            <TabStory question="¿Cómo venimos en el período?" insights={tabStories.overview} />
             <OverviewDashboard
               brandsReport={brandsReport}
               branchesReport={branchesReport || undefined}
@@ -3138,10 +3206,12 @@ export function SalesBICommercialPage() {
               setSelectedBranch={setSelectedBranch}
               setSelectedLine={setSelectedLine}
             />
+            </>
           )}
 
           {activeTab === 'brands' && (
             <>
+              <TabStory question="¿Qué marcas mueven la aguja?" insights={tabStories.brands} />
               <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
                 <ChartCard title="Evolucion diaria" subtitle={`${brandsReport.filters.fecha_desde} al ${brandsReport.filters.fecha_hasta} · ${metricLabel(metricMode)}`}>
                   <DailyArea report={brandsReport} mode={metricMode} previousReport={previousReport} />
@@ -3177,19 +3247,31 @@ export function SalesBICommercialPage() {
           )}
 
           {activeTab === 'lines' && linesReport && (
+            <>
+            <TabStory question="¿Dónde se concentra la venta?" insights={tabStories.lines} />
             <LinesDetail report={linesReport} selectedLine={selectedLine} setSelectedLine={setSelectedLine} mode={metricMode} previousReport={previousReport} />
+            </>
           )}
 
           {activeTab === 'tipos' && (
+            <>
+            <TabStory question="¿Qué tipos de producto empujan?" insights={tabStories.tipos} />
             <TiposDashboard report={brandsReport} previousReport={previousReport} mode={metricMode} />
+            </>
           )}
 
           {activeTab === 'branches' && branchesReport && (
+            <>
+            <TabStory question="¿Cómo rinde cada plaza?" insights={tabStories.branches} />
             <BranchDetail report={branchesReport} selectedBranch={selectedBranch} setSelectedBranch={setSelectedBranch} mode={metricMode} />
+            </>
           )}
 
           {activeTab === 'products' && (
+            <>
+            <TabStory question="¿Qué SKUs concentran la venta?" insights={tabStories.products} />
             <ProductsDashboard report={brandsReport} mode={metricMode} setActiveTab={setActiveTab} setSelectedBrand={setSelectedBrand} setSelectedLine={setSelectedLine} />
+            </>
           )}
 
           {activeTab === 'compare' && (

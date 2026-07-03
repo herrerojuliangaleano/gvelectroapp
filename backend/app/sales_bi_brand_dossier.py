@@ -100,6 +100,10 @@ def _price_bands(
     return {"cortes": {"entrada_hasta": round(c1, 2), "media_hasta": round(c2, 2)}, "bands": bands}
 
 
+def _money_ar(value: float) -> str:
+    return f"${value:,.0f}".replace(",", ".")
+
+
 def _resolve_brand_name(marca: str, names: list[str]) -> str:
     """Match exacto primero; después case-insensitive (canonicaliza)."""
     wanted = (marca or "").strip()
@@ -495,6 +499,88 @@ def build_brand_dossier(
         star = top_products[0]
         highlights.append(f"Producto estrella: {star['producto']} ({star['unidades']} u)")
 
+    # ── "La lectura" por sección: una línea que dice QUÉ SIGNIFICA lo que
+    # se ve en cada slide. Es la narrativa del deck (data storytelling).
+    narratives: dict[str, str] = {}
+    if monthly_series:
+        best_month = max(monthly_series, key=lambda m: float(m["brand_pvp"]))
+        shares_m = [float(m["share_pvp_pct"]) for m in monthly_series if float(m["market_pvp"]) > 0]
+        if shares_m:
+            mes_nombre = best_month["mes"]
+            narratives["evolucion"] = (
+                f"El mejor mes fue {mes_nombre} ({best_month['brand_unidades']} u · {_money_ar(float(best_month['brand_pvp']))}); "
+                f"el share se movió entre {min(shares_m):.1f}% y {max(shares_m):.1f}%."
+            )
+    if rank_pvp and ranked:
+        if rank_pvp == 1 and len(ranked) > 1:
+            gap = float(brand_tot["total_vendido"]) - float(ranked[1]["total_vendido"])
+            narratives["competencia"] = f"Lidera el mercado con {_money_ar(gap)} de ventaja sobre {ranked[1]['name']} (#2)."
+        elif rank_pvp > 1:
+            arriba = ranked[rank_pvp - 2]
+            gap = float(arriba["total_vendido"]) - float(brand_tot["total_vendido"])
+            narratives["competencia"] = f"Está a {_money_ar(gap)} de alcanzar a {arriba['name']} (#{rank_pvp - 1})."
+    if category_momentum:
+        wins = [m for m in category_momentum if float(m["outperform_pts"]) > 0]
+        best_m = max(category_momentum, key=lambda m: float(m["outperform_pts"]))
+        narratives["momentum"] = (
+            f"Gana terreno en {len(wins)} de {len(category_momentum)} categorías; "
+            f"el mayor avance es {best_m['categoria']} ({'+' if float(best_m['outperform_pts']) >= 0 else ''}{best_m['outperform_pts']} pts sobre el mercado)."
+        )
+    if played:
+        c0 = played[0]
+        narratives["categorias"] = (
+            f"El {c0['brand_mix_pct']:.0f}% de la venta de {brand_name} sale de {c0['categoria']}, "
+            f"donde es #{c0['rank_in_categoria']} con {c0['share_pvp_pct']:.1f}% de share."
+        )
+    # Upside cuantificado: cuánto sumaría igualar el share global donde está abajo.
+    upside = sum(
+        (share_pvp - float(c["share_pvp_pct"])) / 100 * float(c["market_pvp"])
+        for c in categories
+        if float(c["market_pvp"]) > 0 and float(c["share_pvp_pct"]) < share_pvp
+    )
+    if upside > 0:
+        narratives["oportunidad"] = (
+            f"Si {brand_name} igualara su share global ({share_pvp:.1f}%) en las categorías donde hoy está por debajo, "
+            f"sumaría ≈ {_money_ar(upside)} por período."
+        )
+    if price_bands:
+        strongest_band = max(price_bands["bands"], key=lambda b: float(b["brand_mix_units_pct"]))
+        weakest_band = min(price_bands["bands"], key=lambda b: float(b["share_units_pct"]))
+        narratives["bandas"] = (
+            f"Concentra el {strongest_band['brand_mix_units_pct']:.0f}% de sus unidades en {strongest_band['banda']}; "
+            f"en {weakest_band['banda']} solo captura {weakest_band['share_units_pct']:.1f}% del mercado."
+        )
+    if tipos_top:
+        t0 = tipos_top[0]
+        narratives["tipos"] = (
+            f"{t0['tipo']} es su motor: {_money_ar(float(t0['total_vendido']))} "
+            f"({t0['share_pvp_pct']:.1f}% de todo lo que se vende de ese tipo)."
+        )
+    if top_products:
+        top3_pct = sum(float(p.get("participacion_pct") or 0) for p in top_products[:3])
+        narratives["productos"] = (
+            f"Los 3 productos top concentran el {top3_pct:.0f}% de la venta de la marca — "
+            f"lidera {top_products[0]['producto']}."
+        )
+    if product_movers["up"] or product_movers["down"]:
+        subas = sum(int(m["delta_unidades"]) for m in product_movers["up"])
+        bajas = sum(int(m["delta_unidades"]) for m in product_movers["down"])
+        narratives["movers"] = f"Los productos en alza suman +{subas} unidades; los en baja restan {bajas}."
+    if branches:
+        best_b = max(branches, key=lambda b: float(b["share_in_branch_pct"]))
+        worst_b = min(branches, key=lambda b: float(b["share_in_branch_pct"]))
+        if best_b is not worst_b:
+            narratives["sucursales"] = (
+                f"{best_b['sucursal']} es su mejor plaza ({best_b['share_in_branch_pct']:.1f}% de share); "
+                f"{worst_b['sucursal']} la más floja ({worst_b['share_in_branch_pct']:.1f}%)."
+            )
+    if price_index_global:
+        pos = "por encima" if price_index_global >= 100 else "por debajo"
+        narratives["precios"] = (
+            f"Vende {abs(price_index_global - 100):.0f}% {pos} del precio promedio del mercado — "
+            f"{'coherente con una propuesta premium' if price_index_global >= 100 else 'compite por precio'}."
+        )
+
     # ── Conclusiones estructuradas (slide final del deck) ────────────────
     has_prev_data = int(prev_market_tot["unidades"] or 0) > 0
     conclusions: dict[str, list[str]] = {"fortalezas": [], "oportunidades": [], "acciones": []}
@@ -585,6 +671,7 @@ def build_brand_dossier(
         "category_momentum": category_momentum,
         "product_movers": product_movers,
         "conclusions": conclusions,
+        "narratives": narratives,
         "ranking": ranking_rows,
         "categories": categories,
         "tipos_top": tipos_top,

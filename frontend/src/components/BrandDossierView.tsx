@@ -95,11 +95,13 @@ function bucketLabel(key: string, gran: Granularity): string {
 }
 
 function Slide({
-  index, title, subtitle, action, children, refCb,
+  index, title, subtitle, takeaway, action, children, refCb,
 }: {
   index: number;
   title: string;
   subtitle?: string;
+  /** "La lectura": qué significa lo que se ve. Se exporta como parte del slide. */
+  takeaway?: string;
   action?: React.ReactNode;
   children: React.ReactNode;
   refCb: (el: HTMLElement | null) => void;
@@ -119,6 +121,11 @@ function Slide({
         </div>
         {action}
       </header>
+      {takeaway && (
+        <p className="rounded-r-xl border-l-2 border-[color:var(--chart-blue)] bg-[color:var(--chart-blue)]/[0.07] px-3.5 py-2 text-[13.5px] font-semibold leading-5 text-[color:var(--text)]">
+          {takeaway}
+        </p>
+      )}
       {children}
     </section>
   );
@@ -464,7 +471,7 @@ export function BrandDossierView({
           {/* Evolución con granularidad + drill-down */}
           <Slide
             index={slideIndex('evolucion')}
-            title="Evolución de ventas"
+            title="Evolución de ventas" takeaway={dossier.narratives?.evolucion}
             subtitle={drill
               ? `Día a día de ${bucketLabel(drill, gran)} · clic en "Volver" para salir`
               : `Vista ${GRAN_LABELS[gran].toLowerCase()} · ${gran !== 'daily' ? 'clic en una barra para ver ese período día a día' : 'facturación, share y unidades'}`}
@@ -559,7 +566,7 @@ export function BrandDossierView({
           </Slide>
 
           {/* Posición competitiva */}
-          <Slide index={slideIndex('competencia')} title="Posición competitiva" subtitle={`Ranking de marcas y evolución vs ${compList.join(', ') || 'competidores'}`} refCb={refCb('competencia')}>
+          <Slide index={slideIndex('competencia')} title="Posición competitiva" takeaway={dossier.narratives?.competencia} subtitle={`Ranking de marcas y evolución vs ${compList.join(', ') || 'competidores'}`} refCb={refCb('competencia')}>
             <div className="grid gap-4 xl:grid-cols-2">
               <div>
                 <div className="mb-2 text-xs font-bold text-[color:var(--text-3)]">Ranking por facturación (top {dossier.ranking.length})</div>
@@ -602,7 +609,7 @@ export function BrandDossierView({
 
           {/* Momentum por categoría (solo con período anterior) */}
           {momentum.length > 0 && (
-            <Slide index={slideIndex('momentum')} title="Momentum por categoría" subtitle={`Crecimiento de ${dossier.marca} vs el mercado (${fmtDate(dossier.filters.prev_desde)} – ${fmtDate(dossier.filters.prev_hasta)} → período actual)`} refCb={refCb('momentum')}>
+            <Slide index={slideIndex('momentum')} title="Momentum por categoría" takeaway={dossier.narratives?.momentum} subtitle={`Crecimiento de ${dossier.marca} vs el mercado (${fmtDate(dossier.filters.prev_desde)} – ${fmtDate(dossier.filters.prev_hasta)} → período actual)`} refCb={refCb('momentum')}>
               <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
                 <ResponsiveContainer width="100%" height={Math.max(260, momentum.length * 52)}>
                   <BarChart data={momentum} layout="vertical" margin={{ top: 4, right: 60, left: 8, bottom: 4 }}>
@@ -638,7 +645,7 @@ export function BrandDossierView({
           )}
 
           {/* Categorías */}
-          <Slide index={slideIndex('categorias')} title="Participación por categoría" subtitle="Share de la marca dentro de cada categoría y mix propio" refCb={refCb('categorias')}>
+          <Slide index={slideIndex('categorias')} title="Participación por categoría" takeaway={dossier.narratives?.categorias} subtitle="Share de la marca dentro de cada categoría y mix propio" refCb={refCb('categorias')}>
             <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
               <div className="space-y-2.5">
                 {categorias.map((c) => {
@@ -693,7 +700,7 @@ export function BrandDossierView({
 
           {/* Matriz de oportunidad */}
           {matriz.length >= 3 && (
-            <Slide index={slideIndex('oportunidad')} title="Matriz de oportunidad" subtitle={`Tamaño de la categoría vs share de ${dossier.marca} · burbuja = facturación de la marca · línea = share global (${share.pvp_pct.toFixed(1)}%)`} refCb={refCb('oportunidad')}>
+            <Slide index={slideIndex('oportunidad')} title="Matriz de oportunidad" takeaway={dossier.narratives?.oportunidad} subtitle={`Tamaño de la categoría vs share de ${dossier.marca} · burbuja = facturación de la marca · línea = share global (${share.pvp_pct.toFixed(1)}%)`} refCb={refCb('oportunidad')}>
               <ResponsiveContainer width="100%" height={380}>
                 <ScatterChart margin={{ top: 24, right: 40, left: 8, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.14)" />
@@ -728,7 +735,7 @@ export function BrandDossierView({
           {bands && (
             <Slide
               index={slideIndex('bandas')}
-              title="Bandas de precio"
+              title="Bandas de precio" takeaway={dossier.narratives?.bandas}
               subtitle={`Entrada hasta ${money(bands.cortes.entrada_hasta)} · Media hasta ${money(bands.cortes.media_hasta)} · Premium el resto (terciles del mercado en unidades)`}
               refCb={refCb('bandas')}
             >
@@ -778,7 +785,7 @@ export function BrandDossierView({
           )}
 
           {/* Tipos */}
-          <Slide index={slideIndex('tipos')} title="Tipos de producto" subtitle={`En qué tipos de producto juega ${dossier.marca} y cuánto pesa en cada uno`} refCb={refCb('tipos')}>
+          <Slide index={slideIndex('tipos')} title="Tipos de producto" takeaway={dossier.narratives?.tipos} subtitle={`En qué tipos de producto juega ${dossier.marca} y cuánto pesa en cada uno`} refCb={refCb('tipos')}>
             {dossier.tipos_top.length ? (
               <ResponsiveContainer width="100%" height={Math.max(280, dossier.tipos_top.length * 30)}>
                 <BarChart data={dossier.tipos_top} layout="vertical" margin={{ top: 4, right: 70, left: 8, bottom: 4 }}>
@@ -799,7 +806,7 @@ export function BrandDossierView({
           </Slide>
 
           {/* Productos */}
-          <Slide index={slideIndex('productos')} title="Productos destacados" subtitle={`Top ${dossier.top_products.length} productos por facturación`} refCb={refCb('productos')}>
+          <Slide index={slideIndex('productos')} title="Productos destacados" takeaway={dossier.narratives?.productos} subtitle={`Top ${dossier.top_products.length} productos por facturación`} refCb={refCb('productos')}>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-[11px] uppercase tracking-wide text-[color:var(--text-3)]">
@@ -832,7 +839,7 @@ export function BrandDossierView({
 
           {/* Dinámica de productos (movers, solo con período anterior) */}
           {hasMovers && (
-            <Slide index={slideIndex('movers')} title="Dinámica de productos" subtitle="Productos que más subieron y bajaron en unidades vs el período anterior" refCb={refCb('movers')}>
+            <Slide index={slideIndex('movers')} title="Dinámica de productos" takeaway={dossier.narratives?.movers} subtitle="Productos que más subieron y bajaron en unidades vs el período anterior" refCb={refCb('movers')}>
               <div className="grid gap-4 lg:grid-cols-2">
                 <div>
                   <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-[color:var(--chart-positive)]"><ArrowUpRight size={14} /> En alza</div>
@@ -875,7 +882,7 @@ export function BrandDossierView({
           )}
 
           {/* Sucursales */}
-          <Slide index={slideIndex('sucursales')} title="Presencia por sucursal" subtitle={`Peso de ${dossier.marca} dentro de cada sucursal`} refCb={refCb('sucursales')}>
+          <Slide index={slideIndex('sucursales')} title="Presencia por sucursal" takeaway={dossier.narratives?.sucursales} subtitle={`Peso de ${dossier.marca} dentro de cada sucursal`} refCb={refCb('sucursales')}>
             <div className="grid gap-4 xl:grid-cols-2">
               <ResponsiveContainer width="100%" height={Math.max(240, dossier.branches.length * 40)}>
                 <BarChart data={dossier.branches} layout="vertical" margin={{ top: 4, right: 60, left: 8, bottom: 4 }}>
@@ -903,7 +910,7 @@ export function BrandDossierView({
           </Slide>
 
           {/* Precios */}
-          <Slide index={slideIndex('precios')} title="Posicionamiento de precio" subtitle="Índice de precio por categoría (100 = precio promedio del mercado)" refCb={refCb('precios')}>
+          <Slide index={slideIndex('precios')} title="Posicionamiento de precio" takeaway={dossier.narratives?.precios} subtitle="Índice de precio por categoría (100 = precio promedio del mercado)" refCb={refCb('precios')}>
             <div className="grid gap-4 xl:grid-cols-[2fr_1fr]">
               {precios.length ? (
                 <ResponsiveContainer width="100%" height={Math.max(240, precios.length * 44)}>
