@@ -290,6 +290,25 @@ Permite corregir:
 
 Estas correcciones son independientes de los aliases de las planillas diarias.
 
+### Resolucion de `SKU NO ENCONTRADO`
+
+Cuando `Ventas Vs. Costos` trae productos con SKU faltante o textos como
+`SKU NO ENCONTRADO`, se resuelven desde la pestana `Productos` del BI
+comercial.
+
+La regla de resolucion es propia de esta capa:
+
+- Si existe producto en el catalogo, se vincula con `product_id`.
+- Al vincular con producto, el BI toma del catalogo el SKU, marca, tipo y
+  descripcion, salvo que el usuario escriba una correccion manual.
+- Si todavia no existe producto maestro, se puede guardar una correccion manual
+  de marca, tipo/linea, SKU y descripcion.
+- Luego se ejecuta rematch sobre los registros comerciales activos.
+
+Importante: esto NO crea aliases en `sales_product_aliases` ni modifica la capa
+operativa de planillas diarias. Se guarda en `sales_bi_commercial_corrections`
+y solo aplica a `sales_bi_commercial_records`.
+
 ## Dashboards
 
 ### Marcas

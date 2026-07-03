@@ -65,6 +65,12 @@ def _normalize_sku(value: Any) -> str:
     return sku_key(value)
 
 
+def _looks_missing_sku(value: Any) -> bool:
+    text = _norm(value)
+    compact = text.replace(" ", "")
+    return compact in {"", "SKUNOENCONTRADO", "NOENCONTRADO", "SINSKU"}
+
+
 def _tipo_venta(value: Any) -> str:
     text = _norm(value)
     if "ON LINE" in text or "ONLINE" in text or text == "WEB":
@@ -126,6 +132,7 @@ def _cell(row: list, col_map: dict[str, int], key: str) -> Any:
 def _load_match_context(session) -> tuple[dict[str, dict], list[SalesBICommercialCorrection]]:
     products = session.scalars(select(Product).where(Product.is_active.is_(True))).all()
     indexes = build_product_indexes(products)
+    indexes["by_id"] = {int(p.id): p for p in products}
     corrections = session.scalars(select(SalesBICommercialCorrection)).all()
     return indexes, list(corrections)
 
@@ -186,10 +193,19 @@ def _apply_commercial_match(
     corrected_brand = str(correction.corrected_brand or "") if correction else ""
     corrected_type = str(correction.corrected_type or "") if correction else ""
 
-    sku = corrected_sku or rec.get("sku_raw") or (str(product.sku or "") if product else "")
-    descripcion = corrected_desc or rec.get("descripcion_raw") or (str(product.descripcion or "") if product else "")
-    marca = corrected_brand or rec.get("marca_raw") or (str(product.marca or "") if product else "")
-    tipo_producto = corrected_type or rec.get("tipo_raw") or (str(product.tipo or "") if product else "")
+    if correction and product:
+        sku = corrected_sku or str(product.sku or "") or rec.get("sku_raw") or ""
+        descripcion = corrected_desc or str(product.descripcion or "") or rec.get("descripcion_raw") or ""
+        marca = corrected_brand or str(product.marca or "") or rec.get("marca_raw") or ""
+        tipo_producto = corrected_type or str(product.tipo or "") or rec.get("tipo_raw") or ""
+    else:
+        sku = corrected_sku or rec.get("sku_raw") or (str(product.sku or "") if product else "")
+        descripcion = corrected_desc or rec.get("descripcion_raw") or (str(product.descripcion or "") if product else "")
+        marca = corrected_brand or rec.get("marca_raw") or (str(product.marca or "") if product else "")
+        tipo_producto = corrected_type or rec.get("tipo_raw") or (str(product.tipo or "") if product else "")
+
+    if product and _looks_missing_sku(sku):
+        sku = str(product.sku or "") or sku
     # Categoria comercial (5 buckets) — reusa el clasificador del módulo
     # Vendedores así no divergen las taxonomías. tipo_producto sigue
     # disponible como dimensión de drill-down granular.
@@ -1407,16 +1423,36 @@ def create_commercial_correction(payload: dict[str, Any], username: str) -> dict
     if not any((sku_raw, desc_raw, brand_raw, type_raw)):
         raise ValueError("La correccion necesita al menos un criterio de match.")
     with db_session() as session:
+        product = None
+        product_id = payload.get("product_id") or None
+        if product_id:
+            product = session.get(Product, int(product_id))
+            if product is None:
+                raise ValueError("Producto de catalogo no encontrado.")
+
+        corrected_sku = str(payload.get("corrected_sku") or "").strip()
+        corrected_description = str(payload.get("corrected_description") or "").strip()
+        corrected_brand = str(payload.get("corrected_brand") or "").strip()
+        corrected_type = str(payload.get("corrected_type") or "").strip()
+        if product is not None:
+            corrected_sku = corrected_sku or str(product.sku or "").strip()
+            corrected_description = corrected_description or str(product.descripcion or "").strip()
+            corrected_brand = corrected_brand or str(product.marca or "").strip()
+            corrected_type = corrected_type or str(product.tipo or "").strip()
+
+        if not any((corrected_sku, corrected_description, corrected_brand, corrected_type, product_id)):
+            raise ValueError("La correccion necesita un producto o al menos un dato corregido.")
+
         correction = SalesBICommercialCorrection(
             match_sku_norm=_normalize_sku(sku_raw),
             match_desc_norm=normalize_descripcion(desc_raw),
             match_brand_norm=_norm(brand_raw),
             match_type_norm=_norm(type_raw),
-            corrected_sku=str(payload.get("corrected_sku") or "").strip(),
-            corrected_description=str(payload.get("corrected_description") or "").strip(),
-            corrected_brand=str(payload.get("corrected_brand") or "").strip(),
-            corrected_type=str(payload.get("corrected_type") or "").strip(),
-            product_id=payload.get("product_id") or None,
+            corrected_sku=corrected_sku,
+            corrected_description=corrected_description,
+            corrected_brand=corrected_brand,
+            corrected_type=corrected_type,
+            product_id=product_id,
             note=str(payload.get("note") or "").strip(),
             created_by_user_id=_user_id_from_username(session, username),
         )

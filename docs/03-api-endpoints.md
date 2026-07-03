@@ -169,7 +169,7 @@ Bearer token salvo endpoints publicos como `/api/health` y login.
 | POST | `/api/sales-bi/commercial/batches/{batch_id}/void` | Anula un lote comercial. |
 | GET | `/api/sales-bi/commercial/options` | Opciones de filtros comerciales. |
 | GET | `/api/sales-bi/commercial/unmatched-products` | Productos comerciales sin match/correccion. |
-| POST | `/api/sales-bi/commercial/corrections` | Crea correccion reutilizable de SKU/marca/tipo/descripcion para la capa comercial. |
+| POST | `/api/sales-bi/commercial/corrections` | Crea correccion reutilizable para enlazar producto de catalogo o corregir SKU/marca/tipo/descripcion en la capa comercial. |
 | POST | `/api/sales-bi/commercial/rematch-products` | Recalcula matching comercial con correcciones vigentes. |
 | GET | `/api/sales-bi/brands/report` | Dashboard comercial por marcas. |
 | GET | `/api/sales-bi/brands/compare` | Comparacion comercial de marcas por periodo. |

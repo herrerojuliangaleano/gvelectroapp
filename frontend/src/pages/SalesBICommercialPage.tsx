@@ -14,14 +14,20 @@ import {
 } from 'recharts';
 import {
   can,
+  createSalesBICommercialCorrection,
   exportSalesBICommercialPdf,
   exportSalesBICommercialXlsx,
+  fetchSalesBICommercialUnmatched,
   fetchSalesBICommercialOptions,
   fetchSalesBICommercialReport,
+  rematchSalesBICommercial,
+  searchProducts,
 } from '../api/client';
 import type {
+  ProductInfo,
   SalesBICommercialMatrixRow,
   SalesBICommercialMix,
+  SalesBICommercialUnmatchedProduct,
   SalesBICommercialOptions,
   SalesBICommercialProduct,
   SalesBICommercialProductPresence,
@@ -245,6 +251,11 @@ function compactMoney(value: number) {
   if (Math.abs(value) >= 1_000_000) return `$ ${(value / 1_000_000).toFixed(1)}M`;
   if (Math.abs(value) >= 1_000) return `$ ${(value / 1_000).toFixed(0)}K`;
   return money(value);
+}
+
+function looksMissingSku(value: string) {
+  const compact = value.trim().toUpperCase().replace(/\s+/g, '');
+  return !compact || compact === 'SKUNOENCONTRADO' || compact === 'NOENCONTRADO' || compact === 'SINSKU';
 }
 
 function MetricModeSelector({ value, onChange }: { value: MetricMode; onChange: (mode: MetricMode) => void }) {
@@ -1834,12 +1845,14 @@ function ProductsDashboard({
   setActiveTab,
   setSelectedBrand,
   setSelectedLine,
+  onResolved,
 }: {
   report: SalesBICommercialReport;
   mode: MetricMode;
   setActiveTab: (tab: CommercialTab) => void;
   setSelectedBrand: (brand: string) => void;
   setSelectedLine: (line: string) => void;
+  onResolved: () => Promise<void> | void;
 }) {
   const [q, setQ] = useState('');
   const [brand, setBrand] = useState('');
@@ -1872,6 +1885,8 @@ function ProductsDashboard({
   const showMargin = report.sensitive.include_margin && !report.presentation;
   return (
     <div className="space-y-5">
+      <CommercialUnmatchedPanel onResolved={onResolved} />
+
       <section className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)]/70 p-4">
         <div className="grid gap-3 lg:grid-cols-[1fr_220px_220px_180px]">
           <div className="relative">
@@ -1926,6 +1941,324 @@ function ProductsDashboard({
         />
       </div>
     </div>
+  );
+}
+
+type CommercialCorrectionForm = {
+  corrected_sku: string;
+  corrected_description: string;
+  corrected_brand: string;
+  corrected_type: string;
+  note: string;
+};
+
+function CommercialUnmatchedPanel({ onResolved }: { onResolved: () => Promise<void> | void }) {
+  const [items, setItems] = useState<SalesBICommercialUnmatchedProduct[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [q, setQ] = useState('');
+  const [selected, setSelected] = useState<SalesBICommercialUnmatchedProduct | null>(null);
+  const [productQuery, setProductQuery] = useState('');
+  const [products, setProducts] = useState<ProductInfo[]>([]);
+  const [selectedProduct, setSelectedProduct] = useState<ProductInfo | null>(null);
+  const [productLoading, setProductLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const [form, setForm] = useState<CommercialCorrectionForm>({
+    corrected_sku: '',
+    corrected_description: '',
+    corrected_brand: '',
+    corrected_type: '',
+    note: '',
+  });
+  const canManageCorrections = can('sales_bi.aliases.manage');
+
+  async function load() {
+    setLoading(true);
+    setMessage('');
+    try {
+      const res = await fetchSalesBICommercialUnmatched({ q: q || undefined, limit: 80 });
+      setItems(res.items);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'No se pudieron cargar los productos sin vincular.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function openItem(item: SalesBICommercialUnmatchedProduct) {
+    setSelected(item);
+    setSelectedProduct(null);
+    setProducts([]);
+    setProductQuery([item.descripcion, item.sku].filter(Boolean).join(' '));
+    setForm({
+      corrected_sku: looksMissingSku(item.sku) ? '' : item.sku,
+      corrected_description: item.descripcion || '',
+      corrected_brand: item.marca || '',
+      corrected_type: item.tipo_producto || '',
+      note: '',
+    });
+    setMessage('');
+  }
+
+  async function runProductSearch() {
+    const query = productQuery.trim() || selected?.descripcion || selected?.sku || '';
+    if (!query) return;
+    setProductLoading(true);
+    setMessage('');
+    try {
+      setProducts(await searchProducts(query, 14));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'No se pudo buscar en el catalogo.');
+    } finally {
+      setProductLoading(false);
+    }
+  }
+
+  function chooseProduct(product: ProductInfo) {
+    setSelectedProduct(product);
+    setForm((current) => ({
+      ...current,
+      corrected_sku: product.sku || current.corrected_sku,
+      corrected_description: product.descripcion || product.producto || current.corrected_description,
+      corrected_brand: product.marca || current.corrected_brand,
+      corrected_type: product.tipo || current.corrected_type,
+    }));
+  }
+
+  async function saveCorrection() {
+    if (!selected) return;
+    const hasTarget = !!selectedProduct
+      || !!form.corrected_sku.trim()
+      || !!form.corrected_description.trim()
+      || !!form.corrected_brand.trim()
+      || !!form.corrected_type.trim();
+    if (!hasTarget) {
+      setMessage('Elegi un producto o completa al menos marca, tipo, SKU o descripcion.');
+      return;
+    }
+    setSaving(true);
+    setMessage('');
+    try {
+      await createSalesBICommercialCorrection({
+        match_sku: selected.sku,
+        match_description: selected.descripcion,
+        match_brand: selected.marca,
+        match_type: selected.tipo_producto,
+        corrected_sku: form.corrected_sku.trim(),
+        corrected_description: form.corrected_description.trim(),
+        corrected_brand: form.corrected_brand.trim(),
+        corrected_type: form.corrected_type.trim(),
+        product_id: selectedProduct?.id ?? null,
+        note: form.note.trim(),
+      });
+      const result = await rematchSalesBICommercial();
+      setSelected(null);
+      setSelectedProduct(null);
+      setProducts([]);
+      setMessage(`Correccion guardada. Quedan ${num(result.unmatched)} sin vincular.`);
+      await load();
+      await onResolved();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'No se pudo guardar la correccion.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!loading && items.length === 0 && !message) return null;
+
+  return (
+    <section className="rounded-2xl border border-amber-500/25 bg-amber-500/[0.06] p-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h2 className="flex items-center gap-2 text-base font-black text-[color:var(--text)]">
+            <AlertTriangle size={17} className="text-amber-300" />
+            Productos comerciales sin resolver
+          </h2>
+          <p className="mt-1 max-w-3xl text-xs leading-5 text-[color:var(--text-3)]">
+            Resolve los casos como SKU NO ENCONTRADO con una regla propia de Ventas Vs. Costos.
+            Podes vincular al catalogo o solo corregir marca, tipo, SKU y descripcion para que el BI quede limpio.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <input
+            value={q}
+            onChange={(event) => setQ(event.target.value)}
+            onKeyDown={(event) => { if (event.key === 'Enter') load(); }}
+            placeholder="Buscar pendiente"
+            className="h-10 w-full rounded-xl border border-white/15 bg-slate-950/40 px-3 text-sm text-white outline-none focus:border-amber-300 lg:w-64"
+          />
+          <button
+            type="button"
+            onClick={load}
+            className="inline-flex h-10 items-center gap-2 rounded-xl border border-white/15 px-3 text-sm font-bold text-[color:var(--text)] hover:bg-white/10"
+          >
+            {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+            Buscar
+          </button>
+        </div>
+      </div>
+
+      {message && (
+        <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs font-semibold text-[color:var(--text-2)]">
+          {message}
+        </div>
+      )}
+
+      {items.length > 0 && (
+        <div className="mt-4 grid gap-2 xl:grid-cols-2">
+          {items.slice(0, 8).map((item) => (
+            <button
+              key={`${item.sku_normalized}-${item.descripcion_normalized}`}
+              type="button"
+              onClick={() => canManageCorrections && openItem(item)}
+              className="rounded-xl border border-white/10 bg-[color:var(--surface-2)] p-3 text-left transition hover:border-amber-300/50 disabled:opacity-60"
+              disabled={!canManageCorrections}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap gap-1.5">
+                    <Pill tone={looksMissingSku(item.sku) ? 'amber' : 'default'}>{item.sku || 'sin sku'}</Pill>
+                    <Pill tone="blue">{item.marca || 'sin marca'}</Pill>
+                    <Pill>{item.tipo_producto || 'sin tipo'}</Pill>
+                  </div>
+                  <div className="mt-2 line-clamp-2 text-sm font-black text-[color:var(--text)]">
+                    {item.descripcion || 'Sin descripcion'}
+                  </div>
+                  <div className="mt-1 text-[11px] text-[color:var(--text-3)]">
+                    {item.sucursales.join(', ') || 'Sin sucursal'} · {num(item.lineas)} lineas
+                  </div>
+                </div>
+                <div className="shrink-0 text-right text-xs">
+                  <div className="font-black text-amber-200">{num(item.unidades)} u</div>
+                  <div className="mt-1 text-[color:var(--text-2)]">{money(item.total_vendido)}</div>
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!canManageCorrections && items.length > 0 && (
+        <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-amber-100">
+          Tu usuario puede ver estos pendientes, pero necesita el permiso sales_bi.aliases.manage para resolverlos.
+        </div>
+      )}
+
+      {selected && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" onClick={() => setSelected(null)}>
+          <div className="max-h-[92vh] w-full max-w-5xl overflow-auto rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)] p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h3 className="text-xl font-black text-[color:var(--text)]">Resolver producto comercial</h3>
+                <p className="mt-1 max-w-3xl text-sm text-[color:var(--text-2)]">{selected.descripcion}</p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <Pill tone={looksMissingSku(selected.sku) ? 'amber' : 'default'}>{selected.sku || 'sin sku'}</Pill>
+                  <Pill tone="blue">{selected.marca || 'sin marca'}</Pill>
+                  <Pill>{selected.tipo_producto || 'sin tipo'}</Pill>
+                </div>
+              </div>
+              <button type="button" onClick={() => setSelected(null)} className="rounded-xl border border-white/10 px-3 py-2 text-sm font-bold text-[color:var(--text-2)] hover:bg-white/10">
+                Cerrar
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_1fr]">
+              <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="text-xs font-black uppercase tracking-[0.18em] text-[color:var(--text-3)]">Enlazar a producto existente</div>
+                <div className="mt-3 flex gap-2">
+                  <input
+                    value={productQuery}
+                    onChange={(event) => setProductQuery(event.target.value)}
+                    onKeyDown={(event) => { if (event.key === 'Enter') runProductSearch(); }}
+                    className="h-10 min-w-0 flex-1 rounded-xl border border-white/15 bg-slate-950/40 px-3 text-sm text-white outline-none focus:border-[color:var(--chart-blue)]"
+                    placeholder="Buscar en catalogo"
+                  />
+                  <button type="button" onClick={runProductSearch} className="inline-flex h-10 items-center gap-2 rounded-xl bg-[color:var(--chart-blue)] px-3 text-sm font-black text-white">
+                    {productLoading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+                    Buscar
+                  </button>
+                </div>
+                <div className="mt-3 max-h-80 space-y-2 overflow-auto pr-1">
+                  {products.map((product) => {
+                    const active = selectedProduct?.id === product.id;
+                    return (
+                      <button
+                        key={product.id}
+                        type="button"
+                        onClick={() => chooseProduct(product)}
+                        className={cn(
+                          'w-full rounded-xl border p-3 text-left transition',
+                          active ? 'border-[color:var(--chart-blue)] bg-blue-500/10' : 'border-white/10 bg-[color:var(--surface-2)] hover:border-[color:var(--chart-blue)]/50',
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="line-clamp-2 text-sm font-black text-[color:var(--text)]">{product.descripcion || product.producto}</div>
+                            <div className="mt-1 text-xs text-[color:var(--text-3)]">{product.marca} · {product.tipo}</div>
+                          </div>
+                          <div className="shrink-0 font-mono text-xs text-blue-200">{product.sku}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                  {products.length === 0 && (
+                    <div className="rounded-xl border border-dashed border-white/10 p-5 text-center text-xs text-[color:var(--text-3)]">
+                      Busca por descripcion, SKU o marca para vincularlo a un producto existente.
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="text-xs font-black uppercase tracking-[0.18em] text-[color:var(--text-3)]">Correccion que se guardara</div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <Field label="SKU corregido">
+                    <input value={form.corrected_sku} onChange={(event) => setForm((current) => ({ ...current, corrected_sku: event.target.value }))} className={inputClass} placeholder="Opcional" />
+                  </Field>
+                  <Field label="Marca">
+                    <input value={form.corrected_brand} onChange={(event) => setForm((current) => ({ ...current, corrected_brand: event.target.value }))} className={inputClass} placeholder="Ej: SAMSUNG" />
+                  </Field>
+                  <Field label="Tipo / linea">
+                    <input value={form.corrected_type} onChange={(event) => setForm((current) => ({ ...current, corrected_type: event.target.value }))} className={inputClass} placeholder="Ej: HELADERA" />
+                  </Field>
+                  <Field label="Nota">
+                    <input value={form.note} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} className={inputClass} placeholder="Opcional" />
+                  </Field>
+                </div>
+                <Field label="Descripcion corregida">
+                  <textarea
+                    value={form.corrected_description}
+                    onChange={(event) => setForm((current) => ({ ...current, corrected_description: event.target.value }))}
+                    className="min-h-24 w-full rounded-xl border border-white/15 bg-slate-950/40 px-3 py-2 text-sm text-white outline-none focus:border-[color:var(--chart-blue)]"
+                  />
+                </Field>
+
+                <div className="mt-4 rounded-xl border border-white/10 bg-black/15 p-3 text-xs leading-5 text-[color:var(--text-2)]">
+                  La regla queda guardada para futuras importaciones de Ventas Vs. Costos. Si elegiste producto de catalogo,
+                  el BI toma sus datos como fuente; si no, usa los campos corregidos manualmente.
+                </div>
+
+                <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
+                  <button type="button" onClick={() => setSelected(null)} className="h-10 rounded-xl border border-white/15 px-4 text-sm font-bold text-[color:var(--text-2)] hover:bg-white/10">
+                    Cancelar
+                  </button>
+                  <button type="button" onClick={saveCorrection} disabled={saving} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[color:var(--chart-blue)] px-4 text-sm font-black text-white hover:brightness-110 disabled:opacity-50">
+                    {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+                    Guardar y rematchear
+                  </button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -3270,7 +3603,7 @@ export function SalesBICommercialPage() {
           {activeTab === 'products' && (
             <>
             <TabStory question="¿Qué SKUs concentran la venta?" insights={tabStories.products} />
-            <ProductsDashboard report={brandsReport} mode={metricMode} setActiveTab={setActiveTab} setSelectedBrand={setSelectedBrand} setSelectedLine={setSelectedLine} />
+            <ProductsDashboard report={brandsReport} mode={metricMode} setActiveTab={setActiveTab} setSelectedBrand={setSelectedBrand} setSelectedLine={setSelectedLine} onResolved={loadReport} />
             </>
           )}
 

@@ -20,6 +20,15 @@ Code puedan entender la aplicacion sin depender de memoria oral.
 11. [10 - Módulo Comercial · Fase 1 (PSI con cruce al GFK)](10-modulo-comercial-fase1.md)
 12. [11 - Comercial BI · Vendedores, métricas y matching](11-comercial-bi-vendedores.md)
 13. [12 - Comercial BI - Marcas, lineas y sucursales](12-comercial-bi-marcas-lineas-sucursales.md)
+14. [13 - Integración Mobile con Puma Software](13-integracion-mobile-puma.md)
+15. [14 - Tabla intermedia (outbox) Puma](14-tabla-intermedia-puma.md)
+16. [15 - Módulo Maestro / Alta / Normalización de Productos](15-modulo-maestro-productos.md)
+17. [16 - Patrones de descripción de productos](16-patrones-descripcion-productos.md)
+18. [17 - Modelo de datos: MER + Normalización](17-modelo-datos-mer.md)
+19. [18 - Diccionario de datos detallado](18-diccionario-datos.md)
+20. [19 - Análisis de la base de datos (seguridad, escalabilidad, saneamiento)](19-analisis-bd-escalabilidad-seguridad.md)
+21. [20 - Subsistema de archivos (object storage)](20-subsistema-archivos-object-storage.md)
+22. [21 - Relevamiento de mejoras (backlog priorizado)](21-relevamiento-mejoras.md)
 
 ## Documentacion por fases
 
@@ -47,8 +56,16 @@ Code puedan entender la aplicacion sin depender de memoria oral.
 | Módulo Comercial · PSI + cruce al GFK (Fase 1) | [10-modulo-comercial-fase1.md](10-modulo-comercial-fase1.md) |
 | Comercial BI · vendedores, métricas y matching | [11-comercial-bi-vendedores.md](11-comercial-bi-vendedores.md) |
 | Comercial BI - marcas, lineas y sucursales | [12-comercial-bi-marcas-lineas-sucursales.md](12-comercial-bi-marcas-lineas-sucursales.md) |
+| Integracion Mobile / Puma | [13-integracion-mobile-puma.md](13-integracion-mobile-puma.md) |
+| Tabla intermedia (outbox) Puma | [14-tabla-intermedia-puma.md](14-tabla-intermedia-puma.md) |
+| Maestro / Alta / Normalizacion de productos | [15-modulo-maestro-productos.md](15-modulo-maestro-productos.md) |
+| Patrones de descripcion de productos | [16-patrones-descripcion-productos.md](16-patrones-descripcion-productos.md) |
+| Modelo de datos (MER + normalizacion) | [17-modelo-datos-mer.md](17-modelo-datos-mer.md) · [18-diccionario-datos.md](18-diccionario-datos.md) |
+| Analisis BD (seguridad / escalabilidad / saneamiento) | [19-analisis-bd-escalabilidad-seguridad.md](19-analisis-bd-escalabilidad-seguridad.md) |
+| Subsistema de archivos (object storage) | [20-subsistema-archivos-object-storage.md](20-subsistema-archivos-object-storage.md) |
+| Relevamiento de mejoras (backlog priorizado) | [21-relevamiento-mejoras.md](21-relevamiento-mejoras.md) |
 | Docker local | [fase-1-docker/README.md](fase-1-docker/README.md) |
-| Modelo de datos futuro en Postgres | [fase-2-postgres/01-modelo-datos.md](fase-2-postgres/01-modelo-datos.md) |
+| Modelo de datos historico (Fase 2 · superado por 17/18) | [fase-2-postgres/01-modelo-datos.md](fase-2-postgres/01-modelo-datos.md) |
 | Administracion de base de datos | [fase-2-postgres/02-administracion-db.md](fase-2-postgres/02-administracion-db.md) |
 | Refactor estructural (Fase 3) | [fase-3-refactor/README.md](fase-3-refactor/README.md) |
 

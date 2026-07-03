@@ -160,6 +160,12 @@ def build_brand_dossier(
     # (pvp unitario, unidades) para bandas de precio Entrada/Media/Premium.
     market_prices: list[tuple[float, int]] = []
     brand_prices: list[tuple[float, int]] = []
+    # Semana × marca (todas): para el área apilada de share en el tiempo.
+    weekly_by_brand: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
+    # Día × categoría (solo la marca): evolución por categoría.
+    daily_cat_brand: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
+    # Sucursal × marca (todas): comparativa por sucursal vs competidores.
+    branch_brands: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
 
     brand_names_seen: set[str] = set()
     for r in records:
@@ -190,8 +196,12 @@ def build_brand_dossier(
         if unidades_r > 0 and precio_r > 0:
             market_prices.append((precio_r, unidades_r))
 
+        _add_metric(branch_brands[suc][name], r)
+        _add_metric(weekly_by_brand[_week_key(r.fecha)][name], r)
+
         if name == brand_name:
             _add_metric(daily_brand[dia], r)
+            _add_metric(daily_cat_brand[dia][cat], r)
             if unidades_r > 0 and precio_r > 0:
                 brand_prices.append((precio_r, unidades_r))
             sem = _week_key(r.fecha)
@@ -389,6 +399,40 @@ def build_brand_dossier(
             "market_pvp": mk["total_vendido"],
             "share_pvp_pct": _share(br["total_vendido"], mk["total_vendido"]),
         })
+
+    # ── Share apilado por semana (marca + competidores + OTRAS) ──────────
+    share_series: list[dict[str, Any]] = []
+    stack_names = [brand_name] + comp_list
+    for sem in sorted(weekly_market.keys()):
+        mk_total = float(_fin(weekly_market[sem])["total_vendido"])
+        row: dict[str, Any] = {"semana": sem, "values": {}}
+        usado = 0.0
+        for n in stack_names:
+            pvp_n = float(_fin(weekly_by_brand[sem].get(n) or _metric_bucket())["total_vendido"])
+            pct = _share(pvp_n, mk_total)
+            row["values"][n] = pct
+            usado += pct
+        row["values"]["OTRAS"] = round(max(0.0, 100.0 - usado), 2) if mk_total else 0.0
+        share_series.append(row)
+
+    # ── Evolución diaria por categoría (solo la marca, top 5 categorías) ─
+    top_cats = [c["categoria"] for c in categories if float(c["brand_pvp"]) > 0][:5]
+    category_daily: list[dict[str, Any]] = []
+    for dia in sorted(daily_market.keys()):
+        row = {"fecha": dia, "values": {}}
+        for cat in top_cats:
+            b = _fin(daily_cat_brand.get(dia, {}).get(cat) or _metric_bucket())
+            row["values"][cat] = {"unidades": b["unidades"], "total_vendido": b["total_vendido"]}
+        category_daily.append(row)
+
+    # ── Comparativa por sucursal: marca vs competidores ──────────────────
+    branch_compare: list[dict[str, Any]] = []
+    for suc in sorted(branch_market.keys(), key=lambda s: -float(_fin(branch_market[s])["total_vendido"])):
+        row = {"sucursal": suc, "values": {}}
+        for n in stack_names:
+            b = _fin(branch_brands[suc].get(n) or _metric_bucket())
+            row["values"][n] = {"unidades": b["unidades"], "total_vendido": b["total_vendido"]}
+        branch_compare.append(row)
 
     # ── Bandas de precio ─────────────────────────────────────────────────
     price_bands = _price_bands(market_prices, brand_prices)
@@ -667,6 +711,9 @@ def build_brand_dossier(
         "monthly_series": monthly_series,
         "weekly_series": weekly_series,
         "daily_series": daily_series,
+        "share_series": share_series,
+        "category_daily": category_daily,
+        "branch_compare": branch_compare,
         "price_bands": price_bands,
         "category_momentum": category_momentum,
         "product_movers": product_movers,
