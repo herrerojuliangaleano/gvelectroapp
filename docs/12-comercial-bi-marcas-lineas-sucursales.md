@@ -326,6 +326,28 @@ en una sola pantalla:
 Este lote no es una correccion masiva con el mismo destino para todos. Cada
 pendiente puede quedar vinculado a un producto distinto.
 
+### Performance de carga
+
+El BI comercial trabaja sobre `sales_bi_commercial_records` y puede acumular
+decenas de miles de lineas historicas. Para evitar esperas largas, el frontend
+no debe pedir todos los reportes al abrir la pantalla.
+
+Convencion actual:
+
+- la carga inicial usa el reporte base `brands`, que ya contiene totales,
+  mix de marcas, categorias, tipos, sucursales, matrices principales, top
+  productos y presencia de productos;
+- las pestanas `Categorias`, `Tipos`, `Productos`, `Comparador`, `Periodos` y
+  `Presentacion` reutilizan ese reporte base;
+- el reporte `branches` se pide bajo demanda solo al entrar en `Sucursales` u
+  `Oportunidades`, porque agrega perfiles y oportunidades internas;
+- el reporte `lines` queda disponible como endpoint, pero no se pide en la
+  carga inicial para evitar recalcular el mismo universo de datos.
+
+Si en el futuro vuelve a ponerse lenta la pantalla, revisar primero la cantidad
+de requests simultaneas desde `SalesBICommercialPage` antes de tocar consultas
+SQL.
+
 ## Dashboards
 
 ### Marcas

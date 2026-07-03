@@ -102,6 +102,10 @@ function kindForTab(tab: CommercialTab): CommercialKind {
   return 'brands';
 }
 
+function reportKindForTab(tab: CommercialTab): CommercialKind {
+  return tab === 'branches' || tab === 'opportunities' ? 'branches' : 'brands';
+}
+
 function toCsv(value: string) {
   return value.trim() || undefined;
 }
@@ -3567,20 +3571,18 @@ export function SalesBICommercialPage() {
     presentation,
   }), [fechaDesde, fechaHasta, sucursal, tipoVenta, marca, linea, presentation]);
 
-  async function loadReport() {
+  async function loadReport(kindToLoad: CommercialKind = reportKindForTab(activeTab), replace = true) {
     setLoading(true);
     setError('');
     try {
       const previousParams = compareEnabled && compareDesde && compareHasta
         ? { ...params, fecha_desde: compareDesde, fecha_hasta: compareHasta }
         : null;
-      const [brands, lines, branches, previousBrands] = await Promise.all([
-        fetchSalesBICommercialReport('brands', params),
-        fetchSalesBICommercialReport('lines', params),
-        fetchSalesBICommercialReport('branches', params),
+      const [report, previousBrands] = await Promise.all([
+        fetchSalesBICommercialReport(kindToLoad, params),
         previousParams ? fetchSalesBICommercialReport('brands', previousParams) : Promise.resolve(null),
       ]);
-      setReports({ brands, lines, branches });
+      setReports((current) => (replace ? { [kindToLoad]: report } : { ...current, [kindToLoad]: report }));
       setPreviousReport(previousBrands);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo cargar el informe comercial.');
@@ -3595,6 +3597,13 @@ export function SalesBICommercialPage() {
   }, []);
 
   useEffect(() => {
+    const requiredKind = reportKindForTab(activeTab);
+    if (reports[requiredKind] || loading) return;
+    loadReport(requiredKind, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  useEffect(() => {
     const base = reports.brands || reports.lines || reports.branches;
     if (!base) return;
     setSelectedBrand((current) => (base.brand_mix.some((row) => row.name === current) ? current : base.brand_mix[0]?.name || ''));
@@ -3603,7 +3612,7 @@ export function SalesBICommercialPage() {
   }, [reports]);
 
   async function handleExport(type: 'pdf' | 'xlsx') {
-    const exportReport = reports[activeKind];
+    const exportReport = reports[activeKind] || activeReport;
     if (!exportReport) return;
     setExporting(type);
     try {
@@ -3684,7 +3693,7 @@ export function SalesBICommercialPage() {
     { value: 'presentation', label: 'Presentacion', shortLabel: 'Pres.', icon: <Presentation size={14} /> },
   ];
 
-  const activeReport = reports[activeKind] || null;
+  const activeReport = reports[activeKind] || reports.brands || reports.branches || null;
   const brandsReport = reports.brands || activeReport;
   const linesReport = reports.lines || brandsReport;
   const branchesReport = reports.branches || brandsReport;
@@ -3803,7 +3812,7 @@ export function SalesBICommercialPage() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <MetricModeSelector value={metricMode} onChange={setMetricMode} />
             <div className="flex gap-2">
-              <button type="button" onClick={loadReport} disabled={loading} className="inline-flex h-10 items-center gap-2 rounded-xl bg-[color:var(--chart-blue)] px-4 text-sm font-bold text-white hover:brightness-110 disabled:opacity-50">
+              <button type="button" onClick={() => loadReport()} disabled={loading} className="inline-flex h-10 items-center gap-2 rounded-xl bg-[color:var(--chart-blue)] px-4 text-sm font-bold text-white hover:brightness-110 disabled:opacity-50">
                 {loading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
                 Aplicar
               </button>
