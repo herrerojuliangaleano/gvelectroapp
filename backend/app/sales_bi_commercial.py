@@ -458,6 +458,38 @@ def save_commercial_import(
     return batch_id
 
 
+def find_overlapping_batches(period_start: Any, period_end: Any) -> list[dict[str, Any]]:
+    """Lotes ACTIVOS cuyo período se solapa con [period_start, period_end].
+
+    Se usa antes de confirmar un import para avisar que ese rango ya tiene
+    datos cargados (importarlo igual duplicaría ventas en los reportes).
+    """
+    ps = _parse_date_value(period_start)
+    pe = _parse_date_value(period_end)
+    if ps is None or pe is None:
+        return []
+    with db_session() as session:
+        rows = session.scalars(
+            select(SalesBICommercialBatch)
+            .where(
+                SalesBICommercialBatch.status == "activo",
+                SalesBICommercialBatch.period_start <= pe,
+                SalesBICommercialBatch.period_end >= ps,
+            )
+            .order_by(SalesBICommercialBatch.period_start)
+        ).all()
+        return [
+            {
+                "id": int(b.id),
+                "fuente_nombre": b.fuente_nombre,
+                "period_start": _fmt_date(b.period_start),
+                "period_end": _fmt_date(b.period_end),
+                "total_records": int(b.total_records or 0),
+            }
+            for b in rows
+        ]
+
+
 def list_commercial_batches(limit: int = 50, offset: int = 0, status: str | None = None) -> tuple[list[dict], int]:
     filters: list[Any] = [SalesBICommercialBatch.source_kind == COMMERCIAL_SOURCE_KIND]
     if status:
@@ -920,6 +952,56 @@ def _common_report(
     }
 
 
+def _brand_series(records: list[SalesBICommercialRecord], bounds: tuple[date, date], top_n: int = 6) -> dict[str, Any]:
+    """Serie temporal por marca (top N + OTRAS) para comparar evolución e
+    impacto. Granularidad automática según el largo del rango."""
+    span = (bounds[1] - bounds[0]).days + 1
+    if span <= 45:
+        granularity = "daily"
+        keyf = lambda d: d.isoformat()  # noqa: E731
+    elif span <= 200:
+        granularity = "weekly"
+        keyf = lambda d: (d - timedelta(days=d.weekday())).isoformat()  # noqa: E731
+    else:
+        granularity = "monthly"
+        keyf = lambda d: f"{d.year:04d}-{d.month:02d}"  # noqa: E731
+
+    totals: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    per_key: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
+    market: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    for r in records:
+        name = str(r.marca or "Sin marca")
+        k = keyf(r.fecha)
+        _add_metric(totals[name], r)
+        _add_metric(per_key[k][name], r)
+        _add_metric(market[k], r)
+
+    top = [
+        n for n, _ in sorted(
+            totals.items(), key=lambda t: float(t[1]["total_vendido"]), reverse=True
+        )[:top_n]
+    ]
+    rows: list[dict[str, Any]] = []
+    for k in sorted(market.keys()):
+        mk = _finalize_metric(market[k], include_costs=False, include_margin=False)
+        row: dict[str, Any] = {
+            "key": k,
+            "market_pvp": mk["total_vendido"],
+            "market_unidades": mk["unidades"],
+            "brands": {},
+        }
+        rest_pvp = float(mk["total_vendido"])
+        rest_u = int(mk["unidades"])
+        for n in top:
+            b = _finalize_metric(per_key[k].get(n) or _metric_bucket(), include_costs=False, include_margin=False)
+            row["brands"][n] = {"total_vendido": b["total_vendido"], "unidades": b["unidades"]}
+            rest_pvp -= float(b["total_vendido"])
+            rest_u -= int(b["unidades"])
+        row["brands"]["OTRAS"] = {"total_vendido": round(max(0.0, rest_pvp), 2), "unidades": max(0, rest_u)}
+        rows.append(row)
+    return {"granularity": granularity, "top_brands": top, "rows": rows}
+
+
 def build_brands_report(
     fecha_desde: str | None = None,
     fecha_hasta: str | None = None,
@@ -961,6 +1043,9 @@ def build_brands_report(
     )
     report["ranking"] = report["brand_mix"]
     report["compare_candidates"] = _brand_compare_candidates(report["brand_mix"])
+    # Serie temporal por marca (top 6 + OTRAS): evolución comparada e impacto
+    # (share en el tiempo). La consume la pestaña Marcas.
+    report["brand_series"] = _brand_series(records, bounds)
     return report
 
 

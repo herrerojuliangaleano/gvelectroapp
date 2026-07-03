@@ -39,6 +39,7 @@ from ..sales_bi_commercial import (
     build_branches_report,
     build_lines_report,
     create_commercial_correction,
+    find_overlapping_batches,
     get_commercial_options,
     list_commercial_batches,
     list_commercial_unmatched,
@@ -130,6 +131,9 @@ class SellersExportRequest(BaseModel):
 class CommercialConfirmRequest(BaseModel):
     temp_file_key: str
     fuente_nombre: str = ""
+    # Si el período ya tiene lotes activos, el confirm falla con 409 salvo que
+    # el usuario confirme explícitamente que quiere importar igual.
+    allow_overlap: bool = False
 
 
 class CommercialCorrectionRequest(BaseModel):
@@ -355,7 +359,8 @@ async def analyze_commercial_ventas_vs_costos(
     for sheet in result.get("sheets", []):
         sheet["records_preview"] = sheet.get("records", [])[:8]
         sheet.pop("records", None)
-    return {**result, "temp_file_key": temp_key}
+    overlaps = find_overlapping_batches(result.get("period_start"), result.get("period_end"))
+    return {**result, "temp_file_key": temp_key, "overlapping_batches": overlaps}
 
 
 @router.post("/commercial/confirm")
@@ -374,6 +379,16 @@ def confirm_commercial_ventas_vs_costos(
     result = analyze_ventas_vs_costos(sheets_data, source_name=body.fuente_nombre or body.temp_file_key)
     if not result.get("total_records"):
         raise HTTPException(status_code=400, detail="No hay registros comerciales para importar.")
+    if not body.allow_overlap:
+        overlaps = find_overlapping_batches(result.get("period_start"), result.get("period_end"))
+        if overlaps:
+            detalle = "; ".join(
+                f"#{o['id']} {o['fuente_nombre']} ({o['period_start']} al {o['period_end']})" for o in overlaps[:3]
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=f"El período ya tiene datos importados: {detalle}. Anulá esos lotes o confirmá importar igual.",
+            )
     batch_id = save_commercial_import(
         result,
         fuente_nombre=body.fuente_nombre or body.temp_file_key,

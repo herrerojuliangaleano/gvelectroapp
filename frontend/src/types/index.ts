@@ -921,6 +921,17 @@ export interface SalesBICommercialReport {
   /** Mix por tipo_producto granular (HELADERA, LAVARROPAS, MICROONDAS, ...).
    *  Drill-down debajo de la categoría. Puede no estar en respuestas viejas. */
   tipo_mix?: SalesBICommercialMix[];
+  /** Serie temporal por marca (top 6 + OTRAS) para evolución comparada e impacto. */
+  brand_series?: {
+    granularity: 'daily' | 'weekly' | 'monthly';
+    top_brands: string[];
+    rows: Array<{
+      key: string;
+      market_pvp: number;
+      market_unidades: number;
+      brands: Record<string, { total_vendido: number; unidades: number }>;
+    }>;
+  };
   branch_mix: SalesBICommercialMix[];
   sale_type_mix: SalesBICommercialMix[];
   branch_line_matrix: SalesBICommercialMatrixRow[];
@@ -1006,6 +1017,14 @@ export interface SalesBICommercialAnalyzeResponse {
   warnings: string[];
   sheets: SalesBICommercialAnalyzeSheet[];
   temp_file_key: string | null;
+  /** Lotes activos que se solapan con el período del archivo (riesgo de duplicar). */
+  overlapping_batches?: Array<{
+    id: number;
+    fuente_nombre: string;
+    period_start: string;
+    period_end: string;
+    total_records: number;
+  }>;
 }
 
 export interface SalesBICommercialOptions {

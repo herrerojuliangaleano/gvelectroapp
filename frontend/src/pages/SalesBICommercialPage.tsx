@@ -4,6 +4,7 @@ import {
   Presentation, RefreshCw, Search, Settings2, Tags, Target, Trophy,
 } from 'lucide-react';
 import { BrandDossierView } from '../components/BrandDossierView';
+import { BrandSeriesCharts } from '../components/BrandSeriesCharts';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -3149,6 +3150,11 @@ export function SalesBICommercialPage() {
                   <RankingBars data={brandsReport.brand_mix} color="var(--chart-blue)" mode={metricMode} onSelect={setSelectedBrand} />
                 </ChartCard>
               </div>
+              <BrandSeriesCharts
+                series={brandsReport.brand_series}
+                mode={metricMode}
+                onSelectBrand={setSelectedBrand}
+              />
               <BrandDetail report={brandsReport} selectedBrand={selectedBrand} setSelectedBrand={setSelectedBrand} mode={metricMode} />
               <div className="grid gap-4 lg:grid-cols-3">
                 <MixList title="Mix por marca" rows={brandsReport.brand_mix} mode={metricMode} onSelect={setSelectedBrand} />

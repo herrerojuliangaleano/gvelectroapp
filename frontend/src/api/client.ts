@@ -1053,6 +1053,7 @@ export async function salesBICommercialAnalyzeFile(file: File): Promise<SalesBIC
 export async function salesBICommercialConfirm(payload: {
   temp_file_key: string;
   fuente_nombre?: string;
+  allow_overlap?: boolean;
 }): Promise<{ ok: boolean; batch_id: number; period_start: string; period_end: string; total_records: number; total_pvp: number }> {
   return request('/api/sales-bi/commercial/confirm', { method: 'POST', body: JSON.stringify(payload) });
 }
