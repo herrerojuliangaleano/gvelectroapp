@@ -396,7 +396,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
   addTakeaway(cats, dossier.narratives?.categorias || dossier.narratives?.oportunidad);
 
   if (dossier.price_bands?.bands?.length) {
-    const bands = addBase('Bandas de precio', 'Mix de unidades por posicionamiento de precio');
+    const bands = addBase('Gamas de precio', 'Mix de unidades por posicionamiento de precio');
     const bandRows = dossier.price_bands.bands;
     addChart(bands, 'bar', [
       { name: `Mix ${dossier.marca}`, labels: bandRows.map((row) => row.banda), values: bandRows.map((row) => row.brand_mix_units_pct / 100) },
@@ -407,7 +407,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
       valAxisLabelFormatCode: '0.0%',
     });
     addTable(bands, [
-      ['Banda', `Unid. ${dossier.marca}`, 'Share unid.', 'Facturación'],
+      ['Gama', `Unid. ${dossier.marca}`, 'Share unid.', 'Facturación'],
       ...bandRows.map((row) => [row.banda, num(row.brand_unidades), pct(row.share_units_pct), compactMoney(row.brand_pvp)]),
     ], 7.05, 1.1, 5.1, 3.6, [1.45, 1.2, 1.15, 1.3]);
     addTakeaway(bands, dossier.narratives?.bandas, 7.05, 5.05, 5.1);

@@ -52,7 +52,7 @@ def _price_bands(
     market_prices: list[tuple[float, int]],
     brand_prices: list[tuple[float, int]],
 ) -> dict[str, Any] | None:
-    """Bandas Entrada/Media/Premium con cortes = terciles del mercado
+    """Gamas Entrada/Media/Premium con cortes = terciles del mercado
     ponderados por unidades. Muestra dónde juega la marca vs el mercado."""
     total_units = sum(u for _, u in market_prices)
     if not total_units:
@@ -614,8 +614,8 @@ def build_brand_dossier(
         strongest_band = max(price_bands["bands"], key=lambda b: float(b["brand_mix_units_pct"]))
         weakest_band = min(price_bands["bands"], key=lambda b: float(b["share_units_pct"]))
         narratives["bandas"] = (
-            f"Concentra el {strongest_band['brand_mix_units_pct']:.0f}% de sus unidades en {strongest_band['banda']}; "
-            f"en {weakest_band['banda']} solo captura {weakest_band['share_units_pct']:.1f}% del mercado."
+            f"Concentra el {strongest_band['brand_mix_units_pct']:.0f}% de sus unidades en la gama {strongest_band['banda']}; "
+            f"en la gama {weakest_band['banda']} solo captura {weakest_band['share_units_pct']:.1f}% del mercado."
         )
     if tipos_top:
         t0 = tipos_top[0]
@@ -676,7 +676,7 @@ def build_brand_dossier(
         for band in price_bands["bands"]:
             if float(band["market_mix_units_pct"]) >= 25 and float(band["share_units_pct"]) < share_units * 0.6:
                 conclusions["oportunidades"].append(
-                    f"Banda {band['banda']}: {band['share_units_pct']:.1f}% de share en unidades vs {share_units:.1f}% global — hueco de surtido"
+                    f"Gama {band['banda']}: {band['share_units_pct']:.1f}% de share en unidades vs {share_units:.1f}% global — hueco de surtido"
                 )
                 break
     worst_branch = min(branches, key=lambda b: float(b["share_in_branch_pct"])) if len(branches) > 1 else None
@@ -694,7 +694,7 @@ def build_brand_dossier(
         conclusions["acciones"].append(f"Ampliar surtido y exhibición en {opp['categoria']}")
     if price_bands:
         weak_band = min(price_bands["bands"], key=lambda b: float(b["share_units_pct"]))
-        conclusions["acciones"].append(f"Evaluar modelos para la banda {weak_band['banda']}")
+        conclusions["acciones"].append(f"Evaluar modelos para la gama {weak_band['banda']}")
     if worst_branch and float(worst_branch["share_in_branch_pct"]) < share_pvp * 0.5:
         conclusions["acciones"].append(f"Plan comercial específico en {worst_branch['sucursal']}")
     if not conclusions["acciones"]:

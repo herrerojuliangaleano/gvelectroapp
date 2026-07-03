@@ -3742,18 +3742,27 @@ export function SalesBICommercialPage() {
     const b0 = r.brand_mix[0];
     const l0 = r.line_mix[0];
     if (b0 && l0) out.overview.push(`${b0.name} lidera marcas (${(b0.participacion_pct || 0).toFixed(1)}%) y ${l0.name} es la categoría más fuerte (${(l0.participacion_pct || 0).toFixed(1)}%)`);
+    if (previousReport?.totals.unidades) {
+      const gu = ((t.unidades - previousReport.totals.unidades) / previousReport.totals.unidades) * 100;
+      out.overview.push(`${gu >= 0 ? 'Crecimiento' : 'Caída'} de ${Math.abs(gu).toFixed(1)}% en unidades vs el período comparado`);
+    }
 
     const top3 = r.brand_mix.slice(0, 3);
     if (top3.length === 3) {
       const conc = top3.reduce((acc, row) => acc + (row.participacion_pct || 0), 0);
       out.brands.push(`${top3.map((row) => row.name).join(', ')} concentran el ${conc.toFixed(0)}% de la venta`);
       out.brands.push(`Compiten ${r.brand_mix.length}+ marcas; mirá "Impacto en la empresa" para ver quién gana terreno`);
+      const cola = r.brand_mix.slice(10);
+      const colaPct = cola.reduce((acc, row) => acc + (row.participacion_pct || 0), 0);
+      if (cola.length) out.brands.push(`Oportunidad: las ${cola.length}+ marcas fuera del top 10 suman ${colaPct.toFixed(1)}% — revisar surtido de cola`);
     }
 
     if (l0) {
       out.lines.push(`${l0.name} pesa ${(l0.participacion_pct || 0).toFixed(1)}% del total`);
       const l2 = r.line_mix.slice(0, 2).reduce((acc, row) => acc + (row.participacion_pct || 0), 0);
       if (r.line_mix.length > 1) out.lines.push(`Las 2 primeras categorías explican el ${l2.toFixed(0)}% de la venta`);
+      const lUltima = r.line_mix[r.line_mix.length - 1];
+      if (lUltima && r.line_mix.length > 2) out.lines.push(`${lUltima.name} es la más chica (${(lUltima.participacion_pct || 0).toFixed(1)}%) — ¿falta surtido o no hay demanda?`);
     }
 
     const tp0 = (r.tipo_mix || [])[0];
@@ -3761,12 +3770,16 @@ export function SalesBICommercialPage() {
       out.tipos.push(`${tp0.name} manda: ${num(tp0.unidades)} unidades (${(tp0.participacion_pct || 0).toFixed(1)}% del total)`);
       const t5 = (r.tipo_mix || []).slice(0, 5).reduce((acc, row) => acc + (row.participacion_pct || 0), 0);
       out.tipos.push(`El top 5 de tipos concentra el ${t5.toFixed(0)}%; la cola larga son ${Math.max(0, (r.tipo_mix || []).length - 5)} tipos más`);
+      const flojos = (r.tipo_mix || []).filter((row) => (row.unidades || 0) <= 5).length;
+      if (flojos) out.tipos.push(`Atención: ${flojos} tipos venden 5 unidades o menos — revisar exhibición o discontinuar`);
     }
 
     const br = (branchesReport || r).branch_mix;
     if (br.length > 1) {
       out.branches.push(`${br[0].name} lidera con ${(br[0].participacion_pct || 0).toFixed(1)}% de la venta`);
       out.branches.push(`Brecha entre la mejor y la más floja: ${((br[0].participacion_pct || 0) - (br[br.length - 1].participacion_pct || 0)).toFixed(1)} pts`);
+      const ultima = br[br.length - 1];
+      if (ultima && br[0].total_vendido) out.branches.push(`${ultima.name} factura el ${(((ultima.total_vendido || 0) / br[0].total_vendido) * 100).toFixed(0)}% de lo que vende ${br[0].name} — mirá Oportunidades para el detalle`);
     }
 
     const prods = r.top_products || [];
@@ -3775,8 +3788,10 @@ export function SalesBICommercialPage() {
       out.products.push(`Los 10 productos top concentran el ${p10.toFixed(0)}% de la venta`);
       out.products.push(`#1: ${prods[0].producto} (${num(prods[0].unidades)} u)`);
     }
+    const exclusivos = (r.product_presence || []).filter((row) => row.is_exclusive).length;
+    if (exclusivos) out.products.push(`${exclusivos} productos se venden en UNA sola sucursal — oportunidad de distribución interna`);
     return out;
-  }, [brandsReport, branchesReport]);
+  }, [brandsReport, branchesReport, previousReport]);
 
   function handleTabChange(value: string) {
     const tab = value as CommercialTab;

@@ -214,15 +214,17 @@ export function BrandDossierView({
           brand_pvp: d.brand_pvp,
           brand_unidades: d.brand_unidades,
           share_pvp_pct: d.share_pvp_pct,
+          share_units_pct: d.market_unidades ? Number(((d.brand_unidades / d.market_unidades) * 100).toFixed(2)) : 0,
         }));
     }
-    const buckets = new Map<string, { brand_pvp: number; brand_unidades: number; market_pvp: number }>();
+    const buckets = new Map<string, { brand_pvp: number; brand_unidades: number; market_pvp: number; market_unidades: number }>();
     daily.forEach((d) => {
       const k = bucketOf(d.fecha, gran);
-      const acc = buckets.get(k) || { brand_pvp: 0, brand_unidades: 0, market_pvp: 0 };
+      const acc = buckets.get(k) || { brand_pvp: 0, brand_unidades: 0, market_pvp: 0, market_unidades: 0 };
       acc.brand_pvp += d.brand_pvp;
       acc.brand_unidades += d.brand_unidades;
       acc.market_pvp += d.market_pvp;
+      acc.market_unidades += d.market_unidades || 0;
       buckets.set(k, acc);
     });
     return Array.from(buckets.entries())
@@ -233,6 +235,7 @@ export function BrandDossierView({
         brand_pvp: Number(v.brand_pvp.toFixed(2)),
         brand_unidades: v.brand_unidades,
         share_pvp_pct: v.market_pvp ? Number(((v.brand_pvp / v.market_pvp) * 100).toFixed(2)) : 0,
+        share_units_pct: v.market_unidades ? Number(((v.brand_unidades / v.market_unidades) * 100).toFixed(2)) : 0,
       }));
   }, [dossier, gran, drill]);
 
@@ -340,9 +343,10 @@ export function BrandDossierView({
     list.push({ id: 'categorias', title: 'Participación por categoría' });
     if ((dossier.category_daily || []).length > 1) list.push({ id: 'categorias-evolucion', title: 'Evolución por categoría' });
     if (matriz.length >= 3) list.push({ id: 'oportunidad', title: 'Matriz de oportunidad' });
-    if (bands) list.push({ id: 'bandas', title: 'Bandas de precio' });
+    if (bands) list.push({ id: 'bandas', title: 'Gamas de precio' });
     list.push({ id: 'tipos', title: 'Tipos de producto' });
     list.push({ id: 'productos', title: 'Productos destacados' });
+    if ((dossier.product_branch_metrics || []).length) list.push({ id: 'producto-sucursal', title: 'Producto × punto de venta' });
     if (hasMovers) list.push({ id: 'movers', title: 'Dinámica de productos' });
     list.push({ id: 'sucursales', title: 'Presencia por sucursal' });
     list.push({ id: 'precios', title: 'Posicionamiento de precio' });
@@ -587,7 +591,7 @@ export function BrandDossierView({
                     <YAxis yAxisId="pvp" tickFormatter={compactMoney} tick={{ fill: '#B8C5DA', fontSize: 10 }} width={52} />
                     <YAxis yAxisId="share" orientation="right" tickFormatter={(v: number) => `${v}%`} tick={{ fill: '#B8C5DA', fontSize: 10 }} width={38} />
                     <Tooltip
-                      formatter={(value, name) => (name === 'Share %' ? [`${Number(value).toFixed(1)}%`, name] : [money(Number(value)), name])}
+                      formatter={(value, name) => (String(name).startsWith('Share') ? [`${Number(value).toFixed(1)}%`, name] : [money(Number(value)), name])}
                       contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE}
                     />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -605,7 +609,8 @@ export function BrandDossierView({
                       }}
                       isAnimationActive animationDuration={CHART_ANIM.duration}
                     />
-                    <Line yAxisId="share" dataKey="share_pvp_pct" name="Share %" stroke={POSITIVE} strokeWidth={2.5} dot={{ r: 3 }} />
+                    <Line yAxisId="share" dataKey="share_pvp_pct" name="Share $ %" stroke={POSITIVE} strokeWidth={2.5} dot={{ r: 3 }} />
+                    <Line yAxisId="share" dataKey="share_units_pct" name="Share unidades %" stroke="var(--chart-teal)" strokeWidth={2} strokeDasharray="5 4" dot={{ r: 2.5 }} />
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
@@ -807,7 +812,7 @@ export function BrandDossierView({
           {/* Bandas de precio */}
           {bands && (
             <Slide
-              title="Bandas de precio" takeaway={dossier.narratives?.bandas}
+              title="Gamas de precio" takeaway={dossier.narratives?.bandas}
               subtitle={`Entrada hasta ${money(bands.cortes.entrada_hasta)} · Media hasta ${money(bands.cortes.media_hasta)} · Premium el resto (terciles del mercado en unidades)`}
               refCb={refCb('bandas')}
             >
@@ -831,7 +836,7 @@ export function BrandDossierView({
                   </ResponsiveContainer>
                 </div>
                 <div className="space-y-2">
-                  <div className="mb-2 text-xs font-bold text-[color:var(--text-3)]">Share de {dossier.marca} dentro de cada banda</div>
+                  <div className="mb-2 text-xs font-bold text-[color:var(--text-3)]">Share de {dossier.marca} dentro de cada gama</div>
                   {bands.bands.map((b) => (
                     <div key={b.banda} className="rounded-xl bg-white/[0.03] px-3.5 py-3">
                       <div className="flex items-baseline justify-between">
@@ -849,7 +854,7 @@ export function BrandDossierView({
                     </div>
                   ))}
                   <p className="text-[11px] leading-5 text-[color:var(--text-3)]">
-                    La marquita blanca es el share global ({share.units_pct.toFixed(1)}%). Banda ámbar = la marca rinde por debajo de su promedio → hueco de surtido o precio.
+                    La marquita blanca es el share global ({share.units_pct.toFixed(1)}%). Gama en ámbar = la marca rinde por debajo de su promedio → hueco de surtido o precio.
                   </p>
                 </div>
               </div>
@@ -909,6 +914,51 @@ export function BrandDossierView({
             </div>
           </Slide>
 
+          {/* Producto × punto de venta */}
+          {(dossier.product_branch_metrics || []).length > 0 && (
+            <Slide title="Producto × punto de venta" subtitle={`Qué productos de ${dossier.marca} empujan cada sucursal · unidades y facturación`} refCb={refCb('producto-sucursal')}>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-[11px] uppercase tracking-wide text-[color:var(--text-3)]">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Producto</th>
+                      <th className="px-3 py-2 text-right">Total</th>
+                      {dossier.branches.slice(0, 4).map((b) => (
+                        <th key={b.sucursal} className="px-3 py-2 text-right">{b.sucursal}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(dossier.product_branch_metrics || []).slice(0, 8).map((row) => (
+                      <tr key={`${row.sku}-${row.producto}`} className="border-t border-white/5 align-top">
+                        <td className="max-w-[340px] px-3 py-2.5">
+                          <div className="truncate font-bold text-[color:var(--text)]">{row.producto}</div>
+                          <div className="text-[11px] text-[color:var(--text-3)]">{row.tipo_producto || row.sku}</div>
+                        </td>
+                        <td className="px-3 py-2.5 text-right tabular-nums">
+                          <div className="font-black text-[color:var(--text)]">{num(row.total_unidades)} u</div>
+                          <div className="text-[11px] text-[color:var(--text-3)]">{money(row.total_vendido)}</div>
+                        </td>
+                        {dossier.branches.slice(0, 4).map((b) => {
+                          const cell = row.branches?.[b.sucursal];
+                          return (
+                            <td key={b.sucursal} className="px-3 py-2.5 text-right tabular-nums">
+                              <div className={cn('font-bold', cell?.unidades ? 'text-[color:var(--text)]' : 'text-[color:var(--text-3)]')}>{num(cell?.unidades || 0)} u</div>
+                              <div className="text-[11px] text-[color:var(--text-3)]">{cell?.total_vendido ? money(cell.total_vendido) : '—'}</div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[11px] leading-5 text-[color:var(--text-3)]">
+                Lectura para la visita: muestra con qué modelos la marca empuja cada punto de venta y dónde falta rotación.
+              </p>
+            </Slide>
+          )}
+
           {/* Dinámica de productos (movers, solo con período anterior) */}
           {hasMovers && (
             <Slide title="Dinámica de productos" takeaway={dossier.narratives?.movers} subtitle="Productos que más subieron y bajaron en unidades vs el período anterior" refCb={refCb('movers')}>
@@ -954,30 +1004,64 @@ export function BrandDossierView({
           )}
 
           {/* Sucursales */}
-          <Slide title="Presencia por sucursal" takeaway={dossier.narratives?.sucursales} subtitle={`Peso de ${dossier.marca} dentro de cada sucursal`} refCb={refCb('sucursales')}>
+          <Slide title="Presencia por sucursal" subtitle={`Peso de ${dossier.marca} dentro de cada punto de venta · facturación y unidades`} takeaway={dossier.narratives?.sucursales} refCb={refCb('sucursales')}>
             <div className="grid gap-4 xl:grid-cols-2">
-              <ResponsiveContainer width="100%" height={Math.max(240, dossier.branches.length * 40)}>
-                <BarChart data={dossier.branches} layout="vertical" margin={{ top: 4, right: 60, left: 8, bottom: 4 }}>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgba(148,163,184,0.14)" />
-                  <XAxis type="number" hide />
-                  <YAxis type="category" dataKey="sucursal" width={120} tick={{ fill: '#B8C5DA', fontSize: 11 }} interval={0} />
-                  <Tooltip formatter={(value) => [`${Number(value).toFixed(1)}%`, 'Share en la sucursal']} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE} cursor={{ fill: 'rgba(96,165,250,0.10)' }} />
-                  <Bar dataKey="share_in_branch_pct" fill="var(--chart-teal)" radius={[0, 6, 6, 0]} isAnimationActive animationDuration={CHART_ANIM.duration}>
-                    <LabelList dataKey="share_in_branch_pct" position="right" style={{ fill: '#B8C5DA', fontSize: 10 }} formatter={(v) => `${Number(v).toFixed(1)}%`} />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-              <div className="space-y-2">
-                {dossier.branches.map((b) => (
-                  <div key={b.sucursal} className="flex items-center justify-between rounded-xl bg-white/[0.03] px-3.5 py-2.5">
-                    <div>
-                      <div className="text-sm font-black text-[color:var(--text)]">{b.sucursal}</div>
-                      <div className="text-[11px] text-[color:var(--text-3)]">{num(b.brand_unidades)} u · {b.brand_mix_pct.toFixed(1)}% de las ventas de la marca</div>
-                    </div>
-                    <div className="text-right text-sm font-black tabular-nums text-[color:var(--text)]">{money(b.brand_pvp)}</div>
-                  </div>
-                ))}
+              <div>
+                <div className="mb-2 text-xs font-bold text-[color:var(--text-3)]">Share en facturación ($)</div>
+                <ResponsiveContainer width="100%" height={Math.max(220, dossier.branches.length * 38)}>
+                  <BarChart data={dossier.branches} layout="vertical" margin={{ top: 4, right: 60, left: 8, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgba(148,163,184,0.14)" />
+                    <XAxis type="number" hide />
+                    <YAxis type="category" dataKey="sucursal" width={110} tick={{ fill: '#B8C5DA', fontSize: 11 }} interval={0} />
+                    <Tooltip formatter={(value) => [`${Number(value).toFixed(1)}%`, 'Share $ en la sucursal']} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE} cursor={{ fill: 'rgba(96,165,250,0.10)' }} />
+                    <Bar dataKey="share_in_branch_pct" fill={BRAND_COLOR} radius={[0, 6, 6, 0]} isAnimationActive animationDuration={CHART_ANIM.duration}>
+                      <LabelList dataKey="share_in_branch_pct" position="right" style={{ fill: '#B8C5DA', fontSize: 10 }} formatter={(v) => `${Number(v).toFixed(1)}%`} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
+              <div>
+                <div className="mb-2 text-xs font-bold text-[color:var(--text-3)]">Share en unidades</div>
+                <ResponsiveContainer width="100%" height={Math.max(220, dossier.branches.length * 38)}>
+                  <BarChart data={dossier.branches} layout="vertical" margin={{ top: 4, right: 60, left: 8, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgba(148,163,184,0.14)" />
+                    <XAxis type="number" hide />
+                    <YAxis type="category" dataKey="sucursal" width={110} tick={{ fill: '#B8C5DA', fontSize: 11 }} interval={0} />
+                    <Tooltip formatter={(value) => [`${Number(value).toFixed(1)}%`, 'Share unidades en la sucursal']} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE} cursor={{ fill: 'rgba(96,165,250,0.10)' }} />
+                    <Bar dataKey="share_units_in_branch_pct" fill="var(--chart-teal)" radius={[0, 6, 6, 0]} isAnimationActive animationDuration={CHART_ANIM.duration}>
+                      <LabelList dataKey="share_units_in_branch_pct" position="right" style={{ fill: '#B8C5DA', fontSize: 10 }} formatter={(v) => `${Number(v).toFixed(1)}%`} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-[11px] uppercase tracking-wide text-[color:var(--text-3)]">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Sucursal</th>
+                    <th className="px-3 py-2 text-right">Marca u</th>
+                    <th className="px-3 py-2 text-right">Total u</th>
+                    <th className="px-3 py-2 text-right">Share u</th>
+                    <th className="px-3 py-2 text-right">Marca $</th>
+                    <th className="px-3 py-2 text-right">Share $</th>
+                    <th className="px-3 py-2 text-right">Mix marca</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dossier.branches.map((b) => (
+                    <tr key={b.sucursal} className="border-t border-white/5">
+                      <td className="px-3 py-2 font-bold text-[color:var(--text)]">{b.sucursal}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{num(b.brand_unidades)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-[color:var(--text-2)]">{b.market_unidades != null ? num(b.market_unidades) : '—'}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{(b.share_units_in_branch_pct ?? 0).toFixed(1)}%</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{money(b.brand_pvp)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{b.share_in_branch_pct.toFixed(1)}%</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-[color:var(--text-2)]">{b.brand_mix_pct.toFixed(1)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </Slide>
 
