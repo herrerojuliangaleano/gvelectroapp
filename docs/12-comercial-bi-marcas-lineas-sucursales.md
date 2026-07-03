@@ -309,6 +309,23 @@ Importante: esto NO crea aliases en `sales_product_aliases` ni modifica la capa
 operativa de planillas diarias. Se guarda en `sales_bi_commercial_corrections`
 y solo aplica a `sales_bi_commercial_records`.
 
+### Resolucion por lote visible
+
+La pestana `Productos` permite abrir `Resolver lote visible` sobre los primeros
+8 pendientes mostrados. El flujo es el mismo que la resolucion individual, pero
+en una sola pantalla:
+
+- cada fila mantiene el producto importado desde `Ventas Vs. Costos`;
+- cada fila permite buscar y elegir su producto de catalogo;
+- si no existe producto maestro, la fila permite corregir SKU, marca, tipo/linea
+  y descripcion;
+- solo se guardan las filas donde el usuario eligio producto o modifico campos;
+- al confirmar, se crean las correcciones reutilizables y se ejecuta un unico
+  rematch comercial.
+
+Este lote no es una correccion masiva con el mismo destino para todos. Cada
+pendiente puede quedar vinculado a un producto distinto.
+
 ## Dashboards
 
 ### Marcas

@@ -1952,6 +1952,41 @@ type CommercialCorrectionForm = {
   note: string;
 };
 
+type CommercialBatchRow = {
+  key: string;
+  item: SalesBICommercialUnmatchedProduct;
+  query: string;
+  products: ProductInfo[];
+  selectedProduct: ProductInfo | null;
+  loading: boolean;
+  touched: boolean;
+  form: CommercialCorrectionForm;
+};
+
+function commercialUnmatchedKey(item: SalesBICommercialUnmatchedProduct) {
+  return `${item.sku_normalized || 'sku'}::${item.descripcion_normalized || item.descripcion}`;
+}
+
+function correctionFormFromCommercialItem(item: SalesBICommercialUnmatchedProduct): CommercialCorrectionForm {
+  return {
+    corrected_sku: looksMissingSku(item.sku) ? '' : item.sku,
+    corrected_description: item.descripcion || '',
+    corrected_brand: item.marca || '',
+    corrected_type: item.tipo_producto || '',
+    note: '',
+  };
+}
+
+function correctionFormFromProduct(product: ProductInfo, current: CommercialCorrectionForm): CommercialCorrectionForm {
+  return {
+    ...current,
+    corrected_sku: product.sku || current.corrected_sku,
+    corrected_description: product.descripcion || product.producto || current.corrected_description,
+    corrected_brand: product.marca || current.corrected_brand,
+    corrected_type: product.tipo || current.corrected_type,
+  };
+}
+
 function CommercialUnmatchedPanel({ onResolved }: { onResolved: () => Promise<void> | void }) {
   const [items, setItems] = useState<SalesBICommercialUnmatchedProduct[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1963,6 +1998,10 @@ function CommercialUnmatchedPanel({ onResolved }: { onResolved: () => Promise<vo
   const [productLoading, setProductLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchRows, setBatchRows] = useState<CommercialBatchRow[]>([]);
+  const [batchSaving, setBatchSaving] = useState(false);
+  const [batchSearching, setBatchSearching] = useState(false);
   const [form, setForm] = useState<CommercialCorrectionForm>({
     corrected_sku: '',
     corrected_description: '',
@@ -1995,14 +2034,36 @@ function CommercialUnmatchedPanel({ onResolved }: { onResolved: () => Promise<vo
     setSelectedProduct(null);
     setProducts([]);
     setProductQuery([item.descripcion, item.sku].filter(Boolean).join(' '));
-    setForm({
-      corrected_sku: looksMissingSku(item.sku) ? '' : item.sku,
-      corrected_description: item.descripcion || '',
-      corrected_brand: item.marca || '',
-      corrected_type: item.tipo_producto || '',
-      note: '',
-    });
+    setForm(correctionFormFromCommercialItem(item));
     setMessage('');
+  }
+
+  function openBatch() {
+    const rows = items.slice(0, 8).map((item) => ({
+      key: commercialUnmatchedKey(item),
+      item,
+      query: [item.descripcion, looksMissingSku(item.sku) ? '' : item.sku].filter(Boolean).join(' '),
+      products: [],
+      selectedProduct: null,
+      loading: false,
+      touched: false,
+      form: correctionFormFromCommercialItem(item),
+    }));
+    setBatchRows(rows);
+    setBatchOpen(true);
+    setMessage('');
+  }
+
+  function updateBatchRow(key: string, patch: Partial<CommercialBatchRow>) {
+    setBatchRows((current) => current.map((row) => (row.key === key ? { ...row, ...patch } : row)));
+  }
+
+  function updateBatchForm(key: string, patch: Partial<CommercialCorrectionForm>) {
+    setBatchRows((current) => current.map((row) => (
+      row.key === key
+        ? { ...row, touched: true, form: { ...row.form, ...patch } }
+        : row
+    )));
   }
 
   async function runProductSearch() {
@@ -2021,13 +2082,97 @@ function CommercialUnmatchedPanel({ onResolved }: { onResolved: () => Promise<vo
 
   function chooseProduct(product: ProductInfo) {
     setSelectedProduct(product);
-    setForm((current) => ({
-      ...current,
-      corrected_sku: product.sku || current.corrected_sku,
-      corrected_description: product.descripcion || product.producto || current.corrected_description,
-      corrected_brand: product.marca || current.corrected_brand,
-      corrected_type: product.tipo || current.corrected_type,
-    }));
+    setForm((current) => correctionFormFromProduct(product, current));
+  }
+
+  async function runBatchProductSearch(key: string) {
+    const row = batchRows.find((candidate) => candidate.key === key);
+    if (!row) return;
+    const query = row.query.trim() || row.item.descripcion || row.item.sku || '';
+    if (!query) return;
+    updateBatchRow(key, { loading: true });
+    try {
+      const found = await searchProducts(query, 8);
+      updateBatchRow(key, { products: found, loading: false });
+    } catch (err) {
+      updateBatchRow(key, { loading: false });
+      setMessage(err instanceof Error ? err.message : 'No se pudo buscar en el catalogo.');
+    }
+  }
+
+  async function searchAllBatchProducts() {
+    if (batchRows.length === 0) return;
+    setBatchSearching(true);
+    setMessage('');
+    try {
+      const results = await Promise.all(batchRows.map(async (row) => {
+        const query = row.query.trim() || row.item.descripcion || row.item.sku || '';
+        if (!query) return { key: row.key, products: [] as ProductInfo[] };
+        const found = await searchProducts(query, 6);
+        return { key: row.key, products: found };
+      }));
+      setBatchRows((current) => current.map((row) => {
+        const result = results.find((candidate) => candidate.key === row.key);
+        return result ? { ...row, products: result.products } : row;
+      }));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'No se pudieron buscar sugerencias para el lote.');
+    } finally {
+      setBatchSearching(false);
+    }
+  }
+
+  function chooseBatchProduct(key: string, product: ProductInfo) {
+    setBatchRows((current) => current.map((row) => (
+      row.key === key
+        ? {
+          ...row,
+          selectedProduct: product,
+          touched: true,
+          form: correctionFormFromProduct(product, row.form),
+        }
+        : row
+    )));
+  }
+
+  async function saveBatchCorrections() {
+    const rowsToSave = batchRows.filter((row) => row.touched && (
+      row.selectedProduct
+      || row.form.corrected_sku.trim()
+      || row.form.corrected_description.trim()
+      || row.form.corrected_brand.trim()
+      || row.form.corrected_type.trim()
+    ));
+    if (rowsToSave.length === 0) {
+      setMessage('Elegí al menos un producto o modifica una correccion antes de guardar el lote.');
+      return;
+    }
+    setBatchSaving(true);
+    setMessage('');
+    try {
+      await Promise.all(rowsToSave.map((row) => createSalesBICommercialCorrection({
+        match_sku: row.item.sku,
+        match_description: row.item.descripcion,
+        match_brand: row.item.marca,
+        match_type: row.item.tipo_producto,
+        corrected_sku: row.form.corrected_sku.trim(),
+        corrected_description: row.form.corrected_description.trim(),
+        corrected_brand: row.form.corrected_brand.trim(),
+        corrected_type: row.form.corrected_type.trim(),
+        product_id: row.selectedProduct?.id ?? null,
+        note: row.form.note.trim(),
+      })));
+      const result = await rematchSalesBICommercial();
+      setBatchOpen(false);
+      setBatchRows([]);
+      setMessage(`Lote guardado: ${num(rowsToSave.length)} correcciones. Quedan ${num(result.unmatched)} sin vincular.`);
+      await load();
+      await onResolved();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'No se pudo guardar el lote.');
+    } finally {
+      setBatchSaving(false);
+    }
   }
 
   async function saveCorrection() {
@@ -2070,6 +2215,8 @@ function CommercialUnmatchedPanel({ onResolved }: { onResolved: () => Promise<vo
     }
   }
 
+  const batchReadyCount = batchRows.filter((row) => row.touched).length;
+
   if (!loading && items.length === 0 && !message) return null;
 
   return (
@@ -2085,7 +2232,18 @@ function CommercialUnmatchedPanel({ onResolved }: { onResolved: () => Promise<vo
             Podes vincular al catalogo o solo corregir marca, tipo, SKU y descripcion para que el BI quede limpio.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row">
+          {items.length > 0 && (
+            <button
+              type="button"
+              onClick={openBatch}
+              disabled={!canManageCorrections}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-amber-400 px-3 text-sm font-black text-slate-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Package size={15} />
+              Resolver lote visible
+            </button>
+          )}
           <input
             value={q}
             onChange={(event) => setQ(event.target.value)}
@@ -2147,6 +2305,182 @@ function CommercialUnmatchedPanel({ onResolved }: { onResolved: () => Promise<vo
       {!canManageCorrections && items.length > 0 && (
         <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-amber-100">
           Tu usuario puede ver estos pendientes, pero necesita el permiso sales_bi.aliases.manage para resolverlos.
+        </div>
+      )}
+
+      {batchOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-3 sm:p-4" onClick={() => setBatchOpen(false)}>
+          <div
+            className="flex max-h-[94vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl border border-[color:var(--border)] bg-[color:var(--surface)] shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="border-b border-white/10 p-4 sm:p-5">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <h3 className="text-xl font-black text-[color:var(--text)]">Resolver lote comercial</h3>
+                  <p className="mt-1 max-w-3xl text-sm text-[color:var(--text-2)]">
+                    Vincula cada pendiente con su producto correcto o corrige sus datos. Se guardan solo las filas donde elegiste producto o editaste campos.
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    <Pill tone="amber">{num(batchRows.length)} visibles</Pill>
+                    <Pill tone={batchReadyCount > 0 ? 'positive' : 'default'}>{num(batchReadyCount)} listos</Pill>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={searchAllBatchProducts}
+                    disabled={batchSearching || batchRows.length === 0}
+                    className="inline-flex h-10 items-center gap-2 rounded-xl border border-white/15 px-3 text-sm font-black text-[color:var(--text)] hover:bg-white/10 disabled:opacity-50"
+                  >
+                    {batchSearching ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+                    Buscar sugeridos
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveBatchCorrections}
+                    disabled={batchSaving || batchReadyCount === 0}
+                    className="inline-flex h-10 items-center gap-2 rounded-xl bg-[color:var(--chart-blue)] px-4 text-sm font-black text-white hover:brightness-110 disabled:opacity-50"
+                  >
+                    {batchSaving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                    Guardar resueltos ({num(batchReadyCount)})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBatchOpen(false)}
+                    className="h-10 rounded-xl border border-white/15 px-3 text-sm font-bold text-[color:var(--text-2)] hover:bg-white/10"
+                  >
+                    Cerrar
+                  </button>
+                </div>
+              </div>
+              {message && (
+                <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs font-semibold text-[color:var(--text-2)]">
+                  {message}
+                </div>
+              )}
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-auto p-3 sm:p-5">
+              <div className="space-y-3">
+                {batchRows.map((row, index) => (
+                  <article key={row.key} className={cn(
+                    'rounded-2xl border bg-white/[0.03] p-3 transition sm:p-4',
+                    row.touched ? 'border-emerald-400/35' : 'border-white/10',
+                  )}>
+                    <div className="grid gap-3 xl:grid-cols-[minmax(260px,0.8fr)_minmax(420px,1.2fr)]">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Pill tone={row.touched ? 'positive' : 'default'}>#{index + 1}</Pill>
+                          <Pill tone={looksMissingSku(row.item.sku) ? 'amber' : 'default'}>{row.item.sku || 'sin sku'}</Pill>
+                          <Pill tone="blue">{row.item.marca || 'sin marca'}</Pill>
+                          <Pill>{row.item.tipo_producto || 'sin tipo'}</Pill>
+                        </div>
+                        <div className="mt-2 text-sm font-black text-[color:var(--text)]">
+                          {row.item.descripcion || 'Sin descripcion'}
+                        </div>
+                        <div className="mt-1 text-[11px] leading-5 text-[color:var(--text-3)]">
+                          {row.item.sucursales.join(', ') || 'Sin sucursal'} - {num(row.item.lineas)} lineas - {num(row.item.unidades)} u - {money(row.item.total_vendido)}
+                        </div>
+                      </div>
+
+                      <div className="min-w-0 space-y-3">
+                        <div className="grid gap-2 md:grid-cols-[1fr_auto]">
+                          <input
+                            value={row.query}
+                            onChange={(event) => updateBatchRow(row.key, { query: event.target.value })}
+                            onKeyDown={(event) => { if (event.key === 'Enter') runBatchProductSearch(row.key); }}
+                            className="h-10 min-w-0 rounded-xl border border-white/15 bg-slate-950/40 px-3 text-sm text-white outline-none focus:border-[color:var(--chart-blue)]"
+                            placeholder="Buscar producto del catalogo"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => runBatchProductSearch(row.key)}
+                            disabled={row.loading}
+                            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-white/15 px-3 text-sm font-bold text-[color:var(--text)] hover:bg-white/10 disabled:opacity-50"
+                          >
+                            {row.loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+                            Buscar
+                          </button>
+                        </div>
+
+                        {row.selectedProduct && (
+                          <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-sm">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="line-clamp-1 font-black text-emerald-100">{row.selectedProduct.descripcion || row.selectedProduct.producto}</div>
+                                <div className="text-xs text-emerald-200/80">{row.selectedProduct.sku} - {row.selectedProduct.marca} - {row.selectedProduct.tipo}</div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => updateBatchRow(row.key, { selectedProduct: null, touched: false, form: correctionFormFromCommercialItem(row.item) })}
+                                className="rounded-lg border border-emerald-300/30 px-2 py-1 text-xs font-bold text-emerald-100 hover:bg-emerald-300/10"
+                              >
+                                Quitar
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {row.products.length > 0 && (
+                          <div className="grid gap-2 md:grid-cols-2">
+                            {row.products.slice(0, 4).map((product) => {
+                              const active = row.selectedProduct?.id === product.id;
+                              return (
+                                <button
+                                  key={product.id}
+                                  type="button"
+                                  onClick={() => chooseBatchProduct(row.key, product)}
+                                  className={cn(
+                                    'rounded-xl border p-2.5 text-left transition',
+                                    active ? 'border-[color:var(--chart-blue)] bg-blue-500/10' : 'border-white/10 bg-[color:var(--surface-2)] hover:border-[color:var(--chart-blue)]/50',
+                                  )}
+                                >
+                                  <div className="line-clamp-1 text-xs font-black text-[color:var(--text)]">{product.descripcion || product.producto}</div>
+                                  <div className="mt-1 flex flex-wrap gap-1 text-[11px] text-[color:var(--text-3)]">
+                                    <span className="font-mono text-blue-200">{product.sku}</span>
+                                    <span>{product.marca}</span>
+                                    <span>{product.tipo}</span>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        <div className="grid gap-2 md:grid-cols-[130px_1fr_1fr]">
+                          <input
+                            value={row.form.corrected_sku}
+                            onChange={(event) => updateBatchForm(row.key, { corrected_sku: event.target.value })}
+                            className="h-9 rounded-xl border border-white/15 bg-slate-950/40 px-3 text-xs font-semibold text-white outline-none focus:border-[color:var(--chart-blue)]"
+                            placeholder="SKU"
+                          />
+                          <input
+                            value={row.form.corrected_brand}
+                            onChange={(event) => updateBatchForm(row.key, { corrected_brand: event.target.value })}
+                            className="h-9 rounded-xl border border-white/15 bg-slate-950/40 px-3 text-xs font-semibold text-white outline-none focus:border-[color:var(--chart-blue)]"
+                            placeholder="Marca"
+                          />
+                          <input
+                            value={row.form.corrected_type}
+                            onChange={(event) => updateBatchForm(row.key, { corrected_type: event.target.value })}
+                            className="h-9 rounded-xl border border-white/15 bg-slate-950/40 px-3 text-xs font-semibold text-white outline-none focus:border-[color:var(--chart-blue)]"
+                            placeholder="Tipo / linea"
+                          />
+                        </div>
+                        <input
+                          value={row.form.corrected_description}
+                          onChange={(event) => updateBatchForm(row.key, { corrected_description: event.target.value })}
+                          className="h-9 w-full rounded-xl border border-white/15 bg-slate-950/40 px-3 text-xs font-semibold text-white outline-none focus:border-[color:var(--chart-blue)]"
+                          placeholder="Descripcion corregida"
+                        />
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
