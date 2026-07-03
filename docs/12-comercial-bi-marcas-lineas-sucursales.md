@@ -110,13 +110,18 @@ Exportaciones del informe de marca:
   resumen ejecutivo, evolucion, ranking competitivo, comparacion con
   competidores, categorias, bandas de precio cuando existan, productos
   destacados, sucursales y conclusiones.
+  Como PowerPoint no conserva el hover de la app, los graficos editables deben
+  mostrar los datos criticos en la propia slide: etiquetas visibles, tablas de
+  datos en tendencias y bloques de lectura con ultimo valor, pico, piso y share.
 - `PowerPoint visual`: captura las secciones del dashboard como imagen y las
   inserta en slides. Sirve cuando se quiere conservar el aspecto exacto de la
   pantalla, pero los graficos no quedan editables.
 
 Limitacion: PowerPoint no conserva interacciones web como hover, tooltips,
 drill-down o filtros por click. Para eso la fuente de verdad sigue siendo el
-dashboard de la app.
+dashboard de la app. Si se necesita una experiencia realmente interactiva fuera
+del dashboard, el siguiente paso recomendado es sumar una exportacion Excel
+nativa con tablas dinamicas/graficos editables, separada del PPT de reunion.
 
 ## Fase 1 - estabilizacion de metricas y lectura visual
 

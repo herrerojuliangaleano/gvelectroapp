@@ -67,6 +67,15 @@ function chartData(name: string, labels: string[], values: number[]) {
   return [{ name, labels, values }];
 }
 
+function valueAt<T>(rows: T[], pick: (row: T) => number, mode: 'max' | 'min'): T | null {
+  if (!rows.length) return null;
+  return rows.reduce((best, row) => {
+    const current = pick(row);
+    const bestValue = pick(best);
+    return mode === 'max' ? (current > bestValue ? row : best) : (current < bestValue ? row : best);
+  }, rows[0]);
+}
+
 function textCell(text: string, bold = false, color = INK, fill = 'FFFFFF') {
   return {
     text,
@@ -133,6 +142,9 @@ function addChart(slide: any, type: string, data: any[], options: Record<string,
     valAxisLabelColor: MUTED,
     valGridLine: { color: 'E2E8F0', transparency: 15, pt: 0.5 },
     chartColors: COLORS,
+    dataLabelFontFace: FONT,
+    dataLabelFontSize: 7,
+    dataLabelColor: INK,
     ...options,
   });
 }
@@ -197,7 +209,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
   cover.addText('INFORME COMERCIAL EDITABLE', { x: 0.75, y: 1.55, w: 9.5, h: 0.32, fontFace: FONT, fontSize: 13, bold: true, color: '93C5FD', charSpacing: 2.5, margin: 0 });
   cover.addText(dossier.marca, { x: 0.75, y: 2.05, w: 11.7, h: 0.95, fontFace: FONT, fontSize: 42, bold: true, color: 'FFFFFF', margin: 0, fit: 'shrink' });
   cover.addText(period, { x: 0.78, y: 3.08, w: 8.5, h: 0.35, fontFace: FONT, fontSize: 15, color: 'CBD5E1', margin: 0 });
-  cover.addText('Fuente: Ventas Vs. Costos · gráficos y tablas editables en PowerPoint', { x: 0.78, y: 6.75, w: 9.5, h: 0.28, fontFace: FONT, fontSize: 9, color: 'CBD5E1', margin: 0 });
+  cover.addText('Fuente: Ventas Vs. Costos · gráficos editables con datos visibles para lectura sin hover', { x: 0.78, y: 6.75, w: 9.9, h: 0.28, fontFace: FONT, fontSize: 9, color: 'CBD5E1', margin: 0 });
   cover.addShape('roundRect', { x: 9.75, y: 1.55, w: 2.5, h: 2.5, rectRadius: 0.18, fill: { color: '1E3A8A' }, line: { color: '60A5FA', pt: 1.2 } });
   cover.addText('GV\nElectro', { x: 10.12, y: 2.05, w: 1.75, h: 0.95, fontFace: FONT, fontSize: 22, bold: true, color: 'FFFFFF', align: 'center', margin: 0 });
   page.value += 1;
@@ -225,20 +237,36 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
   const evolution = addBase('Evolución de ventas', 'Facturación de la marca contra el mercado');
   const monthly = dossier.monthly_series.slice(-12);
   const evoLabels = monthly.map((row) => monthLabel(row.mes));
+  const latestMonth = monthly.length ? monthly[monthly.length - 1] : null;
+  const peakMonth = valueAt(monthly, (row) => row.brand_pvp, 'max');
+  const lowMonth = valueAt(monthly, (row) => row.brand_pvp, 'min');
   addChart(evolution, 'line', [
     { name: dossier.marca, labels: evoLabels, values: monthly.map((row) => row.brand_pvp) },
     { name: 'Mercado total', labels: evoLabels, values: monthly.map((row) => row.market_pvp) },
   ], {
-    x: 0.55, y: 1.15, w: 7.55, h: 4.8,
+    x: 0.55, y: 1.15, w: 7.35, h: 4.65,
     catAxisLabelRotate: 45,
     valAxisLabelFormatCode: '$ #,##0',
     lineSize: 2.5,
     showMarker: true,
+    showDataTable: true,
+    showDataTableKeys: true,
+    showDataTableHorzBorder: true,
+    showDataTableVertBorder: false,
+    dataTableFontSize: 6,
+    dataTableFormatCode: '$ #,##0',
   });
   addTable(evolution, [
+    ['Lectura del grafico', 'Valor'],
+    ['Ultimo mes', latestMonth ? `${monthLabel(latestMonth.mes)} · ${compactMoney(latestMonth.brand_pvp)}` : 's/d'],
+    ['Pico marca', peakMonth ? `${monthLabel(peakMonth.mes)} · ${compactMoney(peakMonth.brand_pvp)}` : 's/d'],
+    ['Piso marca', lowMonth ? `${monthLabel(lowMonth.mes)} · ${compactMoney(lowMonth.brand_pvp)}` : 's/d'],
+    ['Share final', latestMonth ? pct(latestMonth.share_pvp_pct) : 's/d'],
+  ], 8.15, 1.15, 4.45, 1.85, [1.45, 3.0]);
+  addTable(evolution, [
     ['Mes', 'Marca', 'Mercado', 'Share'],
-    ...monthly.slice(-8).map((row) => [monthLabel(row.mes), compactMoney(row.brand_pvp), compactMoney(row.market_pvp), pct(row.share_pvp_pct)]),
-  ], 8.35, 1.15, 4.15, 4.8, [0.85, 1.1, 1.2, 1]);
+    ...monthly.slice(-6).map((row) => [monthLabel(row.mes), compactMoney(row.brand_pvp), compactMoney(row.market_pvp), pct(row.share_pvp_pct)]),
+  ], 8.15, 3.15, 4.45, 2.95, [0.8, 1.1, 1.2, 0.85]);
   addTakeaway(evolution, dossier.narratives?.evolucion);
 
   const ranking = addBase('Ranking competitivo', `${dossier.marca} frente al resto de marcas`);
@@ -249,9 +277,12 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
     showLegend: false,
     valAxisLabelFormatCode: '$ #,##0',
     catAxisLabelFontSize: 7,
+    showValue: true,
+    dataLabelFormatCode: '$ #,##0',
+    dataLabelPosition: 'outEnd',
   });
   addTable(ranking, [
-    ['Marca', 'Facturación', 'Unidades', 'SKUs', 'Share'],
+    ['Marca', 'Facturación', 'Unidades', 'Productos', 'Share'],
     ...rankRows.map((row) => [row.name, compactMoney(row.total_vendido), num(row.unidades), num(row.productos), pct(row.participacion_pct)]),
   ], 6.55, 1.1, 6.15, 5.2, [1.85, 1.25, 0.85, 0.75, 0.9]);
   addTakeaway(ranking, dossier.narratives?.competencia);
@@ -268,6 +299,12 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
       valAxisLabelFormatCode: '$ #,##0',
       lineSize: 2.25,
       showMarker: true,
+      showDataTable: true,
+      showDataTableKeys: true,
+      showDataTableHorzBorder: true,
+      showDataTableVertBorder: false,
+      dataTableFontSize: 6,
+      dataTableFormatCode: '$ #,##0',
     });
     const duelRows = [dossier.marca, ...competitors]
       .map((name) => dossier.ranking.find((row) => row.name === name))
@@ -286,6 +323,9 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
     barDir: 'bar',
     valAxisLabelFormatCode: '0.0%',
     showLegend: false,
+    showValue: true,
+    dataLabelFormatCode: '0.0%',
+    dataLabelPosition: 'outEnd',
   });
   addTable(cats, [
     ['Categoría', 'Facturación marca', 'Share', 'Rank', 'Líder', 'Índice'],
@@ -310,6 +350,9 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
       x: 0.55, y: 1.1, w: 6.1, h: 4.8,
       barDir: 'col',
       valAxisLabelFormatCode: '0.0%',
+      showValue: true,
+      dataLabelFormatCode: '0.0%',
+      dataLabelPosition: 'outEnd',
     });
     addTable(bands, [
       ['Banda', `Unid. ${dossier.marca}`, 'Share unid.', 'Facturación'],
@@ -339,6 +382,9 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
     barDir: 'bar',
     showLegend: false,
     valAxisLabelFormatCode: '$ #,##0',
+    showValue: true,
+    dataLabelFormatCode: '$ #,##0',
+    dataLabelPosition: 'outEnd',
   });
   addTable(branches, [
     ['Sucursal', 'Facturación', 'Unidades', 'Share suc.', 'Mix marca'],
