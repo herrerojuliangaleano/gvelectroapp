@@ -299,8 +299,10 @@ comercial.
 La regla de resolucion es propia de esta capa:
 
 - Si existe producto en el catalogo, se vincula con `product_id`.
-- Al vincular con producto, el BI toma del catalogo el SKU, marca, tipo y
-  descripcion, salvo que el usuario escriba una correccion manual.
+- Al vincular con producto, el BI toma del catalogo el SKU, marca y tipo/linea
+  para evitar que queden placeholders del Excel como `#N/A` o
+  `SKU NO ENCONTRADO`. La descripcion importada se mantiene salvo que el
+  usuario escriba una correccion manual.
 - Si todavia no existe producto maestro, se puede guardar una correccion manual
   de marca, tipo/linea, SKU y descripcion.
 - Luego se ejecuta rematch sobre los registros comerciales activos.

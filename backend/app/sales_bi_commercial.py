@@ -198,11 +198,19 @@ def _apply_commercial_match(
         descripcion = corrected_desc or str(product.descripcion or "") or rec.get("descripcion_raw") or ""
         marca = corrected_brand or str(product.marca or "") or rec.get("marca_raw") or ""
         tipo_producto = corrected_type or str(product.tipo or "") or rec.get("tipo_raw") or ""
+    elif product:
+        # Si el catalogo encontro el producto, sus dimensiones limpias son la
+        # fuente confiable para BI. El Excel historico puede traer "#N/A" o
+        # "SKU no encontrado" aunque el producto ya este resuelto.
+        sku = corrected_sku or str(product.sku or "") or rec.get("sku_raw") or ""
+        descripcion = corrected_desc or rec.get("descripcion_raw") or str(product.descripcion or "") or ""
+        marca = corrected_brand or str(product.marca or "") or rec.get("marca_raw") or ""
+        tipo_producto = corrected_type or str(product.tipo or "") or rec.get("tipo_raw") or ""
     else:
-        sku = corrected_sku or rec.get("sku_raw") or (str(product.sku or "") if product else "")
-        descripcion = corrected_desc or rec.get("descripcion_raw") or (str(product.descripcion or "") if product else "")
-        marca = corrected_brand or rec.get("marca_raw") or (str(product.marca or "") if product else "")
-        tipo_producto = corrected_type or rec.get("tipo_raw") or (str(product.tipo or "") if product else "")
+        sku = corrected_sku or rec.get("sku_raw") or ""
+        descripcion = corrected_desc or rec.get("descripcion_raw") or ""
+        marca = corrected_brand or rec.get("marca_raw") or ""
+        tipo_producto = corrected_type or rec.get("tipo_raw") or ""
 
     if product and _looks_missing_sku(sku):
         sku = str(product.sku or "") or sku
