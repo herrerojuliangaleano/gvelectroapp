@@ -1,8 +1,9 @@
 import {
   AlertTriangle, ArrowRight, BarChart3, Boxes, Building2, CalendarRange, Check, Download, Eye,
-  FileSpreadsheet, GitCompare, Layers3, Loader2, MoreVertical, MousePointerClick, Package,
+  FileSpreadsheet, FileText, GitCompare, Layers3, Loader2, MoreVertical, MousePointerClick, Package,
   Presentation, RefreshCw, Search, Settings2, Tags, Target, Trophy,
 } from 'lucide-react';
+import { BrandDossierView } from '../components/BrandDossierView';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -31,7 +32,7 @@ import {
 } from '../components/SalesBIWidgets';
 
 type CommercialKind = 'brands' | 'lines' | 'branches';
-type CommercialTab = 'overview' | 'brands' | 'lines' | 'tipos' | 'branches' | 'products' | 'compare' | 'periods' | 'opportunities' | 'presentation';
+type CommercialTab = 'overview' | 'brands' | 'dossier' | 'lines' | 'tipos' | 'branches' | 'products' | 'compare' | 'periods' | 'opportunities' | 'presentation';
 type MetricMode = 'units' | 'pvp' | 'both';
 type OpportunityLevel = 'critica' | 'alta' | 'media' | 'info';
 
@@ -2984,6 +2985,7 @@ export function SalesBICommercialPage() {
   const tabs = [
     { value: 'overview', label: 'Resumen', shortLabel: 'Resumen', icon: <BarChart3 size={14} /> },
     { value: 'brands', label: 'Marcas', shortLabel: 'Marcas', icon: <Tags size={14} /> },
+    { value: 'dossier', label: 'Informe marca', shortLabel: 'Informe', icon: <FileText size={14} /> },
     { value: 'lines', label: 'Categorias', shortLabel: 'Categ.', icon: <Layers3 size={14} /> },
     { value: 'tipos', label: 'Tipos', shortLabel: 'Tipos', icon: <Boxes size={14} /> },
     { value: 'branches', label: 'Sucursales', shortLabel: 'Suc.', icon: <Building2 size={14} /> },
@@ -3155,6 +3157,17 @@ export function SalesBICommercialPage() {
               </div>
               <CompareCandidates report={brandsReport} />
             </>
+          )}
+
+          {activeTab === 'dossier' && (
+            <BrandDossierView
+              brands={brandsReport.brand_mix}
+              initialMarca={selectedBrand || brandsReport.brand_mix[0]?.name}
+              fechaDesde={fechaDesde}
+              fechaHasta={fechaHasta}
+              sucursal={sucursal || undefined}
+              tipoVenta={tipoVenta || undefined}
+            />
           )}
 
           {activeTab === 'lines' && linesReport && (

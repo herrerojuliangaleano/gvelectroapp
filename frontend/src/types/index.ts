@@ -795,6 +795,83 @@ export interface SalesBICommercialMix extends SalesBICommercialMetric {
   name: string;
 }
 
+// ── Dossier de marca (informe presentable al proveedor) ─────────────────────
+export interface BrandDossierCategory {
+  categoria: string;
+  brand_unidades: number;
+  brand_pvp: number;
+  brand_mix_pct: number;
+  market_pvp: number;
+  market_unidades: number;
+  share_pvp_pct: number;
+  share_units_pct: number;
+  share_prev_pct: number;
+  share_delta_pts: number;
+  rank_in_categoria: number | null;
+  marcas_en_categoria: number;
+  leader_name: string;
+  leader_share_pct: number;
+  brand_avg_pvp: number;
+  market_avg_pvp: number;
+  price_index: number;
+}
+
+export interface SalesBIBrandDossier {
+  marca: string;
+  filters: {
+    fecha_desde: string;
+    fecha_hasta: string;
+    prev_desde: string;
+    prev_hasta: string;
+    sucursal: string;
+    sucursales: string[];
+    tipo_venta: string;
+    competidores: string[];
+  };
+  source: string;
+  sensitive: { include_costs: boolean; include_margin: boolean };
+  totals: {
+    brand: SalesBICommercialMetric;
+    market: SalesBICommercialMetric;
+    brand_prev: SalesBICommercialMetric;
+    market_prev: SalesBICommercialMetric;
+  };
+  share: {
+    pvp_pct: number;
+    units_pct: number;
+    prev_pvp_pct: number;
+    delta_pts: number;
+    rank_pvp: number | null;
+    rank_units: number | null;
+    rank_prev: number | null;
+    total_brands: number;
+  };
+  price_index_global: number;
+  monthly_series: Array<{
+    mes: string;
+    brand_unidades: number;
+    brand_pvp: number;
+    market_unidades: number;
+    market_pvp: number;
+    share_pvp_pct: number;
+    share_units_pct: number;
+    competidores: Record<string, { unidades: number; total_vendido: number }>;
+  }>;
+  weekly_series: Array<{
+    semana: string;
+    brand_unidades: number;
+    brand_pvp: number;
+    market_pvp: number;
+    share_pvp_pct: number;
+  }>;
+  ranking: Array<SalesBICommercialMix & { is_brand: boolean; is_competitor: boolean }>;
+  categories: BrandDossierCategory[];
+  tipos_top: Array<{ tipo: string; unidades: number; total_vendido: number; share_pvp_pct: number; market_pvp: number }>;
+  branches: Array<{ sucursal: string; brand_unidades: number; brand_pvp: number; share_in_branch_pct: number; brand_mix_pct: number; market_pvp: number }>;
+  top_products: Array<SalesBICommercialMetric & { sku: string; producto: string; tipo_producto: string }>;
+  highlights: string[];
+}
+
 export interface SalesBICommercialMatrixRow {
   name: string;
   total: SalesBICommercialMetric;
