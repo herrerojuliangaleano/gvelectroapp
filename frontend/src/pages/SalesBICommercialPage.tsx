@@ -13,6 +13,7 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import {
+  autoResolveSalesBICommercialSuggestions,
   can,
   createSalesBICommercialCorrection,
   exportSalesBICommercialPdf,
@@ -2006,6 +2007,7 @@ function CommercialUnmatchedPanel({ onResolved }: { onResolved: () => Promise<vo
   const [batchRows, setBatchRows] = useState<CommercialBatchRow[]>([]);
   const [batchSaving, setBatchSaving] = useState(false);
   const [batchSearching, setBatchSearching] = useState(false);
+  const [autoResolving, setAutoResolving] = useState(false);
   const [form, setForm] = useState<CommercialCorrectionForm>({
     corrected_sku: '',
     corrected_description: '',
@@ -2014,6 +2016,7 @@ function CommercialUnmatchedPanel({ onResolved }: { onResolved: () => Promise<vo
     note: '',
   });
   const canManageCorrections = can('sales_bi.aliases.manage');
+  const canAutoResolveSuggestions = canManageCorrections && can('sales_bi.import');
 
   async function load() {
     setLoading(true);
@@ -2179,6 +2182,26 @@ function CommercialUnmatchedPanel({ onResolved }: { onResolved: () => Promise<vo
     }
   }
 
+  async function autoResolveAllSuggestions() {
+    setAutoResolving(true);
+    setMessage('');
+    try {
+      const result = await autoResolveSalesBICommercialSuggestions();
+      setBatchOpen(false);
+      setBatchRows([]);
+      setMessage(
+        `Sugeridos aplicados: ${num(result.resolved)} de ${num(result.processed)} pendientes procesados. ` +
+        `Quedan ${num(result.rematch.unmatched)} para revisar manualmente.`,
+      );
+      await load();
+      await onResolved();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'No se pudieron aplicar los sugeridos automaticamente.');
+    } finally {
+      setAutoResolving(false);
+    }
+  }
+
   async function saveCorrection() {
     if (!selected) return;
     const hasTarget = !!selectedProduct
@@ -2237,6 +2260,17 @@ function CommercialUnmatchedPanel({ onResolved }: { onResolved: () => Promise<vo
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
+          {items.length > 0 && (
+            <button
+              type="button"
+              onClick={autoResolveAllSuggestions}
+              disabled={!canAutoResolveSuggestions || autoResolving}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-emerald-400 px-3 text-sm font-black text-slate-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {autoResolving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+              Usar sugeridos en todos
+            </button>
+          )}
           {items.length > 0 && (
             <button
               type="button"

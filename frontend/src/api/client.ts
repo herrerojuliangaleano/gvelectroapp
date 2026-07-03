@@ -1116,6 +1116,18 @@ export async function rematchSalesBICommercial(): Promise<{ ok: boolean; matched
   return request('/api/sales-bi/commercial/rematch-products', { method: 'POST' });
 }
 
+export async function autoResolveSalesBICommercialSuggestions(limit = 10000): Promise<{
+  ok: boolean;
+  processed: number;
+  resolved: number;
+  skipped: number;
+  errors: Array<{ item: string; error: string }>;
+  examples: Array<{ from: string; to: string; sku: string }>;
+  rematch: { ok: boolean; matched: number; corrected: number; unmatched: number; total: number };
+}> {
+  return request(`/api/sales-bi/commercial/auto-resolve-suggestions?limit=${encodeURIComponent(String(limit))}`, { method: 'POST' });
+}
+
 export async function exportSalesBICommercialPdf(payload: CommercialReportParams & {
   kind?: 'brands' | 'lines' | 'branches';
   logo?: string;

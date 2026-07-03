@@ -326,6 +326,27 @@ en una sola pantalla:
 Este lote no es una correccion masiva con el mismo destino para todos. Cada
 pendiente puede quedar vinculado a un producto distinto.
 
+### Auto-resolucion por sugeridos
+
+La pestana `Productos` tambien tiene `Usar sugeridos en todos`. Esta accion
+no depende del lote visible: recorre los pendientes comerciales activos,
+busca el primer sugerido del catalogo para cada producto y, cuando existe,
+crea una correccion reutilizable vinculada a ese producto.
+
+Comportamiento:
+
+- procesa hasta 10000 grupos pendientes por ejecucion;
+- usa la descripcion y el SKU valido como texto de busqueda;
+- ignora SKU vacios o textos como `SKU NO ENCONTRADO` para no contaminar la
+  busqueda;
+- crea correcciones propias de `Ventas Vs. Costos` en
+  `sales_bi_commercial_corrections`;
+- ejecuta un unico rematch comercial al final;
+- los productos sin sugerido o con error quedan pendientes para resolucion
+  manual individual o por lote visible.
+
+Permisos requeridos: `sales_bi.aliases.manage` y `sales_bi.import`.
+
 ### Performance de carga
 
 El BI comercial trabaja sobre `sales_bi_commercial_records` y puede acumular

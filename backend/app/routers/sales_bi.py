@@ -34,6 +34,7 @@ from ..sales_bi import (
 )
 from ..sales_bi_commercial import (
     analyze_ventas_vs_costos,
+    auto_resolve_commercial_suggestions,
     build_brands_compare,
     build_brands_report,
     build_branches_report,
@@ -463,6 +464,16 @@ def rematch_sales_bi_commercial(
 ):
     _require(user, "sales_bi.import")
     return rematch_commercial_records()
+
+
+@router.post("/commercial/auto-resolve-suggestions")
+def auto_resolve_sales_bi_commercial_suggestions(
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    limit: int = Query(default=10000, ge=1, le=10000),
+):
+    _require(user, "sales_bi.aliases.manage")
+    _require(user, "sales_bi.import")
+    return auto_resolve_commercial_suggestions(user.username, limit=limit)
 
 
 def _commercial_permissions(user: CurrentUser, presentation: bool) -> tuple[bool, bool]:

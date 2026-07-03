@@ -171,6 +171,7 @@ Bearer token salvo endpoints publicos como `/api/health` y login.
 | GET | `/api/sales-bi/commercial/unmatched-products` | Productos comerciales sin match/correccion. |
 | POST | `/api/sales-bi/commercial/corrections` | Crea correccion reutilizable para enlazar producto de catalogo o corregir SKU/marca/tipo/descripcion en la capa comercial. |
 | POST | `/api/sales-bi/commercial/rematch-products` | Recalcula matching comercial con correcciones vigentes. |
+| POST | `/api/sales-bi/commercial/auto-resolve-suggestions` | Recorre pendientes comerciales activos, usa el primer sugerido de catalogo, crea correcciones reutilizables y rematchea. |
 | GET | `/api/sales-bi/brands/report` | Dashboard comercial por marcas. |
 | GET | `/api/sales-bi/brands/compare` | Comparacion comercial de marcas por periodo. |
 | GET | `/api/sales-bi/lines/report` | Dashboard comercial por lineas/tipos. |

@@ -17,7 +17,7 @@ from .models.sales_bi_commercial import (
     SalesBICommercialCorrection,
     SalesBICommercialRecord,
 )
-from .product_catalog import sku_key
+from .product_catalog import search_products, sku_key
 from .sales_bi import (
     _decimal,
     _fmt_date,
@@ -1369,26 +1369,9 @@ def get_commercial_options() -> dict[str, Any]:
     }
 
 
-def list_commercial_unmatched(q: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
-    filters: list[Any] = [SalesBICommercialBatch.status == "activo", SalesBICommercialRecord.match_status == "unmatched"]
-    if q:
-        text = f"%{q}%"
-        filters.append(or_(
-            SalesBICommercialRecord.sku.ilike(text),
-            SalesBICommercialRecord.descripcion.ilike(text),
-            SalesBICommercialRecord.marca.ilike(text),
-            SalesBICommercialRecord.tipo_producto.ilike(text),
-        ))
-    with db_session() as session:
-        rows = session.scalars(
-            select(SalesBICommercialRecord)
-            .join(SalesBICommercialBatch, SalesBICommercialBatch.id == SalesBICommercialRecord.batch_id)
-            .where(*filters)
-            .order_by(SalesBICommercialRecord.fecha.desc(), SalesBICommercialRecord.id.desc())
-            .limit(max(1, min(limit * 10, 2000)))
-        ).all()
+def _group_commercial_unmatched(records: list[SalesBICommercialRecord], *, limit: int) -> list[dict[str, Any]]:
     grouped: dict[tuple[str, str], dict[str, Any]] = {}
-    for record in rows:
+    for record in records:
         key = (str(record.sku_normalized or ""), str(record.descripcion_normalized or ""))
         item = grouped.setdefault(key, {
             "sku": str(record.sku or ""),
@@ -1413,6 +1396,42 @@ def list_commercial_unmatched(q: str | None = None, limit: int = 100) -> list[di
         out.append(item)
     out.sort(key=lambda row: float(row["total_vendido"] or 0), reverse=True)
     return out[:limit]
+
+
+def list_commercial_unmatched(q: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    filters: list[Any] = [SalesBICommercialBatch.status == "activo", SalesBICommercialRecord.match_status == "unmatched"]
+    if q:
+        text = f"%{q}%"
+        filters.append(or_(
+            SalesBICommercialRecord.sku.ilike(text),
+            SalesBICommercialRecord.descripcion.ilike(text),
+            SalesBICommercialRecord.marca.ilike(text),
+            SalesBICommercialRecord.tipo_producto.ilike(text),
+        ))
+    with db_session() as session:
+        rows = session.scalars(
+            select(SalesBICommercialRecord)
+            .join(SalesBICommercialBatch, SalesBICommercialBatch.id == SalesBICommercialRecord.batch_id)
+            .where(*filters)
+            .order_by(SalesBICommercialRecord.fecha.desc(), SalesBICommercialRecord.id.desc())
+            .limit(max(1, min(limit * 10, 5000)))
+        ).all()
+    return _group_commercial_unmatched(list(rows), limit=limit)
+
+
+def _list_all_commercial_unmatched(limit: int) -> list[dict[str, Any]]:
+    """Devuelve grupos pendientes sin depender del limite visual de la pantalla."""
+    with db_session() as session:
+        rows = session.scalars(
+            select(SalesBICommercialRecord)
+            .join(SalesBICommercialBatch, SalesBICommercialBatch.id == SalesBICommercialRecord.batch_id)
+            .where(
+                SalesBICommercialBatch.status == "activo",
+                SalesBICommercialRecord.match_status == "unmatched",
+            )
+            .order_by(SalesBICommercialRecord.fecha.desc(), SalesBICommercialRecord.id.desc())
+        ).all()
+    return _group_commercial_unmatched(list(rows), limit=limit)
 
 
 def create_commercial_correction(payload: dict[str, Any], username: str) -> dict[str, Any]:
@@ -1473,6 +1492,80 @@ def create_commercial_correction(payload: dict[str, Any], username: str) -> dict
         }
         session.commit()
     return out
+
+
+def auto_resolve_commercial_suggestions(username: str, *, limit: int = 10000) -> dict[str, Any]:
+    """Crea correcciones desde el primer sugerido del catalogo.
+
+    Se usa para limpiar rapido pendientes de Ventas Vs. Costos cuando el
+    buscador ya devuelve sugeridos confiables. Los pendientes sin sugerido
+    quedan intactos para resolucion manual.
+    """
+    pending = _list_all_commercial_unmatched(limit=max(1, min(int(limit or 10000), 10000)))
+    resolved = 0
+    skipped = 0
+    errors: list[dict[str, str]] = []
+    examples: list[dict[str, Any]] = []
+
+    for item in pending:
+        query = " ".join(
+            part for part in (
+                str(item.get("descripcion") or "").strip(),
+                "" if _looks_missing_sku(item.get("sku")) else str(item.get("sku") or "").strip(),
+            )
+            if part
+        ).strip()
+        if not query:
+            skipped += 1
+            continue
+
+        suggestions = search_products(query, limit=1)
+        if not suggestions:
+            skipped += 1
+            continue
+
+        product = suggestions[0]
+        try:
+            create_commercial_correction(
+                {
+                    "match_sku": item.get("sku") or "",
+                    "match_description": item.get("descripcion") or "",
+                    "match_brand": item.get("marca") or "",
+                    "match_type": item.get("tipo_producto") or "",
+                    "product_id": product.get("id"),
+                    "corrected_sku": product.get("sku") or "",
+                    "corrected_description": product.get("descripcion") or product.get("producto") or "",
+                    "corrected_brand": product.get("marca") or "",
+                    "corrected_type": product.get("tipo") or "",
+                    "note": "Auto-resuelto con primer sugerido de catalogo.",
+                },
+                username,
+            )
+            resolved += 1
+            if len(examples) < 10:
+                examples.append({
+                    "from": item.get("descripcion") or item.get("sku") or "",
+                    "to": product.get("descripcion") or product.get("producto") or product.get("sku") or "",
+                    "sku": product.get("sku") or "",
+                })
+        except Exception as exc:  # noqa: BLE001 - devuelve el item conflictivo sin abortar todo el lote
+            skipped += 1
+            if len(errors) < 10:
+                errors.append({
+                    "item": str(item.get("descripcion") or item.get("sku") or ""),
+                    "error": str(exc),
+                })
+
+    rematch = rematch_commercial_records() if resolved else {"ok": True, "matched": 0, "corrected": 0, "unmatched": len(pending), "total": 0}
+    return {
+        "ok": True,
+        "processed": len(pending),
+        "resolved": resolved,
+        "skipped": skipped,
+        "errors": errors,
+        "examples": examples,
+        "rematch": rematch,
+    }
 
 
 def rematch_commercial_records() -> dict[str, Any]:
