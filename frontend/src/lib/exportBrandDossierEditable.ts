@@ -67,30 +67,6 @@ function chartData(name: string, labels: string[], values: number[]) {
   return [{ name, labels, values }];
 }
 
-function monthlyComparisonData(
-  rows: SalesBIBrandDossier['monthly_series'],
-  key: 'brand_unidades' | 'brand_pvp',
-  fallbackName: string,
-) {
-  const years = Array.from(new Set(rows.map((row) => row.mes.slice(0, 4)))).sort();
-  if (years.length > 1) {
-    return years.map((year) => ({
-      name: year,
-      labels: MONTH_LABELS,
-      values: MONTH_LABELS.map((_, index) => {
-        const mes = `${year}-${String(index + 1).padStart(2, '0')}`;
-        const row = rows.find((item) => item.mes === mes);
-        return Number(row?.[key] || 0);
-      }),
-    }));
-  }
-  return [{
-    name: fallbackName,
-    labels: rows.map((row) => monthLabel(row.mes)),
-    values: rows.map((row) => Number(row[key] || 0)),
-  }];
-}
-
 function branchShareUnits(row: SalesBIBrandDossier['branches'][number]): number {
   if (typeof row.share_units_in_branch_pct === 'number') return row.share_units_in_branch_pct;
   return row.market_unidades ? (row.brand_unidades / row.market_unidades) * 100 : 0;
@@ -269,21 +245,23 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
   ).sort((a, b) => (b.total_unidades - a.total_unidades) || (b.total_vendido - a.total_vendido));
 
   const providerMonthly = addBase('Ventas mensuales', `${dossier.marca} por mes · unidades y pesos`);
-  addChart(providerMonthly, 'line', monthlyComparisonData(dossier.monthly_series, 'brand_unidades', 'Unidades'), {
+  const providerMonthlyRows = dossier.monthly_series;
+  const providerMonthlyLabels = providerMonthlyRows.map((row) => monthLabel(row.mes));
+  addChart(providerMonthly, 'line', chartData('Unidades', providerMonthlyLabels, providerMonthlyRows.map((row) => row.brand_unidades)), {
     x: 0.55, y: 1.15, w: 5.85, h: 4.85,
     catAxisLabelRotate: 45,
     valAxisLabelFormatCode: '#,##0',
     lineSize: 2.4,
     showMarker: true,
   });
-  addChart(providerMonthly, 'line', monthlyComparisonData(dossier.monthly_series, 'brand_pvp', 'Pesos'), {
+  addChart(providerMonthly, 'line', chartData('Pesos', providerMonthlyLabels, providerMonthlyRows.map((row) => row.brand_pvp)), {
     x: 6.85, y: 1.15, w: 5.85, h: 4.85,
     catAxisLabelRotate: 45,
     valAxisLabelFormatCode: '$ #,##0',
     lineSize: 2.4,
     showMarker: true,
   });
-  addTakeaway(providerMonthly, `Vista proveedor: evolucion mensual de ${dossier.marca}; si el rango incluye 2025 y 2026, las series se comparan por año.`, 0.55, 6.35, 12.15);
+  addTakeaway(providerMonthly, `Vista proveedor: evolución mensual continua de ${dossier.marca}, sin comparar años incompletos.`, 0.55, 6.35, 12.15);
 
   const providerBranches = addBase('Puntos de venta', `${dossier.marca} por sucursal · unidades y pesos`);
   addChart(providerBranches, 'bar', chartData('Unidades', branchRowsForProvider.map((row) => row.sucursal), branchRowsForProvider.map((row) => row.brand_unidades)), {
@@ -301,13 +279,13 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
   addTakeaway(providerBranches, 'Lectura para visita: peso de la marca en cada punto de venta, separado en volumen y facturacion.', 0.55, 6.35, 12.15);
 
   const providerShare = addBase('In-house share por punto de venta', `Participacion de ${dossier.marca} sobre la venta total de cada sucursal`);
-  addChart(providerShare, 'bar', chartData('Share unidades %', branchRowsForProvider.map((row) => row.sucursal), branchRowsForProvider.map((row) => branchShareUnits(row))), {
+  addChart(providerShare, 'bar', chartData('Share unidades %', branchRowsForProvider.map((row) => row.sucursal), branchRowsForProvider.map((row) => branchShareUnits(row) / 100)), {
     x: 0.55, y: 1.1, w: 5.7, h: 3.8,
     barDir: 'bar',
     showLegend: false,
     valAxisLabelFormatCode: '0.0%',
   });
-  addChart(providerShare, 'bar', chartData('Share pesos %', branchRowsForProvider.map((row) => row.sucursal), branchRowsForProvider.map((row) => row.share_in_branch_pct)), {
+  addChart(providerShare, 'bar', chartData('Share pesos %', branchRowsForProvider.map((row) => row.sucursal), branchRowsForProvider.map((row) => row.share_in_branch_pct / 100)), {
     x: 6.95, y: 1.1, w: 5.7, h: 3.8,
     barDir: 'bar',
     showLegend: false,
@@ -339,24 +317,24 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
   ], 0.55, 1.1, 12.2, 5.75, [3.2, 1.35, ...branchColumns.map(() => 1.9)], 6.2);
   addTakeaway(providerProductBranch, 'Detalle solicitado: permite ver que productos empujan la marca en cada punto de venta.', 0.55, 6.55, 12.15);
 
-  const evolution = addBase('Evolución de ventas', 'Facturación de la marca contra el mercado');
+  const evolution = addBase('Participación mensual', `${dossier.marca}: share sobre el total vendido`);
   const monthly = dossier.monthly_series.slice(-12);
   const evoLabels = monthly.map((row) => monthLabel(row.mes));
   addChart(evolution, 'line', [
-    { name: dossier.marca, labels: evoLabels, values: monthly.map((row) => row.brand_pvp) },
-    { name: 'Mercado total', labels: evoLabels, values: monthly.map((row) => row.market_pvp) },
+    { name: 'Share pesos', labels: evoLabels, values: monthly.map((row) => row.share_pvp_pct / 100) },
+    { name: 'Share unidades', labels: evoLabels, values: monthly.map((row) => row.share_units_pct / 100) },
   ], {
     x: 0.55, y: 1.15, w: 7.55, h: 4.8,
     catAxisLabelRotate: 45,
-    valAxisLabelFormatCode: '$ #,##0',
+    valAxisLabelFormatCode: '0.0%',
     lineSize: 2.5,
     showMarker: true,
   });
   addTable(evolution, [
-    ['Mes', 'Marca', 'Mercado', 'Share'],
-    ...monthly.slice(-8).map((row) => [monthLabel(row.mes), compactMoney(row.brand_pvp), compactMoney(row.market_pvp), pct(row.share_pvp_pct)]),
-  ], 8.35, 1.15, 4.15, 4.8, [0.85, 1.1, 1.2, 1]);
-  addTakeaway(evolution, dossier.narratives?.evolucion);
+    ['Mes', 'Share u', 'Share $', `${dossier.marca} u`, `${dossier.marca} $`],
+    ...monthly.slice(-8).map((row) => [monthLabel(row.mes), pct(row.share_units_pct), pct(row.share_pvp_pct), num(row.brand_unidades), compactMoney(row.brand_pvp)]),
+  ], 8.35, 1.15, 4.15, 4.8, [0.75, 0.8, 0.8, 0.85, 1.15]);
+  addTakeaway(evolution, `Participación mensual: muestra cuánto pesa ${dossier.marca} dentro del total, sin compararlo contra una escala de mercado mucho más grande.`);
 
   const ranking = addBase('Ranking competitivo', `${dossier.marca} frente al resto de marcas`);
   const rankRows = dossier.ranking.slice(0, 10);
@@ -398,7 +376,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
 
   const cats = addBase('Categorías y oportunidades', `Dónde participa ${dossier.marca}`);
   const categoryRows = dossier.categories.slice(0, 8);
-  addChart(cats, 'bar', chartData('Share PVP %', categoryRows.map((row) => row.categoria), categoryRows.map((row) => row.share_pvp_pct)), {
+  addChart(cats, 'bar', chartData('Share PVP %', categoryRows.map((row) => row.categoria), categoryRows.map((row) => row.share_pvp_pct / 100)), {
     x: 0.55, y: 1.1, w: 5.8, h: 4.9,
     barDir: 'bar',
     valAxisLabelFormatCode: '0.0%',
@@ -421,8 +399,8 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
     const bands = addBase('Bandas de precio', 'Mix de unidades por posicionamiento de precio');
     const bandRows = dossier.price_bands.bands;
     addChart(bands, 'bar', [
-      { name: `Mix ${dossier.marca}`, labels: bandRows.map((row) => row.banda), values: bandRows.map((row) => row.brand_mix_units_pct) },
-      { name: 'Mix mercado', labels: bandRows.map((row) => row.banda), values: bandRows.map((row) => row.market_mix_units_pct) },
+      { name: `Mix ${dossier.marca}`, labels: bandRows.map((row) => row.banda), values: bandRows.map((row) => row.brand_mix_units_pct / 100) },
+      { name: 'Mix mercado', labels: bandRows.map((row) => row.banda), values: bandRows.map((row) => row.market_mix_units_pct / 100) },
     ], {
       x: 0.55, y: 1.1, w: 6.1, h: 4.8,
       barDir: 'col',
