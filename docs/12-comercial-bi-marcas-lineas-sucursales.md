@@ -132,6 +132,8 @@ Corte actual:
 
 - Logo PNG por marca principal guardado en storage.
 - Color HEX por marca principal guardado en storage.
+- Paleta secundaria cromatica para tipos, zonas, competidores y mercado:
+  visible y profesional, sin copiar el color exacto de la marca principal.
 - Selector de tipos comerciales para el dossier.
 - Selector de tipos muestra todos los tipos disponibles.
 - `Lavado` agrupa lavarropas, lavasecarropas/lavaseca y secarropas.

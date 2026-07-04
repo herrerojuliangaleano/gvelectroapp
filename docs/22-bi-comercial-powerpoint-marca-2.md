@@ -61,7 +61,8 @@ Incluido:
 - Persistir color principal HEX por marca principal.
 - Usar logo solo para la marca principal del informe.
 - Usar color de marca solo para la marca principal; competidores, zonas, tipos
-  y categorias usan paletas secundarias desaturadas.
+  y categorias usan paletas secundarias cromaticas, menos saturadas que la
+  marca principal pero no grises/apagadas.
 - Mostrar competidores como texto, no como logos.
 - Agregar selector de tipos comerciales para el dossier.
 - Agregar la agrupacion especial `Lavado`.
@@ -114,9 +115,13 @@ Reglas:
 - Formato aceptado: `#RRGGBB`.
 - Samsung usa por defecto `#1428A0` si no hay color guardado.
 - Si se guarda otro color para la misma marca, reemplaza al anterior.
-- Los competidores nunca usan el color de la marca principal.
-- Tipos, categorias y zonas usan una paleta secundaria menos saturada para no
-  opacar el color de marca.
+- Los competidores nunca usan el color exacto de la marca principal.
+- Tipos, categorias y zonas usan una paleta secundaria cromatica: teal, ambar,
+  violeta, verde, cobre y azul petroleo suaves. La regla es que tengan vida
+  visual, pero que el color elegido para la marca siga siendo el color de mayor
+  jerarquia.
+- Mercado/resto usa un color propio, no gris plano, para que los graficos de
+  comparacion sigan siendo legibles y presentables.
 - El color es un asset visual de presentacion; no cambia ningun dato comercial.
 
 ### Tipo comercial
@@ -476,8 +481,9 @@ Cambios hechos:
 - La UI muestra todos los tipos disponibles y permite guardar color principal de
   marca.
 - El PowerPoint editable usa logo de marca en portada y encabezado.
-- El PowerPoint editable usa el color de la marca solo para la marca principal y
-  usa paletas secundarias desaturadas para tipos, zonas y competidores.
+- El PowerPoint editable usa el color de la marca solo para la marca principal.
+- Tipos, zonas, competidores y mercado usan paletas secundarias cromaticas:
+  visibles, profesionales y sin copiar el color exacto de la marca.
 - El PowerPoint reemplaza slides centradas en productos por:
   - tipos x punto de venta;
   - tipos destacados;
