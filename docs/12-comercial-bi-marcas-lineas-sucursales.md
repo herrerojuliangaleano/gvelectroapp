@@ -121,6 +121,22 @@ Limitacion: PowerPoint no conserva interacciones web como hover, tooltips,
 drill-down o filtros por click. Para eso la fuente de verdad sigue siendo el
 dashboard de la app.
 
+### Fase siguiente - PowerPoint de marca 2.0
+
+La proxima iteracion del PowerPoint editable esta diseñada en
+[22 - BI Comercial - PowerPoint de marca 2.0](22-bi-comercial-powerpoint-marca-2.md).
+
+Puntos clave para implementar:
+
+- Pedir/guardar logo PNG de la marca principal y permitir reemplazarlo al exportar.
+- Cambiar productos destacados y productos por punto de venta por lecturas de
+  tipos comerciales.
+- Permitir seleccionar tipos a comparar; `Lavado` agrupa lavarropas,
+  lavasecarropas/lavaseca y secarropas.
+- Separar share por zonas: `CABA`, `GBA` y `Venta Web`.
+- Usar barras verticales, barras apiladas y tortas segun el tipo de lectura.
+- Mantener la vista externa sin costos, diferencias ni margen.
+
 ### Exportacion Excel del informe de marca
 
 El endpoint `GET /api/sales-bi/commercial/brand-dossier/export-xlsx` genera un

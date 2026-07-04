@@ -29,6 +29,7 @@ Code puedan entender la aplicacion sin depender de memoria oral.
 20. [19 - Análisis de la base de datos (seguridad, escalabilidad, saneamiento)](19-analisis-bd-escalabilidad-seguridad.md)
 21. [20 - Subsistema de archivos (object storage)](20-subsistema-archivos-object-storage.md)
 22. [21 - Relevamiento de mejoras (backlog priorizado)](21-relevamiento-mejoras.md)
+23. [22 - BI Comercial - PowerPoint de marca 2.0](22-bi-comercial-powerpoint-marca-2.md)
 
 ## Documentacion por fases
 
@@ -64,6 +65,7 @@ Code puedan entender la aplicacion sin depender de memoria oral.
 | Analisis BD (seguridad / escalabilidad / saneamiento) | [19-analisis-bd-escalabilidad-seguridad.md](19-analisis-bd-escalabilidad-seguridad.md) |
 | Subsistema de archivos (object storage) | [20-subsistema-archivos-object-storage.md](20-subsistema-archivos-object-storage.md) |
 | Relevamiento de mejoras (backlog priorizado) | [21-relevamiento-mejoras.md](21-relevamiento-mejoras.md) |
+| BI Comercial - PowerPoint de marca 2.0 | [22-bi-comercial-powerpoint-marca-2.md](22-bi-comercial-powerpoint-marca-2.md) |
 | Docker local | [fase-1-docker/README.md](fase-1-docker/README.md) |
 | Modelo de datos historico (Fase 2 · superado por 17/18) | [fase-2-postgres/01-modelo-datos.md](fase-2-postgres/01-modelo-datos.md) |
 | Administracion de base de datos | [fase-2-postgres/02-administracion-db.md](fase-2-postgres/02-administracion-db.md) |
