@@ -11,7 +11,7 @@
  * Seguridad: el backend NUNCA envía costos ni márgenes en este informe.
  */
 import {
-  ArrowLeft, ArrowUpRight, ArrowDownRight, CheckCircle2, FileDown, Lightbulb, ListChecks,
+  ArrowLeft, ArrowUpRight, ArrowDownRight, CheckCircle2, FileDown, FileSpreadsheet, Lightbulb, ListChecks,
   Loader2, Presentation, ShieldCheck, X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -19,7 +19,7 @@ import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, LineChart,
   Pie, PieChart, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis,
 } from 'recharts';
-import { fetchSalesBIBrandDossier } from '../api/client';
+import { downloadSalesBIBrandDossierXlsx, fetchSalesBIBrandDossier } from '../api/client';
 import type { SalesBIBrandDossier, SalesBICommercialMix } from '../types';
 import {
   CHART_ANIM, CHART_TOOLTIP_ITEM_STYLE, CHART_TOOLTIP_LABEL_STYLE, CHART_TOOLTIP_STYLE,
@@ -147,10 +147,13 @@ export function BrandDossierView({
   const [dossier, setDossier] = useState<SalesBIBrandDossier | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [exporting, setExporting] = useState<'ppt' | 'ppt-editable' | 'pdf' | null>(null);
+  const [exporting, setExporting] = useState<'ppt' | 'ppt-editable' | 'pdf' | 'xlsx' | null>(null);
   const [exportProgress, setExportProgress] = useState('');
   const [gran, setGran] = useState<Granularity>('monthly');
   const [drill, setDrill] = useState<string | null>(null);
+  // Métrica del informe: solo unidades, solo pesos, o ambas (default).
+  const [metric, setMetric] = useState<'units' | 'pvp' | 'both'>('both');
+  const mfmt = metric === 'units' ? num : money;
 
   const slideRefs = useRef<Record<string, HTMLElement | null>>({});
 
@@ -244,16 +247,16 @@ export function BrandDossierView({
     if (!dossier) return [];
     return dossier.monthly_series.map((m) => {
       const row: Record<string, number | string> = { label: monthLabel(m.mes) };
-      row[dossier.marca] = m.brand_pvp;
-      compList.forEach((c) => { row[c] = m.competidores[c]?.total_vendido ?? 0; });
+      row[dossier.marca] = metric === 'units' ? m.brand_unidades : m.brand_pvp;
+      compList.forEach((c) => { row[c] = (metric === 'units' ? m.competidores[c]?.unidades : m.competidores[c]?.total_vendido) ?? 0; });
       return row;
     });
-  }, [dossier, compList]);
+  }, [dossier, compList, metric]);
 
   const categorias = useMemo(() => (dossier?.categories || []).filter((c) => c.market_pvp > 0), [dossier]);
   const donut = useMemo(
-    () => categorias.filter((c) => c.brand_pvp > 0).map((c) => ({ name: c.categoria, value: c.brand_pvp })),
-    [categorias],
+    () => categorias.filter((c) => c.brand_pvp > 0).map((c) => ({ name: c.categoria, value: metric === 'units' ? c.brand_unidades : c.brand_pvp })),
+    [categorias, metric],
   );
   const precios = useMemo(
     () => categorias.filter((c) => c.brand_avg_pvp > 0).map((c) => ({
@@ -267,11 +270,11 @@ export function BrandDossierView({
   const matriz = useMemo(
     () => categorias.map((c) => ({
       categoria: c.categoria,
-      mercado: c.market_pvp,
-      share: c.share_pvp_pct,
-      facturacion: Math.max(1, c.brand_pvp),
+      mercado: metric === 'units' ? c.market_unidades : c.market_pvp,
+      share: metric === 'units' ? c.share_units_pct : c.share_pvp_pct,
+      facturacion: Math.max(1, metric === 'units' ? c.brand_unidades : c.brand_pvp),
     })),
-    [categorias],
+    [categorias, metric],
   );
 
   // Share apilado semanal (marca + competidores + OTRAS).
@@ -279,9 +282,12 @@ export function BrandDossierView({
     const src = dossier?.share_series || [];
     if (!src.length) return { rows: [] as Array<Record<string, number | string>>, names: [] as string[] };
     const names = Object.keys(src[0].values).filter((n) => n !== 'OTRAS');
-    const rows = src.map((w) => ({ label: bucketLabel(w.semana, 'weekly'), ...w.values }));
+    const rows = src.map((w) => ({
+      label: bucketLabel(w.semana, 'weekly'),
+      ...(metric === 'units' ? (w.values_units || w.values) : w.values),
+    }));
     return { rows, names };
-  }, [dossier]);
+  }, [dossier, metric]);
 
   // Evolución por categoría (unidades de la marca), diaria o semanal según rango.
   const catEvo = useMemo(() => {
@@ -293,12 +299,12 @@ export function BrandDossierView({
     src.forEach((d) => {
       const k = bucketOf(d.fecha, granCat);
       const acc = buckets.get(k) || {};
-      cats.forEach((c) => { acc[c] = (acc[c] || 0) + (d.values[c]?.unidades || 0); });
+      cats.forEach((c) => { acc[c] = (acc[c] || 0) + ((metric === 'pvp' ? d.values[c]?.total_vendido : d.values[c]?.unidades) || 0); });
       buckets.set(k, acc);
     });
     const rows = Array.from(buckets.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => ({ label: bucketLabel(k, granCat), ...v }));
     return { rows, cats, gran: granCat };
-  }, [dossier, spanDays]);
+  }, [dossier, spanDays, metric]);
 
   // Cara a cara: filas del ranking para la marca + competidores.
   const duel = useMemo(() => {
@@ -316,11 +322,11 @@ export function BrandDossierView({
     const names = Object.keys(src[0].values);
     const rows = src.map((b) => {
       const row: Record<string, number | string> = { sucursal: b.sucursal };
-      names.forEach((n) => { row[n] = b.values[n]?.total_vendido || 0; });
+      names.forEach((n) => { row[n] = (metric === 'units' ? b.values[n]?.unidades : b.values[n]?.total_vendido) || 0; });
       return row;
     });
     return { rows, names };
-  }, [dossier]);
+  }, [dossier, metric]);
 
   const duelColor = (name: string) => (name === dossier?.marca ? BRAND_COLOR : COMP_COLORS[compList.indexOf(name) % COMP_COLORS.length]);
 
@@ -357,13 +363,42 @@ export function BrandDossierView({
   const refCb = (id: string) => (el: HTMLElement | null) => { slideRefs.current[id] = el; };
 
   // ── Export ────────────────────────────────────────────────────────────
-  async function handleExport(kind: 'ppt' | 'ppt-editable' | 'pdf') {
+  async function handleExport(kind: 'ppt' | 'ppt-editable' | 'pdf' | 'xlsx') {
     if (!dossier || exporting) return;
+    if (kind === 'xlsx') {
+      setExporting('xlsx');
+      setExportProgress('Generando Excel...');
+      try {
+        const blob = await downloadSalesBIBrandDossierXlsx({
+          marca: dossier.marca,
+          fecha_desde: fechaDesde || undefined,
+          fecha_hasta: fechaHasta || undefined,
+          sucursal: sucursal || undefined,
+          tipo_venta: tipoVenta || undefined,
+          competidores: compList.length ? compList.join(',') : undefined,
+          metric,
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `informe-${dossier.marca.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${dossier.filters.fecha_desde}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'No se pudo exportar el Excel');
+      } finally {
+        setExporting(null);
+        setExportProgress('');
+      }
+      return;
+    }
     if (kind === 'ppt-editable') {
       setExporting(kind);
       setExportProgress('Armando deck editable...');
       try {
-        await exportBrandDossierEditablePptx(dossier);
+        await exportBrandDossierEditablePptx(dossier, metric);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'No se pudo exportar el informe editable');
       } finally {
@@ -459,11 +494,36 @@ export function BrandDossierView({
               ))}
             </select>
           </div>
+          <div className="flex items-center gap-1 rounded-full border border-white/15 p-1">
+            {([['units', '# Unidades'], ['pvp', '$ PVP'], ['both', 'Ambos']] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setMetric(value)}
+                className={cn(
+                  'rounded-full px-3 py-1 text-xs font-bold transition',
+                  metric === value ? 'bg-[color:var(--chart-blue)] text-white' : 'text-[color:var(--text-2)] hover:bg-white/10',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-200">
             <ShieldCheck size={12} /> Sin costos ni márgenes
           </span>
+          <button
+            type="button"
+            onClick={() => handleExport('xlsx')}
+            disabled={!dossier || !!exporting}
+            className="inline-flex h-10 items-center gap-2 rounded-xl border border-emerald-500/50 px-3.5 text-sm font-bold text-emerald-200 hover:bg-emerald-500/10 disabled:opacity-40"
+            title="Descarga los datos crudos del informe en Excel"
+          >
+            {exporting === 'xlsx' ? <Loader2 size={16} className="animate-spin" /> : <FileSpreadsheet size={16} />}
+            {exporting === 'xlsx' ? exportProgress : 'Excel (datos)'}
+          </button>
           <button
             type="button"
             onClick={() => handleExport('ppt-editable')}
@@ -581,7 +641,8 @@ export function BrandDossierView({
               </div>
             )}
           >
-            <div className="grid gap-4 xl:grid-cols-2">
+            <div className={cn('grid gap-4', metric === 'both' && 'xl:grid-cols-2')}>
+              {metric !== 'units' && (
               <div>
                 <div className="mb-2 text-xs font-bold text-[color:var(--text-3)]">Facturación y share %</div>
                 <ResponsiveContainer width="100%" height={280}>
@@ -614,6 +675,8 @@ export function BrandDossierView({
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
+              )}
+              {metric !== 'pvp' && (
               <div>
                 <div className="mb-2 text-xs font-bold text-[color:var(--text-3)]">Unidades vendidas</div>
                 <ResponsiveContainer width="100%" height={280}>
@@ -640,7 +703,35 @@ export function BrandDossierView({
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+              )}
             </div>
+            {shareStack.rows.length > 1 && (
+              <div>
+                <div className="mb-2 text-xs font-bold text-[color:var(--text-3)]">Peso sobre el total de la empresa · {dossier.marca} vs competidores · semanal · share en {metric === 'units' ? 'unidades' : 'facturación'}</div>
+                <ResponsiveContainer width="100%" height={220}>
+                  <AreaChart data={shareStack.rows} stackOffset="expand" margin={{ top: 8, right: 12, left: 8, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.14)" />
+                    <XAxis dataKey="label" tick={{ fill: '#B8C5DA', fontSize: 11 }} />
+                    <YAxis tickFormatter={(v: number) => `${Math.round(v * 100)}%`} tick={{ fill: '#B8C5DA', fontSize: 10 }} width={40} />
+                    <Tooltip
+                      formatter={(value, name) => [`${Number(value).toFixed(1)}%`, String(name)]}
+                      contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    {[...shareStack.names, 'OTRAS'].map((name) => (
+                      <Area
+                        key={name}
+                        dataKey={name}
+                        stackId="share"
+                        stroke="none"
+                        fill={name === 'OTRAS' ? '#475569' : duelColor(name)}
+                        fillOpacity={0.85}
+                      />
+                    ))}
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </Slide>
 
           {/* Posición competitiva */}
@@ -653,8 +744,8 @@ export function BrandDossierView({
                     <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgba(148,163,184,0.14)" />
                     <XAxis type="number" hide />
                     <YAxis type="category" dataKey="name" width={110} tick={{ fill: '#B8C5DA', fontSize: 11 }} interval={0} />
-                    <Tooltip formatter={(value) => [money(Number(value)), 'Facturación']} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE} cursor={{ fill: 'rgba(96,165,250,0.10)' }} />
-                    <Bar dataKey="total_vendido" radius={[0, 6, 6, 0]} isAnimationActive animationDuration={CHART_ANIM.duration}>
+                    <Tooltip formatter={(value) => [mfmt(Number(value)), metric === 'units' ? 'Unidades' : 'Facturación']} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE} cursor={{ fill: 'rgba(96,165,250,0.10)' }} />
+                    <Bar dataKey={metric === 'units' ? 'unidades' : 'total_vendido'} radius={[0, 6, 6, 0]} isAnimationActive animationDuration={CHART_ANIM.duration}>
                       {dossier.ranking.map((row) => (
                         <Cell
                           key={row.name}
@@ -667,13 +758,13 @@ export function BrandDossierView({
                 </ResponsiveContainer>
               </div>
               <div>
-                <div className="mb-2 text-xs font-bold text-[color:var(--text-3)]">Facturación mensual: {dossier.marca} vs competidores</div>
+                <div className="mb-2 text-xs font-bold text-[color:var(--text-3)]">{metric === 'units' ? 'Unidades mensuales' : 'Facturación mensual'}: {dossier.marca} vs competidores</div>
                 <ResponsiveContainer width="100%" height={300}>
                   <LineChart data={competencia} margin={{ top: 8, right: 8, left: 8, bottom: 4 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.14)" />
                     <XAxis dataKey="label" tick={{ fill: '#B8C5DA', fontSize: 11 }} />
-                    <YAxis tickFormatter={compactMoney} tick={{ fill: '#B8C5DA', fontSize: 10 }} width={52} />
-                    <Tooltip formatter={(value, name) => [money(Number(value)), String(name)]} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE} />
+                    <YAxis tickFormatter={metric === 'units' ? ((v: number) => num(v)) : compactMoney} tick={{ fill: '#B8C5DA', fontSize: 10 }} width={52} />
+                    <Tooltip formatter={(value, name) => [mfmt(Number(value)), String(name)]} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     <Line dataKey={dossier.marca} stroke={BRAND_COLOR} strokeWidth={3} dot={{ r: 3.5 }} />
                     {compList.map((c, i) => (
@@ -684,6 +775,75 @@ export function BrandDossierView({
               </div>
             </div>
           </Slide>
+
+          {/* Cara a cara con la competencia */}
+          {compList.length >= 1 && duel && (
+            <Slide title="Cara a cara" subtitle={`${dossier.marca} vs ${compList.join(' · ')} · el líder de cada métrica queda marcado`} refCb={refCb('cara')}>
+              <div className="grid gap-4 xl:grid-cols-2">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="text-[11px] uppercase tracking-wide text-[color:var(--text-3)]">
+                      <tr>
+                        <th className="px-3 py-2 text-left">Métrica</th>
+                        {duel.map((r) => (
+                          <th key={r.name} className="px-3 py-2 text-right">
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className="h-2 w-2 rounded-full" style={{ background: duelColor(r.name) }} />
+                              {r.name}
+                            </span>
+                          </th>
+                        ))}
+                        <th className="px-3 py-2 text-right">Líder</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[
+                        { label: 'Vendido', fmt: (v: number) => money(v), get: (r: typeof duel[number]) => r.total_vendido },
+                        { label: 'Unidades', fmt: (v: number) => num(v), get: (r: typeof duel[number]) => r.unidades },
+                        { label: 'SKUs', fmt: (v: number) => num(v), get: (r: typeof duel[number]) => r.productos },
+                        { label: 'PVP prom. unidad', fmt: (v: number) => money(v), get: (r: typeof duel[number]) => r.pvp_promedio },
+                        { label: 'Participación', fmt: (v: number) => `${v.toFixed(1)}%`, get: (r: typeof duel[number]) => r.participacion_pct || 0 },
+                      ].map((m) => {
+                        const vals = duel.map(m.get);
+                        const max = Math.max(...vals);
+                        const winner = duel[vals.indexOf(max)].name;
+                        return (
+                          <tr key={m.label} className="border-t border-white/5">
+                            <td className="px-3 py-2.5 font-bold text-[color:var(--text)]">{m.label}</td>
+                            {duel.map((r, i) => (
+                              <td key={r.name} className={cn('px-3 py-2.5 text-right tabular-nums', r.name === winner ? 'font-black text-[color:var(--chart-positive)]' : 'text-[color:var(--text-2)]')}>
+                                {r.name === winner && '✓ '}{m.fmt(vals[i])}
+                              </td>
+                            ))}
+                            <td className="px-3 py-2.5 text-right">
+                              <span className="rounded-full px-2 py-0.5 text-[10px] font-black uppercase" style={{ background: 'rgba(255,255,255,0.06)', color: duelColor(winner) }}>{winner}</span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div>
+                  <div className="mb-2 text-xs font-bold text-[color:var(--text-3)]">Quién empuja cada sucursal ({metric === 'units' ? 'unidades' : 'facturación'})</div>
+                  {branchDuel.rows.length ? (
+                    <ResponsiveContainer width="100%" height={300}>
+                      <BarChart data={branchDuel.rows} margin={{ top: 8, right: 8, left: 8, bottom: 4 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.14)" />
+                        <XAxis dataKey="sucursal" tick={{ fill: '#B8C5DA', fontSize: 11 }} />
+                        <YAxis tickFormatter={metric === 'units' ? ((v: number) => num(v)) : compactMoney} tick={{ fill: '#B8C5DA', fontSize: 10 }} width={52} />
+                        <Tooltip formatter={(value, name) => [mfmt(Number(value)), String(name)]} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE} cursor={{ fill: 'rgba(96,165,250,0.10)' }} />
+                        <Legend wrapperStyle={{ fontSize: 11 }} />
+                        {branchDuel.names.map((name) => (
+                          <Bar key={name} dataKey={name} fill={duelColor(name)} radius={[5, 5, 0, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} />
+                        ))}
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : <EmptyChartState minHeight={280} />}
+                </div>
+              </div>
+            </Slide>
+          )}
 
           {/* Momentum por categoría (solo con período anterior) */}
           {momentum.length > 0 && (
@@ -727,7 +887,8 @@ export function BrandDossierView({
             <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
               <div className="space-y-2.5">
                 {categorias.map((c) => {
-                  const width = Math.max(3, Math.min(100, c.share_pvp_pct));
+                  const catShare = metric === 'units' ? c.share_units_pct : c.share_pvp_pct;
+                  const width = Math.max(3, Math.min(100, catShare));
                   const leaderWidth = Math.max(3, Math.min(100, c.leader_share_pct));
                   return (
                     <div key={c.categoria} className="rounded-xl bg-white/[0.03] px-3.5 py-3">
@@ -741,7 +902,7 @@ export function BrandDossierView({
                         </div>
                         <div className="flex items-center gap-2">
                           {hasPrev && <DeltaPill value={c.share_delta_pts} format={(v) => `${v > 0 ? '+' : ''}${v.toFixed(1)} pts`} />}
-                          <span className="text-sm font-black tabular-nums text-[color:var(--text)]">{c.share_pvp_pct.toFixed(1)}%</span>
+                          <span className="text-sm font-black tabular-nums text-[color:var(--text)]">{catShare.toFixed(1)}%{metric === 'units' ? ' u' : ''}</span>
                         </div>
                       </div>
                       <div className="relative mt-2 h-2.5 overflow-hidden rounded-full bg-white/10">
@@ -767,7 +928,7 @@ export function BrandDossierView({
                           <Cell key={entry.name} fill={[BRAND_COLOR, 'var(--chart-violet)', 'var(--chart-teal)', 'var(--chart-amber)', '#ec4899', '#64748b'][i % 6]} />
                         ))}
                       </Pie>
-                      <Tooltip formatter={(value, name) => [money(Number(value)), String(name)]} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE} />
+                      <Tooltip formatter={(value, name) => [mfmt(Number(value)), String(name)]} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE} />
                       <Legend wrapperStyle={{ fontSize: 11 }} />
                     </PieChart>
                   </ResponsiveContainer>
@@ -776,13 +937,37 @@ export function BrandDossierView({
             </div>
           </Slide>
 
+          {/* Evolución por categoría */}
+          {catEvo.rows.length > 1 && (
+            <Slide title="Evolución por categoría" subtitle={`${metric === 'pvp' ? 'Facturación' : 'Unidades'} de ${dossier.marca} por categoría · vista ${catEvo.gran === 'weekly' ? 'semanal' : 'diaria'}`} refCb={refCb('categorias-evolucion')}>
+              <ResponsiveContainer width="100%" height={320}>
+                <LineChart data={catEvo.rows} margin={{ top: 8, right: 12, left: 8, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.14)" />
+                  <XAxis dataKey="label" tick={{ fill: '#B8C5DA', fontSize: 11 }} />
+                  <YAxis tickFormatter={metric === 'pvp' ? compactMoney : ((v: number) => num(v))} tick={{ fill: '#B8C5DA', fontSize: 10 }} width={52} />
+                  <Tooltip formatter={(value, name) => [metric === 'pvp' ? money(Number(value)) : num(Number(value)), String(name)]} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  {catEvo.cats.map((cat, i) => (
+                    <Line
+                      key={cat}
+                      dataKey={cat}
+                      stroke={[BRAND_COLOR, 'var(--chart-violet)', 'var(--chart-teal)', 'var(--chart-amber)', '#ec4899'][i % 5]}
+                      strokeWidth={i === 0 ? 3 : 2}
+                      dot={{ r: 2.5 }}
+                    />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </Slide>
+          )}
+
           {/* Matriz de oportunidad */}
           {matriz.length >= 3 && (
             <Slide title="Matriz de oportunidad" takeaway={dossier.narratives?.oportunidad} subtitle={`Tamaño de la categoría vs share de ${dossier.marca} · burbuja = facturación de la marca · línea = share global (${share.pvp_pct.toFixed(1)}%)`} refCb={refCb('oportunidad')}>
               <ResponsiveContainer width="100%" height={380}>
                 <ScatterChart margin={{ top: 24, right: 40, left: 8, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.14)" />
-                  <XAxis type="number" dataKey="mercado" name="Mercado" tickFormatter={compactMoney} tick={{ fill: '#B8C5DA', fontSize: 10 }} label={{ value: 'Tamaño de la categoría (facturación total)', fill: '#94a3b8', fontSize: 11, position: 'insideBottom', offset: -4 }} />
+                  <XAxis type="number" dataKey="mercado" name="Mercado" tickFormatter={metric === 'units' ? ((v: number) => num(v)) : compactMoney} tick={{ fill: '#B8C5DA', fontSize: 10 }} label={{ value: metric === 'units' ? 'Tamaño de la categoría (unidades totales)' : 'Tamaño de la categoría (facturación total)', fill: '#94a3b8', fontSize: 11, position: 'insideBottom', offset: -4 }} />
                   <YAxis type="number" dataKey="share" name="Share" tickFormatter={(v: number) => `${v}%`} tick={{ fill: '#B8C5DA', fontSize: 10 }} width={44} label={{ value: 'Share de la marca', angle: -90, fill: '#94a3b8', fontSize: 11, position: 'insideLeft' }} />
                   <ZAxis type="number" dataKey="facturacion" range={[120, 900]} />
                   <Tooltip
@@ -794,10 +979,10 @@ export function BrandDossierView({
                     contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE}
                     cursor={{ strokeDasharray: '3 3' }}
                   />
-                  <ReferenceLine y={share.pvp_pct} stroke="#94a3b8" strokeDasharray="4 3" />
+                  <ReferenceLine y={metric === 'units' ? share.units_pct : share.pvp_pct} stroke="#94a3b8" strokeDasharray="4 3" />
                   <Scatter data={matriz} isAnimationActive animationDuration={CHART_ANIM.duration}>
                     {matriz.map((m) => (
-                      <Cell key={m.categoria} fill={m.share >= share.pvp_pct ? BRAND_COLOR : 'var(--chart-amber)'} fillOpacity={0.85} />
+                      <Cell key={m.categoria} fill={m.share >= (metric === 'units' ? share.units_pct : share.pvp_pct) ? BRAND_COLOR : 'var(--chart-amber)'} fillOpacity={0.85} />
                     ))}
                     <LabelList dataKey="categoria" position="top" style={{ fill: '#B8C5DA', fontSize: 10, fontWeight: 700 }} />
                   </Scatter>
@@ -874,7 +1059,7 @@ export function BrandDossierView({
                     contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE}
                     cursor={{ fill: 'rgba(96,165,250,0.10)' }}
                   />
-                  <Bar dataKey="total_vendido" name="Facturación" fill={BRAND_COLOR} radius={[0, 6, 6, 0]} isAnimationActive animationDuration={CHART_ANIM.duration}>
+                  <Bar dataKey={metric === 'units' ? 'unidades' : 'total_vendido'} name={metric === 'units' ? 'Unidades' : 'Facturación'} fill={BRAND_COLOR} radius={[0, 6, 6, 0]} isAnimationActive animationDuration={CHART_ANIM.duration}>
                     <LabelList dataKey="share_pvp_pct" position="right" style={{ fill: '#B8C5DA', fontSize: 10 }} formatter={(v) => `${Number(v).toFixed(1)}% del tipo`} />
                   </Bar>
                 </BarChart>
@@ -1004,8 +1189,9 @@ export function BrandDossierView({
           )}
 
           {/* Sucursales */}
-          <Slide title="Presencia por sucursal" subtitle={`Peso de ${dossier.marca} dentro de cada punto de venta · facturación y unidades`} takeaway={dossier.narratives?.sucursales} refCb={refCb('sucursales')}>
-            <div className="grid gap-4 xl:grid-cols-2">
+          <Slide title="Presencia por sucursal" subtitle={`Peso de ${dossier.marca} en cada punto de venta · ACUMULADO del ${fmtDate(dossier.filters.fecha_desde)} al ${fmtDate(dossier.filters.fecha_hasta)} (no es un solo mes)`} takeaway={dossier.narratives?.sucursales} refCb={refCb('sucursales')}>
+            <div className={cn('grid gap-4', metric === 'both' && 'xl:grid-cols-2')}>
+              {metric !== 'units' && (
               <div>
                 <div className="mb-2 text-xs font-bold text-[color:var(--text-3)]">Share en facturación ($)</div>
                 <ResponsiveContainer width="100%" height={Math.max(220, dossier.branches.length * 38)}>
@@ -1020,6 +1206,8 @@ export function BrandDossierView({
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+              )}
+              {metric !== 'pvp' && (
               <div>
                 <div className="mb-2 text-xs font-bold text-[color:var(--text-3)]">Share en unidades</div>
                 <ResponsiveContainer width="100%" height={Math.max(220, dossier.branches.length * 38)}>
@@ -1034,7 +1222,11 @@ export function BrandDossierView({
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+              )}
             </div>
+            <p className="text-[11px] leading-5 text-[color:var(--text-3)]">
+              ⚠ "Marca u" y "Total u" son los ACUMULADOS de todo el período seleccionado ({fmtDate(dossier.filters.fecha_desde)} – {fmtDate(dossier.filters.fecha_hasta)}), no de un mes puntual. Para ver un mes, ajustá el rango de fechas arriba.
+            </p>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-[11px] uppercase tracking-wide text-[color:var(--text-3)]">

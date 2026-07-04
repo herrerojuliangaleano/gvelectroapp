@@ -50,6 +50,7 @@ from ..sales_bi_commercial import (
     void_commercial_batch,
 )
 from ..sales_bi_brand_dossier import build_brand_dossier
+from ..sales_bi_brand_dossier_xlsx import build_brand_dossier_xlsx
 from ..users import CurrentUser
 
 router = APIRouter(prefix="/api/sales-bi", tags=["sales_bi"])
@@ -550,6 +551,38 @@ def get_brand_dossier(
     if not dossier["totals"]["brand"]["lineas"] and not dossier["totals"]["brand"]["unidades"]:
         raise HTTPException(status_code=404, detail=f"No hay ventas de '{marca}' en el período seleccionado.")
     return dossier
+
+
+@router.get("/commercial/brand-dossier/export-xlsx")
+def export_brand_dossier_xlsx(
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    marca: str = Query(..., min_length=1),
+    fecha_desde: str | None = Query(default=None),
+    fecha_hasta: str | None = Query(default=None),
+    empresa: str | None = Query(default=None),
+    sucursal: str | None = Query(default=None),
+    sucursales: str | None = Query(default=None),
+    tipo_venta: str | None = Query(default=None),
+    competidores: str | None = Query(default=None),
+    metric: str = Query(default="both", pattern="^(units|pvp|both)$"),
+):
+    """Excel con los datos crudos del informe de marca. Nunca incluye costos/margen."""
+    _require(user, "sales_bi.view")
+    dossier = build_brand_dossier(
+        marca, fecha_desde, fecha_hasta,
+        empresa=empresa, sucursal=sucursal, sucursales=sucursales,
+        tipo_venta=tipo_venta, competidores=competidores,
+    )
+    if not dossier["totals"]["brand"]["lineas"] and not dossier["totals"]["brand"]["unidades"]:
+        raise HTTPException(status_code=404, detail=f"No hay ventas de '{marca}' en el período seleccionado.")
+    xlsx = build_brand_dossier_xlsx(dossier, metric)
+    safe_marca = "".join(ch if ch.isalnum() else "-" for ch in marca.lower()).strip("-") or "marca"
+    filename = f"informe-{safe_marca}-{dossier['filters']['fecha_desde']}.xlsx"
+    return Response(
+        content=xlsx,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/lines/report")

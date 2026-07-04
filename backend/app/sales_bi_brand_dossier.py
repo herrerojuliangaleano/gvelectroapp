@@ -427,15 +427,22 @@ def build_brand_dossier(
     share_series: list[dict[str, Any]] = []
     stack_names = [brand_name] + comp_list
     for sem in sorted(weekly_market.keys()):
-        mk_total = float(_fin(weekly_market[sem])["total_vendido"])
-        row: dict[str, Any] = {"semana": sem, "values": {}}
+        mk_fin = _fin(weekly_market[sem])
+        mk_total = float(mk_fin["total_vendido"])
+        mk_units = int(mk_fin["unidades"])
+        row: dict[str, Any] = {"semana": sem, "values": {}, "values_units": {}}
         usado = 0.0
+        usado_u = 0.0
         for n in stack_names:
-            pvp_n = float(_fin(weekly_by_brand[sem].get(n) or _metric_bucket())["total_vendido"])
-            pct = _share(pvp_n, mk_total)
+            b_fin = _fin(weekly_by_brand[sem].get(n) or _metric_bucket())
+            pct = _share(float(b_fin["total_vendido"]), mk_total)
+            pct_u = _share(int(b_fin["unidades"]), mk_units)
             row["values"][n] = pct
+            row["values_units"][n] = pct_u
             usado += pct
+            usado_u += pct_u
         row["values"]["OTRAS"] = round(max(0.0, 100.0 - usado), 2) if mk_total else 0.0
+        row["values_units"]["OTRAS"] = round(max(0.0, 100.0 - usado_u), 2) if mk_units else 0.0
         share_series.append(row)
 
     # ── Evolución diaria por categoría (solo la marca, top 5 categorías) ─

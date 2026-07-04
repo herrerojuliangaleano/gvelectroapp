@@ -1158,6 +1158,21 @@ export async function fetchSalesBIBrandDossier(params: {
   return request(`/api/sales-bi/commercial/brand-dossier?${qs.toString()}`);
 }
 
+export async function downloadSalesBIBrandDossierXlsx(params: {
+  marca: string;
+  fecha_desde?: string;
+  fecha_hasta?: string;
+  sucursal?: string;
+  sucursales?: string;
+  tipo_venta?: string;
+  competidores?: string;
+  metric?: 'units' | 'pvp' | 'both';
+}): Promise<Blob> {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => { if (value) qs.set(key, value); });
+  return requestBlob(`/api/sales-bi/commercial/brand-dossier/export-xlsx?${qs.toString()}`);
+}
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // Módulo Comercial · PSI

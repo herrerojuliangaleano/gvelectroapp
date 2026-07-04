@@ -873,7 +873,7 @@ export interface SalesBIBrandDossier {
     share_pvp_pct: number;
   }>;
   /** Share % semanal apilado: marca + competidores + OTRAS (suma 100). */
-  share_series: Array<{ semana: string; values: Record<string, number> }>;
+  share_series: Array<{ semana: string; values: Record<string, number>; values_units?: Record<string, number> }>;
   /** Evolución diaria por categoría (solo la marca, top 5 categorías). */
   category_daily: Array<{ fecha: string; values: Record<string, { unidades: number; total_vendido: number }> }>;
   /** Comparativa por sucursal: marca + competidores. */
