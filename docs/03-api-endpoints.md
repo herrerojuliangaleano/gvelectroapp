@@ -172,14 +172,17 @@ Bearer token salvo endpoints publicos como `/api/health` y login.
 | POST | `/api/sales-bi/commercial/corrections` | Crea correccion reutilizable para enlazar producto de catalogo o corregir SKU/marca/tipo/descripcion en la capa comercial. |
 | POST | `/api/sales-bi/commercial/rematch-products` | Recalcula matching comercial con correcciones vigentes. |
 | POST | `/api/sales-bi/commercial/auto-resolve-suggestions` | Recorre pendientes comerciales activos, usa el primer sugerido de catalogo, crea correcciones reutilizables y rematchea. |
+| GET | `/api/sales-bi/commercial/brand-logos/{marca}` | Devuelve metadata y data URL del logo PNG guardado para la marca del dossier. |
+| POST | `/api/sales-bi/commercial/brand-logos/{marca}` | Sube/reemplaza logo PNG de la marca principal para informes PowerPoint. |
+| DELETE | `/api/sales-bi/commercial/brand-logos/{marca}` | Elimina el logo PNG guardado para la marca. |
 | GET | `/api/sales-bi/brands/report` | Dashboard comercial por marcas. |
 | GET | `/api/sales-bi/brands/compare` | Comparacion comercial de marcas por periodo. |
 | GET | `/api/sales-bi/lines/report` | Dashboard comercial por lineas/tipos. |
 | GET | `/api/sales-bi/branches/report` | Dashboard comercial por sucursales. |
 | POST | `/api/sales-bi/commercial/export-pdf` | Exporta informe comercial a PDF. |
 | POST | `/api/sales-bi/commercial/export-xlsx` | Exporta informe comercial a Excel. |
-| GET | `/api/sales-bi/commercial/brand-dossier` | Devuelve el informe de una marca con ranking, competidores, share y detalle comercial. |
-| GET | `/api/sales-bi/commercial/brand-dossier/export-xlsx` | Exporta el dossier de marca a Excel auditable, incluyendo comparativas contra competidores y porcentajes. |
+| GET | `/api/sales-bi/commercial/brand-dossier` | Devuelve el informe de una marca con ranking, competidores, share, tipos comerciales, zonas y logo. Acepta `tipos`. |
+| GET | `/api/sales-bi/commercial/brand-dossier/export-xlsx` | Exporta el dossier de marca a Excel auditable, incluyendo comparativas contra competidores y porcentajes. Acepta `tipos`. |
 
 ## Catalogo maestro
 

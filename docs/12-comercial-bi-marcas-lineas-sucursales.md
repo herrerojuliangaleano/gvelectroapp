@@ -108,11 +108,12 @@ Exportaciones del informe de marca:
   y tablas editables. Es la opcion recomendada para reuniones rapidas porque
   permite ajustar datos, colores, leyendas y textos desde PowerPoint. Incluye
   resumen ejecutivo, evolucion, ranking competitivo, comparacion con
-  competidores, categorias, bandas de precio cuando existan, productos
-  destacados, sucursales y conclusiones.
-  Como PowerPoint no conserva el hover de la app, los graficos editables deben
-  mostrar los datos criticos en la propia slide: etiquetas visibles, tablas de
-  datos en tendencias y bloques de lectura con ultimo valor, pico, piso y share.
+  competidores, categorias, bandas de precio, tipos comerciales, zonas y
+  conclusiones. La version 2.0 usa logo PNG de la marca principal, selector de
+  tipos, `Lavado` como agrupacion ejecutiva, zonas `CABA/GBA/Venta Web` y evita
+  que la narrativa principal dependa de productos/SKUs puntuales.
+  Como PowerPoint no conserva el hover de la app, los graficos editables se
+  acompañan con tablas compactas y lecturas breves por slide.
 - `PowerPoint visual`: captura las secciones del dashboard como imagen y las
   inserta en slides. Sirve cuando se quiere conservar el aspecto exacto de la
   pantalla, pero los graficos no quedan editables.
@@ -121,21 +122,20 @@ Limitacion: PowerPoint no conserva interacciones web como hover, tooltips,
 drill-down o filtros por click. Para eso la fuente de verdad sigue siendo el
 dashboard de la app.
 
-### Fase siguiente - PowerPoint de marca 2.0
+### PowerPoint de marca 2.0
 
-La proxima iteracion del PowerPoint editable esta diseñada en
+La especificacion viva del PowerPoint editable esta en
 [22 - BI Comercial - PowerPoint de marca 2.0](22-bi-comercial-powerpoint-marca-2.md).
 
-Puntos clave para implementar:
+Corte actual:
 
-- Pedir/guardar logo PNG de la marca principal y permitir reemplazarlo al exportar.
-- Cambiar productos destacados y productos por punto de venta por lecturas de
-  tipos comerciales.
-- Permitir seleccionar tipos a comparar; `Lavado` agrupa lavarropas,
-  lavasecarropas/lavaseca y secarropas.
-- Separar share por zonas: `CABA`, `GBA` y `Venta Web`.
-- Usar barras verticales, barras apiladas y tortas segun el tipo de lectura.
-- Mantener la vista externa sin costos, diferencias ni margen.
+- Logo PNG por marca principal guardado en storage.
+- Selector de tipos comerciales para el dossier.
+- `Lavado` agrupa lavarropas, lavasecarropas/lavaseca y secarropas.
+- Share por zonas: `CABA`, `GBA` y `Venta Web`.
+- Ranking competitivo apilado por tipos y ranking separado por tipo.
+- Slides principales por tipos, no por productos puntuales.
+- Vista externa sin costos, diferencias ni margen.
 
 ### Exportacion Excel del informe de marca
 

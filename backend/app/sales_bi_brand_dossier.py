@@ -14,6 +14,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any
 
+from .brand_logo_store import brand_logo_info
 from .sales_bi import _fmt_date
 from .sales_bi_commercial import (
     _add_metric,
@@ -46,6 +47,71 @@ def _avg(bucket: dict[str, Any]) -> float:
 
 def _share(part: float, whole: float) -> float:
     return round(part / whole * 100, 2) if whole else 0.0
+
+
+_DEFAULT_TIPOS = ["HELADERA", "Lavado", "A/A", "TELEVISION"]
+_LAVADO_ALIASES = {"LAVARROPAS", "LAVASECARROPAS", "LAVASECA", "SECARROPAS"}
+_AA_ALIASES = {"AIRE ACONDICIONADO", "A/A", "AA", "A A"}
+_ZONE_ORDER = ["CABA", "GBA", "Venta Web"]
+
+
+def _norm_dim(value: Any) -> str:
+    raw = str(value or "").strip().upper()
+    raw = raw.replace("Á", "A").replace("É", "E").replace("Í", "I").replace("Ó", "O").replace("Ú", "U")
+    raw = raw.replace("Ü", "U").replace("Ñ", "N")
+    return " ".join(raw.replace("/", " / ").split())
+
+
+def _commercial_tipo(value: Any) -> str:
+    key = _norm_dim(value)
+    compact = key.replace(" ", "")
+    if key in _LAVADO_ALIASES or compact in {v.replace(" ", "") for v in _LAVADO_ALIASES}:
+        return "Lavado"
+    if key in _AA_ALIASES or compact in {"AIREACONDICIONADO", "A/A", "AA"}:
+        return "A/A"
+    return key or "SIN TIPO"
+
+
+def _commercial_zone(sucursal: Any, tipo_venta: Any) -> str:
+    venta = _norm_dim(tipo_venta)
+    if "ONLINE" in venta or "WEB" in venta:
+        return "Venta Web"
+    suc = _norm_dim(sucursal)
+    if "CASEROS" in suc:
+        return "CABA"
+    if any(name in suc for name in ("CANNING", "LANUS", "LANUS", "NORCENTER", "NORTE", "SUR")):
+        return "GBA"
+    return "GBA" if suc else "Sin zona"
+
+
+def _tipo_sort_key(name: str, market_bucket: dict[str, Any], brand_bucket: dict[str, Any] | None = None) -> tuple[int, float, str]:
+    preferred = {name: i for i, name in enumerate(_DEFAULT_TIPOS)}
+    if name in preferred:
+        return (0, float(preferred[name]), name)
+    brand_total = float((brand_bucket or {}).get("total_vendido") or 0.0)
+    market_total = float((market_bucket or {}).get("total_vendido") or 0.0)
+    return (1, -(brand_total or market_total), name)
+
+
+def _resolve_selected_tipos(tipos: list[str] | str | None, available: list[str]) -> list[str]:
+    available_map = {_norm_dim(t): t for t in available}
+    available_map.update({_commercial_tipo(t): t for t in available})
+    requested = _parse_csv_list(tipos)
+    if requested:
+        out: list[str] = []
+        for raw in requested:
+            key = _commercial_tipo(raw)
+            value = available_map.get(_norm_dim(raw)) or available_map.get(key)
+            if value and value not in out:
+                out.append(value)
+        return out
+    out = [t for t in _DEFAULT_TIPOS if t in available]
+    for t in available:
+        if t not in out:
+            out.append(t)
+        if len(out) >= 6:
+            break
+    return out
 
 
 def _price_bands(
@@ -123,6 +189,7 @@ def build_brand_dossier(
     sucursales: list[str] | str | None = None,
     tipo_venta: str | None = None,
     competidores: list[str] | str | None = None,
+    tipos: list[str] | str | None = None,
     max_competidores: int = 3,
     detail_series: bool = False,
 ) -> dict[str, Any]:
@@ -151,6 +218,14 @@ def build_brand_dossier(
     cat_brands: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
     tipo_market: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
     tipo_brands: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
+    commercial_tipo_market: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    commercial_tipo_brands: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
+    commercial_tipo_month_market: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
+    commercial_tipo_month_brands: dict[str, dict[str, dict[str, dict[str, Any]]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(_metric_bucket)))
+    commercial_tipo_zone_market: dict[tuple[str, str], dict[str, Any]] = defaultdict(_metric_bucket)
+    commercial_tipo_zone_brand: dict[tuple[str, str], dict[str, Any]] = defaultdict(_metric_bucket)
+    zone_market: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
+    zone_brand: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
     branch_market: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
     branch_brand: dict[str, dict[str, Any]] = defaultdict(_metric_bucket)
     products_brand: dict[tuple[str, str], dict[str, Any]] = {}
@@ -162,6 +237,8 @@ def build_brand_dossier(
     # (pvp unitario, unidades) para bandas de precio Entrada/Media/Premium.
     market_prices: list[tuple[float, int]] = []
     brand_prices: list[tuple[float, int]] = []
+    market_prices_by_tipo: dict[str, list[tuple[float, int]]] = defaultdict(list)
+    brand_prices_by_tipo: dict[str, list[tuple[float, int]]] = defaultdict(list)
     # Semana × marca (todas): para el área apilada de share en el tiempo.
     weekly_by_brand: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
     # Día × categoría (solo la marca): evolución por categoría.
@@ -191,7 +268,9 @@ def build_brand_dossier(
         mes = _month_key(r.fecha)
         cat = str(r.categoria or "OTROS")
         tipo = str(r.tipo_producto or "Sin tipo")
+        tipo_comercial = _commercial_tipo(tipo)
         suc = str(r.sucursal or "Sin sucursal")
+        zona = _commercial_zone(suc, r.tipo_venta)
 
         _add_metric(market, r)
         _add_metric(brands[name], r)
@@ -200,6 +279,12 @@ def build_brand_dossier(
         _add_metric(cat_market[cat], r)
         _add_metric(cat_brands[cat][name], r)
         _add_metric(tipo_market[tipo], r)
+        _add_metric(commercial_tipo_market[tipo_comercial], r)
+        _add_metric(commercial_tipo_brands[tipo_comercial][name], r)
+        _add_metric(commercial_tipo_month_market[mes][tipo_comercial], r)
+        _add_metric(commercial_tipo_month_brands[mes][tipo_comercial][name], r)
+        _add_metric(commercial_tipo_zone_market[(tipo_comercial, zona)], r)
+        _add_metric(zone_market[zona], r)
         _add_metric(branch_market[suc], r)
         dia = r.fecha.isoformat()
         _add_metric(daily_market[dia], r)
@@ -207,6 +292,7 @@ def build_brand_dossier(
         precio_r = float(r.pvp or 0)
         if unidades_r > 0 and precio_r > 0:
             market_prices.append((precio_r, unidades_r))
+            market_prices_by_tipo[tipo_comercial].append((precio_r, unidades_r))
 
         _add_metric(branch_brands[suc][name], r)
         _add_metric(weekly_by_brand[_week_key(r.fecha)][name], r)
@@ -216,6 +302,8 @@ def build_brand_dossier(
         _add_metric(ms_tipo_market[(mes, suc, tipo)], r)
 
         if name == brand_name:
+            _add_metric(commercial_tipo_zone_brand[(tipo_comercial, zona)], r)
+            _add_metric(zone_brand[zona], r)
             _add_metric(m_cat_brand[mes][cat], r)
             _add_metric(m_tipo_brand[mes][tipo], r)
             _add_metric(ms_cat_brand[(mes, suc, cat)], r)
@@ -224,6 +312,7 @@ def build_brand_dossier(
             _add_metric(daily_cat_brand[dia][cat], r)
             if unidades_r > 0 and precio_r > 0:
                 brand_prices.append((precio_r, unidades_r))
+                brand_prices_by_tipo[tipo_comercial].append((precio_r, unidades_r))
             sem = _week_key(r.fecha)
             _add_metric(weekly_brand[sem], r)
             _add_metric(tipo_brands[tipo][name], r)
@@ -299,6 +388,110 @@ def build_brand_dossier(
     for row in ranking_rows:
         row["is_brand"] = row["name"] == brand_name
         row["is_competitor"] = row["name"] in comp_list
+
+    available_tipos = sorted(
+        commercial_tipo_market.keys(),
+        key=lambda t: _tipo_sort_key(t, commercial_tipo_market[t], commercial_tipo_brands[t].get(brand_name)),
+    )
+    selected_tipos = _resolve_selected_tipos(tipos, available_tipos)
+
+    ranking_by_tipo: list[dict[str, Any]] = []
+    for tipo_sel in selected_tipos:
+        mk_tipo = _fin(commercial_tipo_market.get(tipo_sel) or _metric_bucket())
+        tipo_ranked = sorted(
+            (
+                {
+                    "name": n,
+                    **_fin(b, total_reference=float(mk_tipo["total_vendido"] or 0.0)),
+                    "is_brand": n == brand_name,
+                    "is_competitor": n in comp_list,
+                }
+                for n, b in commercial_tipo_brands.get(tipo_sel, {}).items()
+            ),
+            key=lambda row: (float(row["total_vendido"]), int(row["unidades"])),
+            reverse=True,
+        )
+        tipo_rows = tipo_ranked[:8]
+        keep_names = {row["name"] for row in tipo_rows}
+        for required_name in [brand_name, *comp_list]:
+            if required_name in keep_names:
+                continue
+            found = next((row for row in tipo_ranked if row["name"] == required_name), None)
+            if found:
+                tipo_rows.append(found)
+                keep_names.add(required_name)
+        ranking_by_tipo.append({
+            "tipo": tipo_sel,
+            "market": mk_tipo,
+            "brand": _fin(commercial_tipo_brands.get(tipo_sel, {}).get(brand_name) or _metric_bucket()),
+            "rows": tipo_rows,
+        })
+
+    monthly_share_by_tipo: list[dict[str, Any]] = []
+    for tipo_sel in selected_tipos:
+        rows = []
+        for mes in sorted(monthly_market.keys()):
+            mk = _fin(commercial_tipo_month_market.get(mes, {}).get(tipo_sel) or _metric_bucket())
+            br = _fin(commercial_tipo_month_brands.get(mes, {}).get(tipo_sel, {}).get(brand_name) or _metric_bucket())
+            if not mk["unidades"] and not mk["total_vendido"] and not br["unidades"] and not br["total_vendido"]:
+                continue
+            rows.append({
+                "mes": mes,
+                "brand_unidades": br["unidades"],
+                "brand_pvp": br["total_vendido"],
+                "market_unidades": mk["unidades"],
+                "market_pvp": mk["total_vendido"],
+                "share_units_pct": _share(br["unidades"], mk["unidades"]),
+                "share_pvp_pct": _share(br["total_vendido"], mk["total_vendido"]),
+            })
+        monthly_share_by_tipo.append({"tipo": tipo_sel, "rows": rows})
+
+    zone_order = [*_ZONE_ORDER, *sorted(z for z in zone_market.keys() if z not in _ZONE_ORDER)]
+    zone_share: list[dict[str, Any]] = []
+    for zone in zone_order:
+        mk = _fin(zone_market.get(zone) or _metric_bucket())
+        br = _fin(zone_brand.get(zone) or _metric_bucket())
+        if not mk["unidades"] and not mk["total_vendido"]:
+            continue
+        zone_share.append({
+            "zona": zone,
+            "brand_unidades": br["unidades"],
+            "brand_pvp": br["total_vendido"],
+            "market_unidades": mk["unidades"],
+            "market_pvp": mk["total_vendido"],
+            "share_units_pct": _share(br["unidades"], mk["unidades"]),
+            "share_pvp_pct": _share(br["total_vendido"], mk["total_vendido"]),
+            "brand_mix_units_pct": _share(br["unidades"], brand_tot["unidades"]),
+            "brand_mix_pvp_pct": _share(br["total_vendido"], brand_tot["total_vendido"]),
+        })
+
+    tipo_zone_matrix: list[dict[str, Any]] = []
+    for tipo_sel in selected_tipos:
+        zone_items: dict[str, Any] = {}
+        tipo_brand_total = _fin(commercial_tipo_brands.get(tipo_sel, {}).get(brand_name) or _metric_bucket())
+        for zone in zone_order:
+            mk = _fin(commercial_tipo_zone_market.get((tipo_sel, zone)) or _metric_bucket())
+            br = _fin(commercial_tipo_zone_brand.get((tipo_sel, zone)) or _metric_bucket())
+            zone_items[zone] = {
+                "brand_unidades": br["unidades"],
+                "brand_pvp": br["total_vendido"],
+                "market_unidades": mk["unidades"],
+                "market_pvp": mk["total_vendido"],
+                "share_units_pct": _share(br["unidades"], mk["unidades"]),
+                "share_pvp_pct": _share(br["total_vendido"], mk["total_vendido"]),
+            }
+        tipo_zone_matrix.append({
+            "tipo": tipo_sel,
+            "brand_unidades": tipo_brand_total["unidades"],
+            "brand_pvp": tipo_brand_total["total_vendido"],
+            "zones": zone_items,
+        })
+
+    price_bands_by_tipo: list[dict[str, Any]] = []
+    for tipo_sel in selected_tipos:
+        bands = _price_bands(market_prices_by_tipo.get(tipo_sel, []), brand_prices_by_tipo.get(tipo_sel, []))
+        if bands:
+            price_bands_by_tipo.append({"tipo": tipo_sel, **bands})
 
     # ── Series mensuales (marca + mercado + competidores) ───────────────
     monthly_series: list[dict[str, Any]] = []
@@ -809,9 +1002,17 @@ def build_brand_dossier(
             "sucursales": _parse_csv_list(sucursales),
             "tipo_venta": tipo_venta or "",
             "competidores": comp_list,
+            "tipos": selected_tipos,
         },
         "source": "Ventas Vs. Costos",
         "sensitive": {"include_costs": False, "include_margin": False},
+        "brand_logo": brand_logo_info(brand_name),
+        "available_tipos": available_tipos,
+        "selected_tipos": selected_tipos,
+        "tipo_groups": {
+            "Lavado": sorted(_LAVADO_ALIASES),
+            "A/A": sorted(_AA_ALIASES),
+        },
         "totals": {
             "brand": brand_tot,
             "market": market_tot,
@@ -830,11 +1031,17 @@ def build_brand_dossier(
         },
         "price_index_global": price_index_global,
         "monthly_series": monthly_series,
+        "competitor_period_bars": monthly_series,
         "weekly_series": weekly_series,
         "daily_series": daily_series,
         "share_series": share_series,
         "category_daily": category_daily,
         "branch_compare": branch_compare,
+        "ranking_by_tipo": ranking_by_tipo,
+        "monthly_share_by_tipo": monthly_share_by_tipo,
+        "zone_share": zone_share,
+        "tipo_zone_matrix": tipo_zone_matrix,
+        "price_bands_by_tipo": price_bands_by_tipo,
         "price_bands": price_bands,
         "category_momentum": category_momentum,
         "product_movers": product_movers,

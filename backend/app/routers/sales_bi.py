@@ -7,6 +7,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from ..auth import require_current_user
+from ..brand_logo_store import brand_logo_info, delete_brand_logo, save_brand_logo
 from ..sales_bi import (
     analyze_sheets,
     compare_sellers_report,
@@ -483,6 +484,41 @@ def _commercial_permissions(user: CurrentUser, presentation: bool) -> tuple[bool
     return include_costs, include_margin
 
 
+@router.get("/commercial/brand-logos/{marca}")
+def get_commercial_brand_logo(
+    marca: str,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+):
+    _require(user, "sales_bi.view")
+    return brand_logo_info(marca)
+
+
+@router.post("/commercial/brand-logos/{marca}")
+async def upload_commercial_brand_logo(
+    marca: str,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+    file: UploadFile = File(...),
+):
+    _require(user, "sales_bi.view")
+    content_type = (file.content_type or "").lower()
+    if content_type and content_type != "image/png":
+        raise HTTPException(status_code=400, detail="El logo debe ser PNG.")
+    content = await file.read()
+    try:
+        return save_brand_logo(marca, content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/commercial/brand-logos/{marca}")
+def remove_commercial_brand_logo(
+    marca: str,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+):
+    _require(user, "sales_bi.view")
+    return delete_brand_logo(marca)
+
+
 @router.get("/brands/report")
 def get_brands_report(
     user: Annotated[CurrentUser, Depends(require_current_user)],
@@ -540,13 +576,14 @@ def get_brand_dossier(
     sucursales: str | None = Query(default=None),
     tipo_venta: str | None = Query(default=None),
     competidores: str | None = Query(default=None),
+    tipos: str | None = Query(default=None),
 ):
     """Informe presentable a una marca. Nunca incluye costos ni margen."""
     _require(user, "sales_bi.view")
     dossier = build_brand_dossier(
         marca, fecha_desde, fecha_hasta,
         empresa=empresa, sucursal=sucursal, sucursales=sucursales,
-        tipo_venta=tipo_venta, competidores=competidores,
+        tipo_venta=tipo_venta, competidores=competidores, tipos=tipos,
     )
     if not dossier["totals"]["brand"]["lineas"] and not dossier["totals"]["brand"]["unidades"]:
         raise HTTPException(status_code=404, detail=f"No hay ventas de '{marca}' en el período seleccionado.")
@@ -564,6 +601,7 @@ def export_brand_dossier_xlsx(
     sucursales: str | None = Query(default=None),
     tipo_venta: str | None = Query(default=None),
     competidores: str | None = Query(default=None),
+    tipos: str | None = Query(default=None),
     metric: str = Query(default="both", pattern="^(units|pvp|both)$"),
 ):
     """Excel con los datos crudos del informe de marca. Nunca incluye costos/margen."""
@@ -571,7 +609,7 @@ def export_brand_dossier_xlsx(
     dossier = build_brand_dossier(
         marca, fecha_desde, fecha_hasta,
         empresa=empresa, sucursal=sucursal, sucursales=sucursales,
-        tipo_venta=tipo_venta, competidores=competidores,
+        tipo_venta=tipo_venta, competidores=competidores, tipos=tipos,
         detail_series=True,
     )
     if not dossier["totals"]["brand"]["lineas"] and not dossier["totals"]["brand"]["unidades"]:

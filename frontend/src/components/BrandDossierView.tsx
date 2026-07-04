@@ -12,14 +12,16 @@
  */
 import {
   ArrowLeft, ArrowUpRight, ArrowDownRight, CheckCircle2, FileDown, FileSpreadsheet, Lightbulb, ListChecks,
-  Loader2, Presentation, ShieldCheck, X,
+  Image as ImageIcon, Loader2, Presentation, ShieldCheck, Trash2, Upload, X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, LineChart,
   Pie, PieChart, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis,
 } from 'recharts';
-import { downloadSalesBIBrandDossierXlsx, fetchSalesBIBrandDossier } from '../api/client';
+import {
+  deleteSalesBIBrandLogo, downloadSalesBIBrandDossierXlsx, fetchSalesBIBrandDossier, uploadSalesBIBrandLogo,
+} from '../api/client';
 import type { SalesBIBrandDossier, SalesBICommercialMix } from '../types';
 import {
   CHART_ANIM, CHART_TOOLTIP_ITEM_STYLE, CHART_TOOLTIP_LABEL_STYLE, CHART_TOOLTIP_STYLE,
@@ -149,6 +151,8 @@ export function BrandDossierView({
   const [error, setError] = useState('');
   const [exporting, setExporting] = useState<'ppt' | 'ppt-editable' | 'pdf' | 'xlsx' | null>(null);
   const [exportProgress, setExportProgress] = useState('');
+  const [selectedTipos, setSelectedTipos] = useState<string[]>([]);
+  const [logoUploading, setLogoUploading] = useState(false);
   const [gran, setGran] = useState<Granularity>('monthly');
   const [drill, setDrill] = useState<string | null>(null);
   // Métrica del informe: solo unidades, solo pesos, o ambas (default).
@@ -173,6 +177,7 @@ export function BrandDossierView({
       sucursal: sucursal || undefined,
       tipo_venta: tipoVenta || undefined,
       competidores: competidores.length ? competidores.join(',') : undefined,
+      tipos: selectedTipos.length ? selectedTipos.join(',') : undefined,
     })
       .then((data) => {
         if (cancelled) return;
@@ -187,7 +192,7 @@ export function BrandDossierView({
       .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : 'No se pudo cargar el informe'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [marca, fechaDesde, fechaHasta, sucursal, tipoVenta, competidores]);
+  }, [marca, fechaDesde, fechaHasta, sucursal, tipoVenta, competidores, selectedTipos]);
 
   // ── Serie de evolución con granularidad + drill-down ─────────────────
   const spanDays = useMemo(() => {
@@ -376,6 +381,7 @@ export function BrandDossierView({
           sucursal: sucursal || undefined,
           tipo_venta: tipoVenta || undefined,
           competidores: compList.length ? compList.join(',') : undefined,
+          tipos: (dossier.selected_tipos || selectedTipos).length ? (dossier.selected_tipos || selectedTipos).join(',') : undefined,
           metric,
         });
         const url = URL.createObjectURL(blob);
@@ -445,6 +451,46 @@ export function BrandDossierView({
     });
   }
 
+  function toggleTipo(name: string) {
+    const current = selectedTipos.length ? selectedTipos : (dossier?.selected_tipos || []);
+    setSelectedTipos((prev) => {
+      const base = prev.length ? prev : current;
+      if (base.includes(name)) {
+        const next = base.filter((t) => t !== name);
+        return next.length ? next : base;
+      }
+      return [...base, name];
+    });
+  }
+
+  async function handleLogoFile(file?: File | null) {
+    if (!file || !dossier) return;
+    setLogoUploading(true);
+    setError('');
+    try {
+      const brand_logo = await uploadSalesBIBrandLogo(dossier.marca, file);
+      setDossier((current) => (current ? { ...current, brand_logo } : current));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo subir el logo');
+    } finally {
+      setLogoUploading(false);
+    }
+  }
+
+  async function handleDeleteLogo() {
+    if (!dossier?.brand_logo?.exists) return;
+    setLogoUploading(true);
+    setError('');
+    try {
+      const brand_logo = await deleteSalesBIBrandLogo(dossier.marca);
+      setDossier((current) => (current ? { ...current, brand_logo } : current));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo borrar el logo');
+    } finally {
+      setLogoUploading(false);
+    }
+  }
+
   if (!brandNames.length) {
     return <EmptyChartState minHeight={320} description="Importa datos comerciales para armar el informe de marca." />;
   }
@@ -452,6 +498,8 @@ export function BrandDossierView({
   const share = dossier?.share;
   const brandTot = dossier?.totals.brand;
   const marketTot = dossier?.totals.market;
+  const availableTipos = dossier?.available_tipos || [];
+  const activeTipos = selectedTipos.length ? selectedTipos : (dossier?.selected_tipos || []);
 
   return (
     <div className="space-y-4">
@@ -462,7 +510,7 @@ export function BrandDossierView({
             <span className="text-[11px] font-black uppercase tracking-[0.18em] text-[color:var(--text-3)]">Marca</span>
             <select
               value={marca}
-              onChange={(e) => { setCompetidores([]); setMarca(e.target.value); }}
+              onChange={(e) => { setCompetidores([]); setSelectedTipos([]); setMarca(e.target.value); }}
               className="h-10 rounded-xl border border-white/15 bg-slate-950/40 px-3 text-sm font-bold text-white outline-none focus:border-[color:var(--chart-blue)]"
             >
               {brandNames.map((name) => <option key={name} value={name}>{name}</option>)}
@@ -509,11 +557,69 @@ export function BrandDossierView({
               </button>
             ))}
           </div>
+          {availableTipos.length > 0 && (
+            <div className="flex max-w-full flex-wrap items-center gap-1.5 rounded-2xl border border-white/10 bg-slate-950/30 px-2.5 py-2">
+              <span className="mr-1 text-[10px] font-black uppercase tracking-[0.18em] text-[color:var(--text-3)]">Tipos PPT</span>
+              {availableTipos.slice(0, 12).map((name) => {
+                const active = activeTipos.includes(name);
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => toggleTipo(name)}
+                    className={cn(
+                      'rounded-full border px-2.5 py-1 text-[11px] font-black transition',
+                      active
+                        ? 'border-[color:var(--chart-blue)] bg-[color:var(--chart-blue)]/20 text-white'
+                        : 'border-white/10 text-[color:var(--text-3)] hover:border-white/25 hover:text-white',
+                    )}
+                    title={active ? 'Incluido en el PowerPoint editable' : 'Agregar al PowerPoint editable'}
+                  >
+                    {name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-200">
             <ShieldCheck size={12} /> Sin costos ni márgenes
           </span>
+          {dossier && (
+            <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/30 px-2.5 py-1.5">
+              <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-white">
+                {dossier.brand_logo?.data_url
+                  ? <img src={dossier.brand_logo.data_url} alt="" className="h-full w-full object-contain" />
+                  : <ImageIcon size={16} className="text-slate-500" />}
+              </div>
+              <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-white/15 px-2.5 text-xs font-bold text-white hover:bg-white/10">
+                {logoUploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                {dossier.brand_logo?.exists ? 'Cambiar logo' : 'Logo marca'}
+                <input
+                  type="file"
+                  accept="image/png"
+                  className="hidden"
+                  disabled={logoUploading}
+                  onChange={(e) => {
+                    void handleLogoFile(e.target.files?.[0]);
+                    e.currentTarget.value = '';
+                  }}
+                />
+              </label>
+              {dossier.brand_logo?.exists && (
+                <button
+                  type="button"
+                  onClick={() => void handleDeleteLogo()}
+                  disabled={logoUploading}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-[color:var(--text-3)] hover:bg-red-500/10 hover:text-red-200 disabled:opacity-40"
+                  title="Borrar logo guardado"
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
+            </div>
+          )}
           <button
             type="button"
             onClick={() => handleExport('xlsx')}

@@ -827,9 +827,22 @@ export interface SalesBIBrandDossier {
     sucursales: string[];
     tipo_venta: string;
     competidores: string[];
+    tipos?: string[];
   };
   source: string;
   sensitive: { include_costs: boolean; include_margin: boolean };
+  brand_logo?: {
+    marca: string;
+    slug: string;
+    exists: boolean;
+    content_type: string;
+    size: number;
+    updated_at: number | null;
+    data_url: string;
+  };
+  available_tipos?: string[];
+  selected_tipos?: string[];
+  tipo_groups?: Record<string, string[]>;
   totals: {
     brand: SalesBICommercialMetric;
     market: SalesBICommercialMetric;
@@ -856,6 +869,66 @@ export interface SalesBIBrandDossier {
     share_pvp_pct: number;
     share_units_pct: number;
     competidores: Record<string, { unidades: number; total_vendido: number }>;
+  }>;
+  competitor_period_bars?: SalesBIBrandDossier['monthly_series'];
+  ranking_by_tipo?: Array<{
+    tipo: string;
+    market: SalesBICommercialMetric;
+    brand: SalesBICommercialMetric;
+    rows: Array<SalesBICommercialMix & { is_brand: boolean; is_competitor: boolean }>;
+  }>;
+  monthly_share_by_tipo?: Array<{
+    tipo: string;
+    rows: Array<{
+      mes: string;
+      brand_unidades: number;
+      brand_pvp: number;
+      market_unidades: number;
+      market_pvp: number;
+      share_units_pct: number;
+      share_pvp_pct: number;
+    }>;
+  }>;
+  zone_share?: Array<{
+    zona: string;
+    brand_unidades: number;
+    brand_pvp: number;
+    market_unidades: number;
+    market_pvp: number;
+    share_units_pct: number;
+    share_pvp_pct: number;
+    brand_mix_units_pct: number;
+    brand_mix_pvp_pct: number;
+  }>;
+  tipo_zone_matrix?: Array<{
+    tipo: string;
+    brand_unidades: number;
+    brand_pvp: number;
+    zones: Record<string, {
+      brand_unidades: number;
+      brand_pvp: number;
+      market_unidades: number;
+      market_pvp: number;
+      share_units_pct: number;
+      share_pvp_pct: number;
+    }>;
+  }>;
+  price_bands_by_tipo?: Array<{
+    tipo: string;
+    cortes: { entrada_hasta: number; media_hasta: number };
+    bands: Array<{
+      banda: string;
+      corte_min: number;
+      corte_max: number | null;
+      brand_unidades: number;
+      brand_pvp: number;
+      market_unidades: number;
+      market_pvp: number;
+      share_units_pct: number;
+      share_pvp_pct: number;
+      brand_mix_units_pct: number;
+      market_mix_units_pct: number;
+    }>;
   }>;
   weekly_series: Array<{
     semana: string;

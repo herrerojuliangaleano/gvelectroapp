@@ -1152,10 +1152,21 @@ export async function fetchSalesBIBrandDossier(params: {
   sucursales?: string;
   tipo_venta?: string;
   competidores?: string;
+  tipos?: string;
 }): Promise<import('../types').SalesBIBrandDossier> {
   const qs = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => { if (value) qs.set(key, value); });
   return request(`/api/sales-bi/commercial/brand-dossier?${qs.toString()}`);
+}
+
+export async function uploadSalesBIBrandLogo(marca: string, file: File): Promise<NonNullable<import('../types').SalesBIBrandDossier['brand_logo']>> {
+  const form = new FormData();
+  form.append('file', file);
+  return request(`/api/sales-bi/commercial/brand-logos/${encodeURIComponent(marca)}`, { method: 'POST', body: form });
+}
+
+export async function deleteSalesBIBrandLogo(marca: string): Promise<NonNullable<import('../types').SalesBIBrandDossier['brand_logo']>> {
+  return request(`/api/sales-bi/commercial/brand-logos/${encodeURIComponent(marca)}`, { method: 'DELETE' });
 }
 
 export async function downloadSalesBIBrandDossierXlsx(params: {
@@ -1166,6 +1177,7 @@ export async function downloadSalesBIBrandDossierXlsx(params: {
   sucursales?: string;
   tipo_venta?: string;
   competidores?: string;
+  tipos?: string;
   metric?: 'units' | 'pvp' | 'both';
 }): Promise<Blob> {
   const qs = new URLSearchParams();

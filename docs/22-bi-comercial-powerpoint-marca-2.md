@@ -3,7 +3,7 @@
 ## Estado
 
 [FASE] BI Comercial - presentaciones para marcas  
-[ESTADO] Diseñado / pendiente de implementacion  
+[ESTADO] Corte 1 implementado / pendiente de prueba manual con PPT real
 [BASE ACTIVA] PostgreSQL  
 [FUENTE] `Ventas Vs. Costos`  
 [DOCUMENTO BASE] `docs/12-comercial-bi-marcas-lineas-sucursales.md`
@@ -36,6 +36,19 @@ mismo paso.
 - Usar barras verticales o apiladas para comparaciones ejecutivas.
 - Usar torta solo para in-house share por zona, donde la pregunta es parte del
   total.
+
+## Tecnologia actual
+
+- Dashboard web: React + `recharts` para graficos interactivos dentro de la app.
+- PowerPoint editable: `pptxgenjs` desde frontend, con graficos nativos y tablas
+  editables en PowerPoint.
+- Fuente de datos: endpoint `GET /api/sales-bi/commercial/brand-dossier`.
+- Logo de marca: PNG guardado en el storage activo del backend bajo
+  `storage/brand-logos/{marca_slug}.png`.
+
+Decision: mantener el PowerPoint editable en frontend por ahora. La razon es
+que la salida actual ya queda bien visualmente y `pptxgenjs` permite conservar
+graficos y tablas editables sin capturarlos como imagen.
 
 ## Alcance
 
@@ -81,13 +94,8 @@ Implementacion sugerida:
 
 - Guardar archivo en el storage activo de backend, por ejemplo
   `storage/brand-logos/{marca_slug}.png`.
-- Guardar metadata minima en Postgres:
-  - `id`
-  - `marca`
-  - `file_path`
-  - `content_type`
-  - `updated_by`
-  - `updated_at`
+- En el corte 1 no se agrego tabla nueva: la metadata se deriva del archivo
+  guardado para evitar migracion innecesaria.
 - Exponer endpoints internos para obtener, subir y reemplazar logo.
 
 ### Tipo comercial
@@ -392,12 +400,69 @@ Manual:
 
 ## Proximo paso recomendado
 
-1. Implementar persistencia y endpoints de logo de marca.
-2. Agregar normalizador backend de tipo comercial y grupo `Lavado`.
-3. Extender dossier con `tipos` y matrices nuevas.
-4. Actualizar UI de exportacion.
-5. Rediseñar `exportBrandDossierEditable.ts`.
-6. Extender Excel con las mismas tablas base.
+1. Probar manualmente export PPT con logo real de Samsung.
+2. Revisar si el largo de la presentacion queda bien con 4 tipos seleccionados.
+3. Extender Excel con las mismas tablas base de tipos/zona si gerencia las pide
+   como archivo auditable.
+4. Llevar los graficos nuevos a la app en una fase separada.
+
+## Corte 1 implementado
+
+Archivos tocados:
+
+- `backend/app/brand_logo_store.py`
+- `backend/app/sales_bi_brand_dossier.py`
+- `backend/app/routers/sales_bi.py`
+- `frontend/src/api/client.ts`
+- `frontend/src/components/BrandDossierView.tsx`
+- `frontend/src/lib/exportBrandDossierEditable.ts`
+- `frontend/src/types/index.ts`
+
+Cambios hechos:
+
+- Se agregaron endpoints para consultar, subir y borrar logo PNG de marca.
+- El dossier acepta `tipos` y devuelve:
+  - `available_tipos`;
+  - `selected_tipos`;
+  - `tipo_groups`;
+  - `brand_logo`;
+  - `ranking_by_tipo`;
+  - `monthly_share_by_tipo`;
+  - `zone_share`;
+  - `tipo_zone_matrix`;
+  - `price_bands_by_tipo`.
+- `Lavado` agrupa lavarropas, lavaseca/lavasecarropas y secarropas.
+- `Venta Web` se detecta primero por canal/tipo de venta y despues por sucursal.
+- La UI del dossier permite seleccionar tipos comerciales y subir/reemplazar el
+  logo PNG de la marca principal.
+- El PowerPoint editable usa logo de marca en portada y encabezado.
+- El PowerPoint reemplaza slides centradas en productos por:
+  - tipos x punto de venta;
+  - tipos destacados;
+  - participacion mensual por tipo;
+  - gamas de precio por tipo;
+  - ranking competitivo total apilado por tipos;
+  - ranking competitivo por tipo.
+- `Marca vs competidores` usa barras verticales por periodo.
+- `In-house share` se muestra por zonas `CABA`, `GBA` y `Venta Web`.
+
+Validacion ejecutada:
+
+- `python -m compileall -q backend/app`: OK.
+- `docker compose exec backend python -c "import app.main; print('ok')"`: OK.
+- `npm.cmd run build` en `frontend/`: OK.
+- `docker compose build backend && docker compose up -d backend`: OK.
+- `docker compose --env-file backend/.env.production.local -f docker-compose.prod-local.yml build backend-prod && ... up -d backend-prod`: OK.
+- Healthcheck HTTP dev `http://127.0.0.1:8000/api/health`: OK.
+- Healthcheck HTTP mini-prod `http://127.0.0.1:8010/api/health`: OK.
+- OpenAPI dev y mini-prod muestra `/api/sales-bi/commercial/brand-logos/{marca}` y
+  `/api/sales-bi/commercial/brand-dossier`: OK.
+
+Lo no validado todavia:
+
+- Export manual de PPT desde navegador con logo real.
+- Apertura del `.pptx` resultante en PowerPoint para revisar layout final.
+- Flujo real de subir/reemplazar/borrar logo desde la UI.
 
 ## Protocolo de continuidad
 
