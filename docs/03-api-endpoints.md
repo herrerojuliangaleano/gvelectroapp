@@ -178,6 +178,8 @@ Bearer token salvo endpoints publicos como `/api/health` y login.
 | GET | `/api/sales-bi/branches/report` | Dashboard comercial por sucursales. |
 | POST | `/api/sales-bi/commercial/export-pdf` | Exporta informe comercial a PDF. |
 | POST | `/api/sales-bi/commercial/export-xlsx` | Exporta informe comercial a Excel. |
+| GET | `/api/sales-bi/commercial/brand-dossier` | Devuelve el informe de una marca con ranking, competidores, share y detalle comercial. |
+| GET | `/api/sales-bi/commercial/brand-dossier/export-xlsx` | Exporta el dossier de marca a Excel auditable, incluyendo comparativas contra competidores y porcentajes. |
 
 ## Catalogo maestro
 

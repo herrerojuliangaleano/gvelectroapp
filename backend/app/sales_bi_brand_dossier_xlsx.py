@@ -22,6 +22,14 @@ HEAD_FONT = Font(bold=True, color="FFFFFF")
 BOLD = Font(bold=True)
 
 
+def _pct(part: float, whole: float) -> float:
+    return round(part / whole * 100, 2) if whole else 0.0
+
+
+def _delta_pct(value: float, base: float) -> float:
+    return round((value - base) / base * 100, 2) if base else 0.0
+
+
 def _units(metric: str) -> bool:
     return metric in ("units", "both")
 
@@ -185,6 +193,161 @@ def build_brand_dossier_xlsx(d: dict[str, Any], metric: str = "both") -> bytes:
             out += [c["brand_avg_pvp"], c["market_avg_pvp"], c["price_index"]]
         rows.append(out)
     _write_table(ws, 1, heads, rows)
+
+    # ── Marca vs competidores: evolución mensual + cara a cara ──────────
+    comps = list(f.get("competidores") or [])
+    if comps:
+        duel_names = [marca] + [c for c in comps if c != marca]
+        by_name = {r["name"]: r for r in d.get("ranking", [])}
+        duel = [by_name[n] for n in duel_names if n in by_name]
+
+        # Resumen competitivo del periodo completo. Es la base para comparar
+        # rápido marcas seleccionadas sin depender de los gráficos de la app.
+        if len(duel) >= 2:
+            ws = _sheet(wb, "Comparativo marcas")
+            heads = [("Marca", None), ("Es marca base", None)]
+            if u:
+                heads += [("Unidades", UNITS_FMT), ("Share u %", PCT_FMT), ("Dif u vs base", "+#,##0;-#,##0"), ("Dif u % vs base", PCT_FMT)]
+            if p:
+                heads += [("Facturación", MONEY_FMT), ("Share $ %", PCT_FMT), ("Dif $ vs base", MONEY_FMT), ("Dif $ % vs base", PCT_FMT)]
+            heads += [("PVP promedio", MONEY_FMT), ("SKUs", UNITS_FMT), ("Líneas", UNITS_FMT)]
+            market_tot = d.get("totals", {}).get("market", {})
+            brand_ref = by_name.get(marca) or {}
+            rows = []
+            for rnk in duel:
+                out: list[Any] = [rnk["name"], "Sí" if rnk["name"] == marca else "No"]
+                if u:
+                    units_val = float(rnk.get("unidades") or 0)
+                    units_base = float(brand_ref.get("unidades") or 0)
+                    out += [
+                        rnk.get("unidades") or 0,
+                        _pct(units_val, float(market_tot.get("unidades") or 0)),
+                        units_val - units_base,
+                        _delta_pct(units_val, units_base),
+                    ]
+                if p:
+                    pvp_val = float(rnk.get("total_vendido") or 0)
+                    pvp_base = float(brand_ref.get("total_vendido") or 0)
+                    out += [
+                        rnk.get("total_vendido") or 0,
+                        rnk.get("participacion_pct") or 0,
+                        pvp_val - pvp_base,
+                        _delta_pct(pvp_val, pvp_base),
+                    ]
+                out += [rnk.get("pvp_promedio") or 0, rnk.get("productos") or 0, rnk.get("lineas") or 0]
+                rows.append(out)
+            _write_table(ws, 1, heads, rows)
+
+        # Evolución mensual de la marca Y cada competidor (formato largo).
+        ws = _sheet(wb, "Competidores por mes")
+        heads = [("Mes", None), ("Marca", None)]
+        if u:
+            heads += [("Unidades", UNITS_FMT), ("Mercado u", UNITS_FMT), ("Share u %", PCT_FMT), ("Dif u vs base", "+#,##0;-#,##0"), ("Dif u % vs base", PCT_FMT)]
+        if p:
+            heads += [("Facturación", MONEY_FMT), ("Mercado $", MONEY_FMT), ("Share $ %", PCT_FMT), ("Dif $ vs base", MONEY_FMT), ("Dif $ % vs base", PCT_FMT)]
+        rows = []
+        for row in d.get("monthly_series", []):
+            base_u = float(row["brand_unidades"] or 0)
+            base_p = float(row["brand_pvp"] or 0)
+            jugadores = [(marca, base_u, base_p)]
+            for comp in comps:
+                cval = (row.get("competidores") or {}).get(comp) or {}
+                jugadores.append((comp, cval.get("unidades") or 0, cval.get("total_vendido") or 0))
+            for nombre, uu, pp in jugadores:
+                out: list[Any] = [row["mes"], nombre]
+                if u:
+                    out += [uu, row["market_unidades"], _pct(float(uu), row["market_unidades"]), float(uu) - base_u, _delta_pct(float(uu), base_u)]
+                if p:
+                    out += [pp, row["market_pvp"], _pct(float(pp), row["market_pvp"]), float(pp) - base_p, _delta_pct(float(pp), base_p)]
+                rows.append(out)
+        _write_table(ws, 1, heads, rows)
+
+        # Share semanal apilado: misma lógica del gráfico de la app
+        # (marca + competidores + OTRAS). Sirve para reconstruir el share.
+        share_series = d.get("share_series") or []
+        if share_series:
+            ws = _sheet(wb, "Share semanal")
+            heads = [("Semana", None), ("Marca", None)]
+            if u:
+                heads.append(("Share u %", PCT_FMT))
+            if p:
+                heads.append(("Share $ %", PCT_FMT))
+            rows = []
+            for row in share_series:
+                names = [n for n in duel_names if n in (row.get("values") or {}) or n in (row.get("values_units") or {})]
+                if "OTRAS" in (row.get("values") or {}) or "OTRAS" in (row.get("values_units") or {}):
+                    names.append("OTRAS")
+                for nombre in names:
+                    out = [row["semana"], nombre]
+                    if u:
+                        out.append((row.get("values_units") or {}).get(nombre) or 0)
+                    if p:
+                        out.append((row.get("values") or {}).get(nombre) or 0)
+                    rows.append(out)
+            _write_table(ws, 1, heads, rows)
+
+        # Cara a cara: métricas comparadas con el líder marcado.
+        if len(duel) >= 2:
+            ws = _sheet(wb, "Cara a cara")
+            heads = [("Métrica", None)] + [(n, None) for n in duel_names if n in by_name] + [("Líder", None), ("Base", None), ("Mejor vs base %", PCT_FMT)]
+            metricas: list[tuple[str, str, str | None]] = []
+            if p:
+                metricas.append(("Facturación", "total_vendido", MONEY_FMT))
+            if u:
+                metricas.append(("Unidades", "unidades", UNITS_FMT))
+            metricas.append(("Líneas de venta", "lineas", UNITS_FMT))
+            metricas.append(("SKUs", "productos", UNITS_FMT))
+            if p:
+                metricas.append(("PVP promedio", "pvp_promedio", MONEY_FMT))
+                metricas.append(("Participación $ %", "participacion_pct", PCT_FMT))
+            if u:
+                metricas.append(("Participación u %", "__share_units", PCT_FMT))
+            rows = []
+            for label, key, _fmt in metricas:
+                if key == "__share_units":
+                    vals = [_pct(float(r.get("unidades") or 0), float(d.get("totals", {}).get("market", {}).get("unidades") or 0)) for r in duel]
+                else:
+                    vals = [float(r.get(key) or 0) for r in duel]
+                ganador = duel[vals.index(max(vals))]["name"]
+                base_val = vals[0] if vals else 0
+                best_val = max(vals) if vals else 0
+                row_values = vals if key == "__share_units" else [r.get(key) or 0 for r in duel]
+                rows.append([label] + row_values + [ganador, marca, _delta_pct(best_val, base_val)])
+            # formato por columna: usamos el de cada métrica fila a fila
+            fila0 = 1
+            _write_table(ws, fila0, heads, rows)
+            for i, (_label, _key, fmt) in enumerate(metricas, start=fila0 + 1):
+                if fmt:
+                    for c in range(2, 2 + len(duel)):
+                        ws.cell(i, c).number_format = fmt
+
+        # Comparativa por sucursal (marca + competidores, con share por sucursal).
+        branch_cmp = d.get("branch_compare") or []
+        if branch_cmp:
+            mk_by_suc = {b["sucursal"]: b for b in d.get("branches", [])}
+            ws = _sheet(wb, "Competidores x Sucursal")
+            heads = [("Sucursal", None), ("Marca", None)]
+            if u:
+                heads += [("Unidades", UNITS_FMT), ("Total suc. u", UNITS_FMT), ("Share suc. u %", PCT_FMT), ("Dif u vs base", "+#,##0;-#,##0"), ("Dif u % vs base", PCT_FMT)]
+            if p:
+                heads += [("Facturación", MONEY_FMT), ("Total suc. $", MONEY_FMT), ("Share suc. $ %", PCT_FMT), ("Dif $ vs base", MONEY_FMT), ("Dif $ % vs base", PCT_FMT)]
+            rows = []
+            for b in branch_cmp:
+                mk = mk_by_suc.get(b["sucursal"]) or {}
+                base_val = (b.get("values") or {}).get(marca) or {}
+                base_u = float(base_val.get("unidades") or 0)
+                base_p = float(base_val.get("total_vendido") or 0)
+                for nombre in duel_names:
+                    val = (b.get("values") or {}).get(nombre) or {}
+                    out = [b["sucursal"], nombre]
+                    if u:
+                        uu = float(val.get("unidades") or 0)
+                        out += [uu, mk.get("market_unidades") or 0, _pct(uu, mk.get("market_unidades") or 0), uu - base_u, _delta_pct(uu, base_u)]
+                    if p:
+                        pp = float(val.get("total_vendido") or 0)
+                        out += [pp, mk.get("market_pvp") or 0, _pct(pp, mk.get("market_pvp") or 0), pp - base_p, _delta_pct(pp, base_p)]
+                    rows.append(out)
+            _write_table(ws, 1, heads, rows)
 
     # ── Evolución mensual por categoría / tipo (con % para medir) ───────
     def _dim_monthly_sheet(title: str, key: str, dim_head: str, dim_key: str, con_sucursal: bool):

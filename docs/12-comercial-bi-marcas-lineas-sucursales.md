@@ -119,9 +119,49 @@ Exportaciones del informe de marca:
 
 Limitacion: PowerPoint no conserva interacciones web como hover, tooltips,
 drill-down o filtros por click. Para eso la fuente de verdad sigue siendo el
-dashboard de la app. Si se necesita una experiencia realmente interactiva fuera
-del dashboard, el siguiente paso recomendado es sumar una exportacion Excel
-nativa con tablas dinamicas/graficos editables, separada del PPT de reunion.
+dashboard de la app.
+
+### Exportacion Excel del informe de marca
+
+El endpoint `GET /api/sales-bi/commercial/brand-dossier/export-xlsx` genera un
+Excel auditable del informe de marca. No incluye costos, diferencia ni margen:
+esta pensado para reuniones comerciales y para que gerencia pueda armar tablas
+dinamicas/graficos propios a partir de los datos crudos.
+
+Parametros relevantes:
+
+- `marca`: marca principal del informe.
+- `competidores`: lista separada por coma. Los competidores elegidos se fuerzan
+  dentro del ranking base aunque no esten en el top 12.
+- `metric`: `units`, `pvp` o `both`.
+- `fecha_desde`, `fecha_hasta`, `empresa`, `sucursal`, `sucursales`,
+  `tipo_venta`: mismos filtros del dashboard.
+
+Hojas principales:
+
+- `Resumen`: KPIs, lecturas, fortalezas, oportunidades y acciones.
+- `Evolucion mensual`: marca vs mercado por mes, en unidades/pesos y share.
+- `Evolucion diaria`: marca vs mercado por dia.
+- `Ranking`: ranking de marcas del periodo.
+- `Categorias`, `Tipos`, `Gamas de precio`, `Productos`, `Producto x Sucursal`
+  y `Sucursales`: detalle comercial por dimension.
+- `Comparativo marcas`: marca base vs competidores elegidos, con diferencia
+  absoluta y porcentual contra la marca base.
+- `Competidores por mes`: evolucion mensual de la marca base y cada competidor,
+  con unidades, pesos, share y diferencia contra la marca base.
+- `Share semanal`: serie semanal de participacion de marca base, competidores
+  y `OTRAS`, equivalente al grafico apilado de la app.
+- `Cara a cara`: metricas comparadas, lider de cada metrica y ventaja porcentual
+  del mejor contra la marca base.
+- `Competidores x Sucursal`: comparacion por sucursal con share local y
+  diferencias contra la marca base.
+- `Categorias por mes`, `Tipos por mes`, `Categorias x Suc x Mes` y
+  `Tipos x Suc x Mes`: evolucion mensual por dimension, pensada para analisis
+  fino y pivots.
+
+Convencion de porcentajes: los valores se guardan como puntos porcentuales
+`0..100` con formato Excel de porcentaje literal (`0.0"%"`). No se guardan
+como texto, por lo que se pueden ordenar, filtrar y usar en tablas dinamicas.
 
 ## Fase 1 - estabilizacion de metricas y lectura visual
 

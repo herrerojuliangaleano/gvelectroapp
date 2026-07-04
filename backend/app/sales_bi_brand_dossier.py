@@ -289,6 +289,13 @@ def build_brand_dossier(
         me = next((row for row in ranked if row["name"] == brand_name), None)
         if me:
             ranking_rows.append(me)
+    ranking_names = {row["name"] for row in ranking_rows}
+    for comp in comp_list:
+        if comp not in ranking_names:
+            comp_row = next((row for row in ranked if row["name"] == comp), None)
+            if comp_row:
+                ranking_rows.append(comp_row)
+                ranking_names.add(comp)
     for row in ranking_rows:
         row["is_brand"] = row["name"] == brand_name
         row["is_competitor"] = row["name"] in comp_list
