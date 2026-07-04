@@ -186,6 +186,38 @@ def build_brand_dossier_xlsx(d: dict[str, Any], metric: str = "both") -> bytes:
         rows.append(out)
     _write_table(ws, 1, heads, rows)
 
+    # ── Evolución mensual por categoría / tipo (con % para medir) ───────
+    def _dim_monthly_sheet(title: str, key: str, dim_head: str, dim_key: str, con_sucursal: bool):
+        data = d.get(key) or []
+        if not data:
+            return
+        ws_dim = _sheet(wb, title)
+        heads_dim: list[tuple[str, str | None]] = [("Mes", None)]
+        if con_sucursal:
+            heads_dim.append(("Sucursal", None))
+        heads_dim.append((dim_head, None))
+        if u:
+            heads_dim += [("Marca u", UNITS_FMT), ("Mercado u", UNITS_FMT), ("Share u %", PCT_FMT), ("Mix marca u %", PCT_FMT)]
+        if p:
+            heads_dim += [("Marca $", MONEY_FMT), ("Mercado $", MONEY_FMT), ("Share $ %", PCT_FMT)]
+        rows_dim = []
+        for row in data:
+            out: list[Any] = [row["mes"]]
+            if con_sucursal:
+                out.append(row["sucursal"])
+            out.append(row[dim_key])
+            if u:
+                out += [row["brand_unidades"], row["market_unidades"], row["share_units_pct"], row["mix_brand_units_pct"]]
+            if p:
+                out += [row["brand_pvp"], row["market_pvp"], row["share_pvp_pct"]]
+            rows_dim.append(out)
+        _write_table(ws_dim, 1, heads_dim, rows_dim)
+
+    _dim_monthly_sheet("Categorías por mes", "category_monthly", "Categoría", "categoria", False)
+    _dim_monthly_sheet("Tipos por mes", "tipo_monthly", "Tipo", "tipo", False)
+    _dim_monthly_sheet("Categorías x Suc x Mes", "category_branch_monthly", "Categoría", "categoria", True)
+    _dim_monthly_sheet("Tipos x Suc x Mes", "tipo_branch_monthly", "Tipo", "tipo", True)
+
     # ── Tipos ────────────────────────────────────────────────────────────
     ws = _sheet(wb, "Tipos")
     heads = [("Tipo", None)]

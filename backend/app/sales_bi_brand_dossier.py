@@ -124,6 +124,7 @@ def build_brand_dossier(
     tipo_venta: str | None = None,
     competidores: list[str] | str | None = None,
     max_competidores: int = 3,
+    detail_series: bool = False,
 ) -> dict[str, Any]:
     records, bounds = _commercial_rows(
         fecha_desde, fecha_hasta,
@@ -167,6 +168,16 @@ def build_brand_dossier(
     daily_cat_brand: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
     # Sucursal × marca (todas): comparativa por sucursal vs competidores.
     branch_brands: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
+    # Mes × categoría / mes × tipo (marca y mercado), total y por sucursal.
+    # Alimentan las hojas de evolución del Excel (share % mensual).
+    m_cat_brand: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
+    m_cat_market: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
+    m_tipo_brand: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
+    m_tipo_market: dict[str, dict[str, dict[str, Any]]] = defaultdict(lambda: defaultdict(_metric_bucket))
+    ms_cat_brand: dict[tuple, dict[str, Any]] = defaultdict(_metric_bucket)   # (mes, suc, cat)
+    ms_cat_market: dict[tuple, dict[str, Any]] = defaultdict(_metric_bucket)
+    ms_tipo_brand: dict[tuple, dict[str, Any]] = defaultdict(_metric_bucket)  # (mes, suc, tipo)
+    ms_tipo_market: dict[tuple, dict[str, Any]] = defaultdict(_metric_bucket)
 
     brand_names_seen: set[str] = set()
     for r in records:
@@ -199,8 +210,16 @@ def build_brand_dossier(
 
         _add_metric(branch_brands[suc][name], r)
         _add_metric(weekly_by_brand[_week_key(r.fecha)][name], r)
+        _add_metric(m_cat_market[mes][cat], r)
+        _add_metric(m_tipo_market[mes][tipo], r)
+        _add_metric(ms_cat_market[(mes, suc, cat)], r)
+        _add_metric(ms_tipo_market[(mes, suc, tipo)], r)
 
         if name == brand_name:
+            _add_metric(m_cat_brand[mes][cat], r)
+            _add_metric(m_tipo_brand[mes][tipo], r)
+            _add_metric(ms_cat_brand[(mes, suc, cat)], r)
+            _add_metric(ms_tipo_brand[(mes, suc, tipo)], r)
             _add_metric(daily_brand[dia], r)
             _add_metric(daily_cat_brand[dia][cat], r)
             if unidades_r > 0 and precio_r > 0:
@@ -707,7 +726,72 @@ def build_brand_dossier(
     if not conclusions["acciones"]:
         conclusions["acciones"].append("Sostener el mix actual y monitorear el share mensual")
 
+    # ── Series de detalle para el Excel (mes × categoría/tipo, y por sucursal) ──
+    detail: dict[str, Any] = {}
+    if detail_series:
+        brand_tipos = {t for mes_k in m_tipo_brand for t in m_tipo_brand[mes_k]}
+
+        def _row(mes_k: str, dim_nombre: str, dim_valor: str, br_b, mk_b, mix_total_u: int, sucursal_n: str | None = None) -> dict[str, Any]:
+            br = _fin(br_b or _metric_bucket())
+            mk = _fin(mk_b or _metric_bucket())
+            out: dict[str, Any] = {"mes": mes_k}
+            if sucursal_n is not None:
+                out["sucursal"] = sucursal_n
+            out[dim_nombre] = dim_valor
+            out.update({
+                "brand_unidades": br["unidades"],
+                "brand_pvp": br["total_vendido"],
+                "market_unidades": mk["unidades"],
+                "market_pvp": mk["total_vendido"],
+                "share_units_pct": _share(br["unidades"], mk["unidades"]),
+                "share_pvp_pct": _share(br["total_vendido"], mk["total_vendido"]),
+                "mix_brand_units_pct": _share(br["unidades"], mix_total_u),
+            })
+            return out
+
+        category_monthly: list[dict[str, Any]] = []
+        tipo_monthly: list[dict[str, Any]] = []
+        for mes_k in sorted(m_cat_market.keys()):
+            brand_mes_u = int(_fin(monthly_by_brand[mes_k].get(brand_name) or _metric_bucket())["unidades"])
+            for cat_k in sorted(m_cat_market[mes_k].keys()):
+                row = _row(mes_k, "categoria", cat_k, m_cat_brand[mes_k].get(cat_k), m_cat_market[mes_k][cat_k], brand_mes_u)
+                if row["market_unidades"] or row["brand_unidades"]:
+                    category_monthly.append(row)
+            for tipo_k in sorted(m_tipo_market[mes_k].keys()):
+                if tipo_k not in brand_tipos:
+                    continue
+                row = _row(mes_k, "tipo", tipo_k, m_tipo_brand[mes_k].get(tipo_k), m_tipo_market[mes_k][tipo_k], brand_mes_u)
+                if row["market_unidades"] or row["brand_unidades"]:
+                    tipo_monthly.append(row)
+
+        # Totales marca por (mes, sucursal) para el mix por sucursal.
+        ms_brand_tot_u: dict[tuple, int] = defaultdict(int)
+        for (mes_k, suc_k, _c), b in ms_cat_brand.items():
+            ms_brand_tot_u[(mes_k, suc_k)] += int(b.get("unidades") or 0)
+
+        category_branch_monthly: list[dict[str, Any]] = []
+        for (mes_k, suc_k, cat_k) in sorted(ms_cat_market.keys()):
+            row = _row(mes_k, "categoria", cat_k, ms_cat_brand.get((mes_k, suc_k, cat_k)), ms_cat_market[(mes_k, suc_k, cat_k)], ms_brand_tot_u[(mes_k, suc_k)], sucursal_n=suc_k)
+            if row["market_unidades"] or row["brand_unidades"]:
+                category_branch_monthly.append(row)
+
+        tipo_branch_monthly: list[dict[str, Any]] = []
+        for (mes_k, suc_k, tipo_k) in sorted(ms_tipo_market.keys()):
+            if tipo_k not in brand_tipos:
+                continue
+            row = _row(mes_k, "tipo", tipo_k, ms_tipo_brand.get((mes_k, suc_k, tipo_k)), ms_tipo_market[(mes_k, suc_k, tipo_k)], ms_brand_tot_u[(mes_k, suc_k)], sucursal_n=suc_k)
+            if row["market_unidades"] or row["brand_unidades"]:
+                tipo_branch_monthly.append(row)
+
+        detail = {
+            "category_monthly": category_monthly,
+            "tipo_monthly": tipo_monthly,
+            "category_branch_monthly": category_branch_monthly,
+            "tipo_branch_monthly": tipo_branch_monthly,
+        }
+
     return {
+        **detail,
         "marca": brand_name,
         "filters": {
             "fecha_desde": bounds[0].isoformat(),

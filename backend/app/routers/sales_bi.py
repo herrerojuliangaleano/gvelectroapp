@@ -572,6 +572,7 @@ def export_brand_dossier_xlsx(
         marca, fecha_desde, fecha_hasta,
         empresa=empresa, sucursal=sucursal, sucursales=sucursales,
         tipo_venta=tipo_venta, competidores=competidores,
+        detail_series=True,
     )
     if not dossier["totals"]["brand"]["lineas"] and not dossier["totals"]["brand"]["unidades"]:
         raise HTTPException(status_code=404, detail=f"No hay ventas de '{marca}' en el período seleccionado.")
