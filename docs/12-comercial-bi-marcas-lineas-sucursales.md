@@ -132,6 +132,11 @@ Corte actual:
 
 - Logo PNG por marca principal guardado en storage.
 - Color HEX por marca principal guardado en storage.
+- Hasta 4 competidores seleccionables para el dossier de marca.
+- Paleta operativa para Samsung + Midea, Drean, Whirlpool y Enova:
+  `#1428A0`, `#0098D1`, `#2A6FBA`, `#EEB111` y `#7B3FB3`.
+- Paleta fija de tipos clave: Heladera `#3E9FC5`, Lavado `#2A9D8F`,
+  A/A `#4E8EDB` y TV `#7B61B8`.
 - Paleta secundaria cromatica para tipos, zonas, competidores y mercado:
   visible y profesional, sin copiar el color exacto de la marca principal.
 - Selector de tipos comerciales para el dossier.

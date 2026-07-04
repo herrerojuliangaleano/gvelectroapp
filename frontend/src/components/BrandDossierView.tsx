@@ -30,10 +30,18 @@ import {
 import { exportBrandDossierEditablePptx } from '../lib/exportBrandDossierEditable';
 import { exportDeckToPdf, exportDeckToPptx, type DeckSection } from '../lib/exportDeck';
 
-const BRAND_COLOR = 'var(--chart-blue)';
 const POSITIVE = 'var(--chart-positive)';
 const MARKET_COLOR = '#64748b';
-const COMP_COLORS = ['var(--chart-violet)', 'var(--chart-teal)', 'var(--chart-amber)'];
+const MAX_COMPETITORS = 4;
+const COMP_COLORS = ['#0098D1', '#2A6FBA', '#EEB111', '#7B3FB3'];
+const TYPE_HEX_COLORS = ['#3E9FC5', '#2A9D8F', '#4E8EDB', '#7B61B8', '#D99A2B', '#D06A7A'];
+const BRAND_HEX_COLORS: Record<string, string> = {
+  SAMSUNG: '#1428A0',
+  MIDEA: '#0098D1',
+  DREAN: '#2A6FBA',
+  WHIRLPOOL: '#EEB111',
+  ENOVA: '#7B3FB3',
+};
 
 const MESES_CORTOS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
@@ -95,6 +103,27 @@ function bucketLabel(key: string, gran: Granularity): string {
     return `${a}-${b} ${yy}`;
   }
   return `T${n} ${yy}`;
+}
+
+function paletteKey(value: string): string {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase();
+}
+
+function competitorColor(name: string, index: number): string {
+  return BRAND_HEX_COLORS[paletteKey(name)] || COMP_COLORS[index % COMP_COLORS.length];
+}
+
+function typeColor(name: string, index: number): string {
+  const key = paletteKey(name);
+  if (key.includes('HELADERA') || key.includes('REFRIGERADOR') || key.includes('FREEZER')) return '#3E9FC5';
+  if (key.includes('LAVADO') || key.includes('LAVARROPAS') || key.includes('LAVASECA') || key.includes('SECARROPAS')) return '#2A9D8F';
+  if (key.includes('A/A') || key.includes('AIRE') || key.includes('ACONDICIONADO') || key.includes('CLIMATIZACION')) return '#4E8EDB';
+  if (key.includes('TV') || key.includes('TELEVISION') || key.includes('TELEVISOR') || key.includes('AUDIO')) return '#7B61B8';
+  return TYPE_HEX_COLORS[index % TYPE_HEX_COLORS.length];
 }
 
 function Slide({
@@ -336,7 +365,8 @@ export function BrandDossierView({
     return { rows, names };
   }, [dossier, metric]);
 
-  const duelColor = (name: string) => (name === dossier?.marca ? BRAND_COLOR : COMP_COLORS[compList.indexOf(name) % COMP_COLORS.length]);
+  const safeBrandColor = /^#[0-9a-fA-F]{6}$/.test(brandColorDraft) ? brandColorDraft : '#1E3A8A';
+  const duelColor = (name: string) => (name === dossier?.marca ? safeBrandColor : competitorColor(name, compList.indexOf(name)));
 
   const hasPrev = !!dossier && (dossier.totals.brand_prev.unidades > 0 || dossier.totals.market_prev.unidades > 0);
   const momentum = dossier?.category_momentum || [];
@@ -449,7 +479,7 @@ export function BrandDossierView({
   function toggleCompetidor(name: string) {
     setCompetidores((current) => {
       if (current.includes(name)) return current.filter((c) => c !== name);
-      if (current.length >= 3) return [...current.slice(1), name];
+      if (current.length >= MAX_COMPETITORS) return [...current.slice(1), name];
       return [...current, name];
     });
   }
@@ -523,7 +553,6 @@ export function BrandDossierView({
   const marketTot = dossier?.totals.market;
   const availableTipos = dossier?.available_tipos || [];
   const activeTipos = selectedTipos.length ? selectedTipos : (dossier?.selected_tipos || []);
-  const safeBrandColor = /^#[0-9a-fA-F]{6}$/.test(brandColorDraft) ? brandColorDraft : '#1E3A8A';
 
   return (
     <div className="space-y-4">
@@ -548,7 +577,7 @@ export function BrandDossierView({
                 type="button"
                 onClick={() => toggleCompetidor(name)}
                 className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-bold text-white"
-                style={{ borderColor: COMP_COLORS[i % COMP_COLORS.length], background: 'rgba(255,255,255,0.04)' }}
+                style={{ borderColor: competitorColor(name, i), background: 'rgba(255,255,255,0.04)' }}
                 title="Quitar competidor"
               >
                 {name} <X size={11} />
@@ -750,7 +779,7 @@ export function BrandDossierView({
                 <ParticipationBar
                   label="Participación de mercado"
                   value={share.pvp_pct}
-                  color={BRAND_COLOR}
+                  color={safeBrandColor}
                   subtitle={hasPrev ? `${share.delta_pts >= 0 ? '+' : ''}${share.delta_pts.toFixed(1)} pts vs período anterior` : `${money(marketTot.total_vendido)} de mercado`}
                 />
                 <div className="flex items-end gap-3">
@@ -838,7 +867,7 @@ export function BrandDossierView({
                       yAxisId="pvp"
                       dataKey="brand_pvp"
                       name="Facturación"
-                      fill={BRAND_COLOR}
+                      fill={safeBrandColor}
                       radius={[6, 6, 0, 0]}
                       cursor={!drill && gran !== 'daily' ? 'pointer' : 'default'}
                       onClick={(data) => {
@@ -927,7 +956,7 @@ export function BrandDossierView({
                       {dossier.ranking.map((row) => (
                         <Cell
                           key={row.name}
-                          fill={row.is_brand ? BRAND_COLOR : row.is_competitor ? COMP_COLORS[compList.indexOf(row.name) % COMP_COLORS.length] : 'rgba(148,163,184,0.45)'}
+                          fill={row.is_brand ? safeBrandColor : row.is_competitor ? competitorColor(row.name, compList.indexOf(row.name)) : 'rgba(148,163,184,0.45)'}
                         />
                       ))}
                       <LabelList dataKey="participacion_pct" position="right" style={{ fill: '#B8C5DA', fontSize: 10 }} formatter={(v) => `${Number(v).toFixed(1)}%`} />
@@ -944,9 +973,9 @@ export function BrandDossierView({
                     <YAxis tickFormatter={metric === 'units' ? ((v: number) => num(v)) : compactMoney} tick={{ fill: '#B8C5DA', fontSize: 10 }} width={52} />
                     <Tooltip formatter={(value, name) => [mfmt(Number(value)), String(name)]} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Line dataKey={dossier.marca} stroke={BRAND_COLOR} strokeWidth={3} dot={{ r: 3.5 }} />
+                    <Line dataKey={dossier.marca} stroke={safeBrandColor} strokeWidth={3} dot={{ r: 3.5 }} />
                     {compList.map((c, i) => (
-                      <Line key={c} dataKey={c} stroke={COMP_COLORS[i % COMP_COLORS.length]} strokeWidth={2} strokeDasharray="4 3" dot={{ r: 2.5 }} />
+                      <Line key={c} dataKey={c} stroke={competitorColor(c, i)} strokeWidth={2} strokeDasharray="4 3" dot={{ r: 2.5 }} />
                     ))}
                   </LineChart>
                 </ResponsiveContainer>
@@ -1035,7 +1064,7 @@ export function BrandDossierView({
                     <Tooltip formatter={(value, name) => [`${Number(value).toFixed(1)}%`, String(name)]} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE} cursor={{ fill: 'rgba(96,165,250,0.10)' }} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     <ReferenceLine x={0} stroke="#94a3b8" />
-                    <Bar dataKey="brand_growth_pct" name={dossier.marca} fill={BRAND_COLOR} radius={[0, 5, 5, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} />
+                    <Bar dataKey="brand_growth_pct" name={dossier.marca} fill={safeBrandColor} radius={[0, 5, 5, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} />
                     <Bar dataKey="market_growth_pct" name="Mercado" fill={MARKET_COLOR} radius={[0, 5, 5, 0]} isAnimationActive animationDuration={CHART_ANIM.duration} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -1085,7 +1114,7 @@ export function BrandDossierView({
                       </div>
                       <div className="relative mt-2 h-2.5 overflow-hidden rounded-full bg-white/10">
                         <div className="absolute inset-y-0 left-0 rounded-full opacity-30" style={{ width: `${leaderWidth}%`, background: MARKET_COLOR }} />
-                        <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${width}%`, background: BRAND_COLOR }} />
+                        <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${width}%`, background: safeBrandColor }} />
                       </div>
                       <div className="mt-1.5 flex justify-between text-[11px] text-[color:var(--text-3)]">
                         <span>{num(c.brand_unidades)} u · {money(c.brand_pvp)}</span>
@@ -1103,7 +1132,7 @@ export function BrandDossierView({
                     <PieChart>
                       <Pie data={donut} dataKey="value" nameKey="name" innerRadius={62} outerRadius={100} paddingAngle={3} stroke="none">
                         {donut.map((entry, i) => (
-                          <Cell key={entry.name} fill={[BRAND_COLOR, 'var(--chart-violet)', 'var(--chart-teal)', 'var(--chart-amber)', '#ec4899', '#64748b'][i % 6]} />
+                          <Cell key={entry.name} fill={typeColor(entry.name, i)} />
                         ))}
                       </Pie>
                       <Tooltip formatter={(value, name) => [mfmt(Number(value)), String(name)]} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE} />
@@ -1129,7 +1158,7 @@ export function BrandDossierView({
                     <Line
                       key={cat}
                       dataKey={cat}
-                      stroke={[BRAND_COLOR, 'var(--chart-violet)', 'var(--chart-teal)', 'var(--chart-amber)', '#ec4899'][i % 5]}
+                      stroke={typeColor(cat, i)}
                       strokeWidth={i === 0 ? 3 : 2}
                       dot={{ r: 2.5 }}
                     />
@@ -1160,7 +1189,7 @@ export function BrandDossierView({
                   <ReferenceLine y={metric === 'units' ? share.units_pct : share.pvp_pct} stroke="#94a3b8" strokeDasharray="4 3" />
                   <Scatter data={matriz} isAnimationActive animationDuration={CHART_ANIM.duration}>
                     {matriz.map((m) => (
-                      <Cell key={m.categoria} fill={m.share >= (metric === 'units' ? share.units_pct : share.pvp_pct) ? BRAND_COLOR : 'var(--chart-amber)'} fillOpacity={0.85} />
+                      <Cell key={m.categoria} fill={m.share >= (metric === 'units' ? share.units_pct : share.pvp_pct) ? safeBrandColor : typeColor(m.categoria, 0)} fillOpacity={0.85} />
                     ))}
                     <LabelList dataKey="categoria" position="top" style={{ fill: '#B8C5DA', fontSize: 10, fontWeight: 700 }} />
                   </Scatter>
@@ -1189,7 +1218,7 @@ export function BrandDossierView({
                       <YAxis tickFormatter={(v: number) => `${v}%`} tick={{ fill: '#B8C5DA', fontSize: 10 }} width={40} />
                       <Tooltip formatter={(value, name) => [`${Number(value).toFixed(1)}%`, String(name)]} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE} />
                       <Legend wrapperStyle={{ fontSize: 11 }} />
-                      <Bar dataKey="brand_mix_units_pct" name={`Mix ${dossier.marca}`} fill={BRAND_COLOR} radius={[6, 6, 0, 0]}>
+                      <Bar dataKey="brand_mix_units_pct" name={`Mix ${dossier.marca}`} fill={safeBrandColor} radius={[6, 6, 0, 0]}>
                         <LabelList dataKey="brand_mix_units_pct" position="top" style={{ fill: '#B8C5DA', fontSize: 10 }} formatter={(v) => `${Number(v).toFixed(0)}%`} />
                       </Bar>
                       <Bar dataKey="market_mix_units_pct" name="Mix mercado" fill={MARKET_COLOR} radius={[6, 6, 0, 0]}>
@@ -1207,7 +1236,7 @@ export function BrandDossierView({
                         <span className="text-sm font-black tabular-nums text-[color:var(--text)]">{b.share_units_pct.toFixed(1)}% <span className="text-[11px] font-bold text-[color:var(--text-3)]">en unidades</span></span>
                       </div>
                       <div className="relative mt-2 h-2.5 overflow-hidden rounded-full bg-white/10">
-                        <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${Math.max(2, Math.min(100, b.share_units_pct))}%`, background: b.share_units_pct >= share.units_pct ? BRAND_COLOR : 'var(--chart-amber)' }} />
+                        <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${Math.max(2, Math.min(100, b.share_units_pct))}%`, background: b.share_units_pct >= share.units_pct ? safeBrandColor : 'var(--chart-amber)' }} />
                         <div className="absolute inset-y-0 w-0.5 bg-white/60" style={{ left: `${Math.min(100, share.units_pct)}%` }} title="Share global" />
                       </div>
                       <div className="mt-1.5 flex justify-between text-[11px] text-[color:var(--text-3)]">
@@ -1237,7 +1266,10 @@ export function BrandDossierView({
                     contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE}
                     cursor={{ fill: 'rgba(96,165,250,0.10)' }}
                   />
-                  <Bar dataKey={metric === 'units' ? 'unidades' : 'total_vendido'} name={metric === 'units' ? 'Unidades' : 'Facturación'} fill={BRAND_COLOR} radius={[0, 6, 6, 0]} isAnimationActive animationDuration={CHART_ANIM.duration}>
+                  <Bar dataKey={metric === 'units' ? 'unidades' : 'total_vendido'} name={metric === 'units' ? 'Unidades' : 'Facturación'} fill={safeBrandColor} radius={[0, 6, 6, 0]} isAnimationActive animationDuration={CHART_ANIM.duration}>
+                    {dossier.tipos_top.map((row, i) => (
+                      <Cell key={row.tipo} fill={typeColor(row.tipo, i)} />
+                    ))}
                     <LabelList dataKey="share_pvp_pct" position="right" style={{ fill: '#B8C5DA', fontSize: 10 }} formatter={(v) => `${Number(v).toFixed(1)}% del tipo`} />
                   </Bar>
                 </BarChart>
@@ -1378,7 +1410,7 @@ export function BrandDossierView({
                     <XAxis type="number" hide />
                     <YAxis type="category" dataKey="sucursal" width={110} tick={{ fill: '#B8C5DA', fontSize: 11 }} interval={0} />
                     <Tooltip formatter={(value) => [`${Number(value).toFixed(1)}%`, 'Share $ en la sucursal']} contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE} cursor={{ fill: 'rgba(96,165,250,0.10)' }} />
-                    <Bar dataKey="share_in_branch_pct" fill={BRAND_COLOR} radius={[0, 6, 6, 0]} isAnimationActive animationDuration={CHART_ANIM.duration}>
+                    <Bar dataKey="share_in_branch_pct" fill={safeBrandColor} radius={[0, 6, 6, 0]} isAnimationActive animationDuration={CHART_ANIM.duration}>
                       <LabelList dataKey="share_in_branch_pct" position="right" style={{ fill: '#B8C5DA', fontSize: 10 }} formatter={(v) => `${Number(v).toFixed(1)}%`} />
                     </Bar>
                   </BarChart>

@@ -114,6 +114,11 @@ Reglas:
 
 - Formato aceptado: `#RRGGBB`.
 - Samsung usa por defecto `#1428A0` si no hay color guardado.
+- Midea usa por defecto `#0098D1`.
+- Drean usa por defecto `#2A6FBA`, un azul separado de Samsung y Midea para
+  evitar que las series compitan visualmente.
+- Whirlpool usa por defecto `#EEB111`.
+- Enova usa por defecto `#7B3FB3`.
 - Si se guarda otro color para la misma marca, reemplaza al anterior.
 - Los competidores nunca usan el color exacto de la marca principal.
 - Tipos, categorias y zonas usan una paleta secundaria cromatica: teal, ambar,
@@ -123,6 +128,30 @@ Reglas:
 - Mercado/resto usa un color propio, no gris plano, para que los graficos de
   comparacion sigan siendo legibles y presentables.
 - El color es un asset visual de presentacion; no cambia ningun dato comercial.
+
+Paleta operativa para el informe Samsung:
+
+| Serie | Color | Uso |
+|---|---:|---|
+| `Samsung` | `#1428A0` | marca principal, portada, KPIs y serie propia |
+| `Midea` | `#0098D1` | competidor azul claro/cian |
+| `Drean` | `#2A6FBA` | competidor azul medio, separado de Samsung |
+| `Whirlpool` | `#EEB111` | competidor amarillo |
+| `Enova` | `#7B3FB3` | competidor violeta |
+
+Paleta fija para tipos clave:
+
+| Tipo ejecutivo | Color | Regla |
+|---|---:|---|
+| `Heladera` | `#3E9FC5` | heladera, refrigerador y freezer |
+| `Lavado` | `#2A9D8F` | lavarropas, lavaseca/lavasecarropas y secarropas |
+| `A/A` | `#4E8EDB` | aire acondicionado y climatizacion |
+| `TV` | `#7B61B8` | television, televisor y audio |
+
+Decision: estos colores se usan tanto en la vista web del dossier como en el
+PowerPoint editable. El color de la marca principal tiene prioridad; los tipos
+y competidores usan colores propios para que los graficos no queden grises ni
+opaquen a la marca foco.
 
 ### Tipo comercial
 
@@ -175,7 +204,8 @@ antes de mirar sucursal. Si no es online, se clasifica por sucursal.
 Al exportar PowerPoint editable desde el dossier:
 
 1. Elegir marca principal.
-2. Elegir competidores.
+2. Elegir hasta 4 competidores. Para Samsung, el set recomendado es Midea,
+   Drean, Whirlpool y Enova.
 3. Elegir tipos comerciales a incluir.
 4. Ver logo guardado de la marca principal, si existe.
 5. Subir o reemplazar logo PNG de la marca principal.

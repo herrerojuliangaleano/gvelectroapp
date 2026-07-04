@@ -18,6 +18,10 @@ _MAX_LOGO_BYTES = 2 * 1024 * 1024
 _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 _DEFAULT_BRAND_COLORS = {
     "samsung": "#1428A0",
+    "midea": "#0098D1",
+    "drean": "#2A6FBA",
+    "whirlpool": "#EEB111",
+    "enova": "#7B3FB3",
 }
 _GENERATED_BRAND_COLORS = [
     "#1E3A8A",

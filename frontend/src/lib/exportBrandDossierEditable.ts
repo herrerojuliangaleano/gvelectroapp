@@ -21,6 +21,19 @@ const COMPETITOR_COLORS = ['C77955', '2A9D8F', '8B6FB4', '6FA35D', 'D49A3A', 'D0
 const ZONE_COLORS = ['2F6F9F', '5A9B6D', 'D49A3A', '8B6FB4'];
 const REST_COLOR = 'C77955';
 const MARKET_COLOR = 'D49A3A';
+const BRAND_COLOR_BY_KEY: Record<string, string> = {
+  SAMSUNG: '1428A0',
+  MIDEA: '0098D1',
+  DREAN: '2A6FBA',
+  WHIRLPOOL: 'EEB111',
+  ENOVA: '7B3FB3',
+};
+const TYPE_COLOR_BY_KEY: Array<[string[], string]> = [
+  [['HELADERA', 'REFRIGERADOR', 'FREEZER'], '3E9FC5'],
+  [['LAVADO', 'LAVARROPAS', 'LAVASECA', 'LAVASECARROPAS', 'SECARROPAS'], '2A9D8F'],
+  [['A/A', 'AA', 'AIRE', 'ACONDICIONADO', 'CLIMATIZACION'], '4E8EDB'],
+  [['TV', 'TELEVISION', 'TELEVISOR', 'AUDIO'], '7B61B8'],
+];
 const MONTH_LABELS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
 function money(value: number): string {
@@ -92,18 +105,33 @@ function normalizeLabel(value: string): string {
     .toUpperCase();
 }
 
-function brandVsRestChartData(brandName: string, labels: string[], values: number[]) {
-  const brandKey = normalizeLabel(brandName);
+function competitorColor(name: string, index: number): string {
+  return BRAND_COLOR_BY_KEY[normalizeLabel(name)] || COMPETITOR_COLORS[index % COMPETITOR_COLORS.length];
+}
+
+function typeColor(name: string, index: number): string {
+  const key = normalizeLabel(name);
+  const preset = TYPE_COLOR_BY_KEY.find(([aliases]) => aliases.some((alias) => key.includes(alias)));
+  return preset?.[1] || TYPE_COLORS[index % TYPE_COLORS.length];
+}
+
+function colorsForTypes(names: string[]): string[] {
+  return names.map((name, index) => typeColor(name, index));
+}
+
+function brandCompetitorRestChartData(brandName: string, competitorNames: string[], labels: string[], values: number[]) {
+  const highlighted = [brandName, ...competitorNames];
+  const highlightedKeys = highlighted.map(normalizeLabel);
   return [
-    {
-      name: brandName,
+    ...highlighted.map((name) => ({
+      name,
       labels,
-      values: values.map((value, index) => (normalizeLabel(labels[index]) === brandKey ? value : 0)),
-    },
+      values: values.map((value, index) => (normalizeLabel(labels[index]) === normalizeLabel(name) ? value : 0)),
+    })),
     {
       name: 'Otras marcas',
       labels,
-      values: values.map((value, index) => (normalizeLabel(labels[index]) === brandKey ? 0 : value)),
+      values: values.map((value, index) => (highlightedKeys.includes(normalizeLabel(labels[index])) ? 0 : value)),
     },
   ];
 }
@@ -447,7 +475,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
       x: 0.55, y: 1.1, w: 7.4, h: 4.85,
       barDir: 'col',
       valAxisLabelFormatCode: '0.0%',
-      chartColors: TYPE_COLORS,
+      chartColors: colorsForTypes(tipoBlocks.map((block) => block.tipo)),
     });
     addTable(shareByTipo, [
       ['Tipo', 'Share u', 'Share $', `${dossier.marca} u`, `${dossier.marca} $`],
@@ -483,14 +511,16 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
     .filter(Boolean) as Array<{ name: string; labels: string[]; values: number[] }>;
   addChart(ranking, 'bar', rankingStack.length
     ? rankingStack
-    : brandVsRestChartData(dossier.marca, rankRows.map((row) => row.name), rankRows.map(rowMetric)), {
+    : brandCompetitorRestChartData(dossier.marca, dossier.filters.competidores || [], rankRows.map((row) => row.name), rankRows.map(rowMetric)), {
     x: 0.55, y: 1.1, w: 5.7, h: 5.2,
     barDir: 'col',
     barGrouping: 'stacked',
     showLegend: rankingStack.length > 0,
     valAxisLabelFormatCode: metricFmt,
     catAxisLabelFontSize: 7,
-    chartColors: rankingStack.length ? TYPE_COLORS : [brandColor, REST_COLOR],
+    chartColors: rankingStack.length
+      ? colorsForTypes(rankingStack.map((series) => series.name))
+      : [brandColor, ...(dossier.filters.competidores || []).map(competitorColor), REST_COLOR],
   });
   addTable(ranking, [
     ['Marca', 'Facturación', 'Unidades', 'Productos', 'Share'],
@@ -503,14 +533,14 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
     .forEach((block) => {
       const typedRanking = addBase(`Ranking competitivo · ${block.tipo}`, `${metricLabel} por marca dentro de ${block.tipo}`);
       const rows = block.rows.slice(0, 8);
-      addChart(typedRanking, 'bar', brandVsRestChartData(dossier.marca, rows.map((row) => row.name), rows.map(rowMetric)), {
+      addChart(typedRanking, 'bar', brandCompetitorRestChartData(dossier.marca, dossier.filters.competidores || [], rows.map((row) => row.name), rows.map(rowMetric)), {
         x: 0.55, y: 1.1, w: 6.0, h: 4.9,
         barDir: 'col',
         barGrouping: 'stacked',
         showLegend: false,
         valAxisLabelFormatCode: metricFmt,
         catAxisLabelRotate: 35,
-        chartColors: [brandColor, REST_COLOR],
+        chartColors: [brandColor, ...(dossier.filters.competidores || []).map(competitorColor), REST_COLOR],
       });
       addTable(typedRanking, [
         ['Marca', 'Facturación', 'Unidades', 'Productos', 'Share'],
@@ -530,7 +560,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
       barDir: 'col',
       catAxisLabelRotate: 45,
       valAxisLabelFormatCode: metricFmt,
-      chartColors: [brandColor, ...COMPETITOR_COLORS],
+      chartColors: [brandColor, ...competitors.map(competitorColor)],
     });
     const duelRows = [dossier.marca, ...competitors]
       .map((name) => dossier.ranking.find((row) => row.name === name))
