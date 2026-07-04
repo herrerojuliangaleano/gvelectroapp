@@ -7,6 +7,7 @@ an Alembic migration while still making them persistent in Docker/prod-local.
 from __future__ import annotations
 
 import base64
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,20 @@ from typing import Any
 from .config import get_settings
 
 _MAX_LOGO_BYTES = 2 * 1024 * 1024
+_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+_DEFAULT_BRAND_COLORS = {
+    "samsung": "#1428A0",
+}
+_GENERATED_BRAND_COLORS = [
+    "#1E3A8A",
+    "#155E75",
+    "#166534",
+    "#6D28D9",
+    "#92400E",
+    "#9F1239",
+    "#334155",
+    "#0F766E",
+]
 
 
 def brand_logo_slug(marca: str) -> str:
@@ -30,6 +45,64 @@ def brand_logo_dir() -> Path:
 
 def brand_logo_file(marca: str) -> Path:
     return brand_logo_dir() / f"{brand_logo_slug(marca)}.png"
+
+
+def brand_style_dir() -> Path:
+    path = get_settings().storage_dir / "brand-styles"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def brand_style_file(marca: str) -> Path:
+    return brand_style_dir() / f"{brand_logo_slug(marca)}.json"
+
+
+def normalize_brand_color(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw.startswith("#"):
+        raw = f"#{raw}"
+    if not _COLOR_RE.match(raw):
+        raise ValueError("El color debe tener formato HEX, por ejemplo #1428A0.")
+    return raw.upper()
+
+
+def default_brand_color(marca: str) -> str:
+    slug = brand_logo_slug(marca)
+    if slug in _DEFAULT_BRAND_COLORS:
+        return _DEFAULT_BRAND_COLORS[slug]
+    index = sum(ord(ch) for ch in slug) % len(_GENERATED_BRAND_COLORS)
+    return _GENERATED_BRAND_COLORS[index]
+
+
+def brand_style_info(marca: str) -> dict[str, Any]:
+    path = brand_style_file(marca)
+    color = default_brand_color(marca)
+    custom = False
+    updated_at = None
+    if path.is_file() and path.stat().st_size > 0:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            color = normalize_brand_color(str(payload.get("primary_color") or color))
+            custom = True
+            updated_at = path.stat().st_mtime
+        except (OSError, ValueError, json.JSONDecodeError):
+            color = default_brand_color(marca)
+            custom = False
+            updated_at = None
+    return {
+        "marca": marca,
+        "slug": brand_logo_slug(marca),
+        "primary_color": color,
+        "custom": custom,
+        "updated_at": updated_at,
+    }
+
+
+def save_brand_style(marca: str, primary_color: str) -> dict[str, Any]:
+    color = normalize_brand_color(primary_color)
+    path = brand_style_file(marca)
+    path.write_text(json.dumps({"primary_color": color}, ensure_ascii=True, indent=2), encoding="utf-8")
+    return brand_style_info(marca)
 
 
 def brand_logo_info(marca: str, *, include_data: bool = True) -> dict[str, Any]:

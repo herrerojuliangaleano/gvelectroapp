@@ -14,7 +14,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any
 
-from .brand_logo_store import brand_logo_info
+from .brand_logo_store import brand_logo_info, brand_style_info
 from .sales_bi import _fmt_date
 from .sales_bi_commercial import (
     _add_metric,
@@ -1007,6 +1007,7 @@ def build_brand_dossier(
         "source": "Ventas Vs. Costos",
         "sensitive": {"include_costs": False, "include_margin": False},
         "brand_logo": brand_logo_info(brand_name),
+        "brand_style": brand_style_info(brand_name),
         "available_tipos": available_tipos,
         "selected_tipos": selected_tipos,
         "tipo_groups": {

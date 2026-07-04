@@ -7,7 +7,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from ..auth import require_current_user
-from ..brand_logo_store import brand_logo_info, delete_brand_logo, save_brand_logo
+from ..brand_logo_store import brand_logo_info, brand_style_info, delete_brand_logo, save_brand_style, save_brand_logo
 from ..sales_bi import (
     analyze_sheets,
     compare_sellers_report,
@@ -171,6 +171,10 @@ class CommercialExportRequest(BaseModel):
     presentation: bool = False
     logo: str = "GV"
     titulo: str = "Informe comercial"
+
+
+class BrandStyleRequest(BaseModel):
+    primary_color: str
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -517,6 +521,28 @@ def remove_commercial_brand_logo(
 ):
     _require(user, "sales_bi.view")
     return delete_brand_logo(marca)
+
+
+@router.get("/commercial/brand-styles/{marca}")
+def get_commercial_brand_style(
+    marca: str,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+):
+    _require(user, "sales_bi.view")
+    return brand_style_info(marca)
+
+
+@router.put("/commercial/brand-styles/{marca}")
+def update_commercial_brand_style(
+    marca: str,
+    body: BrandStyleRequest,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+):
+    _require(user, "sales_bi.view")
+    try:
+        return save_brand_style(marca, body.primary_color)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/brands/report")

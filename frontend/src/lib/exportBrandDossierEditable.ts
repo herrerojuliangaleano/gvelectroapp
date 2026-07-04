@@ -14,9 +14,12 @@ const AMBER = 'D97706';
 const GREEN = '059669';
 const RED = 'DC2626';
 const CARD = 'FFFFFF';
-const SOFT_BLUE = 'DBEAFE';
+const SOFT_BLUE = 'E2E8F0';
+const TABLE_HEADER = '334155';
 
-const COLORS = [BLUE, VIOLET, TEAL, AMBER, 'E11D48', '0891B2', '65A30D', '9333EA'];
+const TYPE_COLORS = ['64748B', '475569', '0F766E', 'A16207', '6D28D9', '0369A1', '9F1239', '4D7C0F'];
+const COMPETITOR_COLORS = ['94A3B8', '64748B', '475569', '71717A', 'A1A1AA'];
+const ZONE_COLORS = ['475569', '0F766E', 'A16207', '64748B'];
 const MONTH_LABELS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
 function money(value: number): string {
@@ -56,6 +59,19 @@ function monthLabel(mes: string): string {
 
 function cleanFileName(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'marca';
+}
+
+function pptColor(hex: string | undefined, fallback = BLUE): string {
+  const clean = (hex || '').replace('#', '').trim().toUpperCase();
+  return /^[0-9A-F]{6}$/.test(clean) ? clean : fallback;
+}
+
+function mixColor(color: string, target: string, amount: number): string {
+  const parse = (value: string) => [0, 2, 4].map((i) => parseInt(value.slice(i, i + 2), 16));
+  const [r, g, b] = parse(pptColor(color));
+  const [tr, tg, tb] = parse(pptColor(target));
+  const mix = (from: number, to: number) => Math.round(from + (to - from) * amount).toString(16).padStart(2, '0');
+  return `${mix(r, tr)}${mix(g, tg)}${mix(b, tb)}`.toUpperCase();
 }
 
 function growth(current: number, previous: number): number | null {
@@ -115,17 +131,17 @@ function addKpi(slide: any, x: number, y: number, w: number, label: string, valu
 
 function addTakeaway(slide: any, text: string | undefined, x = 0.45, y = 6.55, w = 12.45) {
   if (!text) return;
-  slide.addShape('roundRect', { x, y, w, h: 0.36, rectRadius: 0.05, fill: { color: SOFT_BLUE }, line: { color: 'BFDBFE', pt: 0.6 } });
+  slide.addShape('roundRect', { x, y, w, h: 0.36, rectRadius: 0.05, fill: { color: SOFT_BLUE }, line: { color: LINE, pt: 0.6 } });
   slide.addText(text, { x: x + 0.15, y: y + 0.09, w: w - 0.3, h: 0.18, fontFace: FONT, fontSize: 8, color: INK, bold: true, margin: 0, fit: 'shrink' });
 }
 
-function addBrandLogo(slide: any, dossier: SalesBIBrandDossier, x: number, y: number, w: number, h: number, dark = false) {
+function addBrandLogo(slide: any, dossier: SalesBIBrandDossier, x: number, y: number, w: number, h: number, dark = false, accent = BLUE) {
   const data = dossier.brand_logo?.data_url;
   slide.addShape('roundRect', {
     x, y, w, h,
     rectRadius: 0.08,
     fill: { color: dark ? 'FFFFFF' : 'F8FAFC' },
-    line: { color: dark ? '93C5FD' : LINE, pt: 0.7 },
+    line: { color: dark ? accent : LINE, pt: 0.7 },
   });
   if (data) {
     slide.addImage({ data, x: x + 0.08, y: y + 0.08, w: w - 0.16, h: h - 0.16 });
@@ -135,7 +151,7 @@ function addBrandLogo(slide: any, dossier: SalesBIBrandDossier, x: number, y: nu
   slide.addText(initials, {
     x: x + 0.08, y: y + h / 2 - 0.18, w: w - 0.16, h: 0.36,
     fontFace: FONT, fontSize: Math.min(18, h * 14), bold: true,
-    color: dark ? BLUE : INK, align: 'center', margin: 0, fit: 'shrink',
+    color: dark ? accent : INK, align: 'center', margin: 0, fit: 'shrink',
   });
 }
 
@@ -157,7 +173,7 @@ function addChart(slide: any, type: string, data: any[], options: Record<string,
     catAxisLabelColor: MUTED,
     valAxisLabelColor: MUTED,
     valGridLine: { color: 'E2E8F0', transparency: 15, pt: 0.5 },
-    chartColors: COLORS,
+    chartColors: TYPE_COLORS,
     dataLabelFontFace: FONT,
     dataLabelFontSize: 7,
     dataLabelColor: INK,
@@ -171,7 +187,7 @@ function chartSeries(name: string, labels: string[], values: number[]) {
 
 function addTable(slide: any, rows: Array<Array<string>>, x: number, y: number, w: number, h: number, widths?: number[], fontSize = 8) {
   const tableRows = rows.map((row, rowIndex) => row.map((cell) => (
-    textCell(cell, rowIndex === 0, rowIndex === 0 ? 'FFFFFF' : INK, rowIndex === 0 ? BLUE : 'FFFFFF', rowIndex === 0 ? Math.max(fontSize, 7.5) : fontSize)
+    textCell(cell, rowIndex === 0, rowIndex === 0 ? 'FFFFFF' : INK, rowIndex === 0 ? TABLE_HEADER : 'FFFFFF', rowIndex === 0 ? Math.max(fontSize, 7.5) : fontSize)
   )));
   slide.addTable(tableRows, {
     x, y, w, h,
@@ -214,12 +230,16 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
   const brand = dossier.totals.brand;
   const brandPrev = dossier.totals.brand_prev;
   const brandGrowth = growth(brand.total_vendido, brandPrev.total_vendido);
+  const brandColor = pptColor(dossier.brand_style?.primary_color);
+  const brandColorDark = mixColor(brandColor, INK, 0.28);
+  const brandColorSoft = mixColor(brandColor, 'FFFFFF', 0.72);
+  const brandChartColors = [brandColor, brandColorDark];
   const page = { value: 1 };
   const addBase = (slideTitle: string, subtitle?: string) => {
     const slide = pptx.addSlide();
     slide.background = { color: BG };
     title(slide, slideTitle, subtitle);
-    addBrandLogo(slide, dossier, 11.75, 0.22, 0.75, 0.75);
+    addBrandLogo(slide, dossier, 11.75, 0.22, 0.75, 0.75, false, brandColor);
     footer(slide, period, page.value);
     page.value += 1;
     return slide;
@@ -228,21 +248,21 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
   const cover = pptx.addSlide();
   cover.background = { color: INK };
   cover.addShape('rect', { x: 0, y: 0, w: 13.333, h: 7.5, fill: { color: INK } });
-  cover.addShape('rect', { x: 0.75, y: 1.35, w: 1.5, h: 0.07, fill: { color: BLUE } });
-  cover.addText('INFORME COMERCIAL EDITABLE', { x: 0.75, y: 1.55, w: 9.5, h: 0.32, fontFace: FONT, fontSize: 13, bold: true, color: '93C5FD', charSpacing: 2.5, margin: 0 });
+  cover.addShape('rect', { x: 0.75, y: 1.35, w: 1.5, h: 0.07, fill: { color: brandColor } });
+  cover.addText('INFORME COMERCIAL EDITABLE', { x: 0.75, y: 1.55, w: 9.5, h: 0.32, fontFace: FONT, fontSize: 13, bold: true, color: brandColorSoft, charSpacing: 2.5, margin: 0 });
   cover.addText(dossier.marca, { x: 0.75, y: 2.05, w: 11.7, h: 0.95, fontFace: FONT, fontSize: 42, bold: true, color: 'FFFFFF', margin: 0, fit: 'shrink' });
   cover.addText(period, { x: 0.78, y: 3.08, w: 8.5, h: 0.35, fontFace: FONT, fontSize: 15, color: 'CBD5E1', margin: 0 });
   cover.addText('Fuente: Ventas Vs. Costos · gráficos y tablas editables en PowerPoint', { x: 0.78, y: 6.75, w: 9.5, h: 0.28, fontFace: FONT, fontSize: 9, color: 'CBD5E1', margin: 0 });
-  addBrandLogo(cover, dossier, 9.75, 1.55, 2.5, 2.5, true);
+  addBrandLogo(cover, dossier, 9.75, 1.55, 2.5, 2.5, true, brandColor);
   page.value += 1;
 
   const summary = addBase('Resumen ejecutivo', `${dossier.marca} en ElectroGV · lectura rápida`);
-  addKpi(summary, 0.55, 1.1, 1.9, 'Facturación', compactMoney(brand.total_vendido), brandGrowth == null ? undefined : `${brandGrowth >= 0 ? '+' : ''}${pct(brandGrowth)} vs anterior`, BLUE);
+  addKpi(summary, 0.55, 1.1, 1.9, 'Facturación', compactMoney(brand.total_vendido), brandGrowth == null ? undefined : `${brandGrowth >= 0 ? '+' : ''}${pct(brandGrowth)} vs anterior`, brandColor);
   addKpi(summary, 2.65, 1.1, 1.55, 'Unidades', num(brand.unidades), undefined, TEAL);
   addKpi(summary, 4.4, 1.1, 1.55, 'Productos', num(brand.productos), 'activos', VIOLET);
-  addKpi(summary, 6.15, 1.1, 1.75, 'Share PVP', pct(dossier.share.pvp_pct), `${dossier.share.delta_pts >= 0 ? '+' : ''}${dossier.share.delta_pts.toFixed(1)} pts`, AMBER);
+  addKpi(summary, 6.15, 1.1, 1.75, 'Share PVP', pct(dossier.share.pvp_pct), `${dossier.share.delta_pts >= 0 ? '+' : ''}${dossier.share.delta_pts.toFixed(1)} pts`, brandColorDark);
   addKpi(summary, 8.1, 1.1, 1.6, 'Ranking', dossier.share.rank_pvp ? `#${dossier.share.rank_pvp}` : 's/d', `${dossier.share.total_brands} marcas`, GREEN);
-  addKpi(summary, 9.9, 1.1, 1.85, 'Precio índice', dossier.price_index_global.toFixed(0), '100 = mercado', BLUE);
+  addKpi(summary, 9.9, 1.1, 1.85, 'Precio índice', dossier.price_index_global.toFixed(0), '100 = mercado', brandColor);
   addTable(summary, [
     ['Lecturas principales'],
     ...dossier.highlights.slice(0, 5).map((h) => [h]),
@@ -263,7 +283,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
   const selectedTipos = (dossier.selected_tipos?.length
     ? dossier.selected_tipos
     : tipoRows.map((row) => row.tipo).slice(0, 4)
-  ).slice(0, 6);
+  );
   const rankingByTipo = dossier.ranking_by_tipo || [];
   const monthlyByTipo = dossier.monthly_share_by_tipo || [];
   const zoneRows = dossier.zone_share || [];
@@ -292,6 +312,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
       valAxisLabelFormatCode: slot.fmt,
       lineSize: 2.4,
       showMarker: true,
+      chartColors: [brandChartColors[i % brandChartColors.length]],
     });
   });
   addTakeaway(providerMonthly, `Vista proveedor: evolución mensual continua de ${dossier.marca}, sin comparar años incompletos.`, 0.55, 6.35, 12.15);
@@ -306,6 +327,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
       barDir: 'bar',
       showLegend: false,
       valAxisLabelFormatCode: slot.fmt,
+      chartColors: [brandChartColors[i % brandChartColors.length]],
     });
   });
   addTakeaway(providerBranches, 'Lectura para visita: peso de la marca en cada punto de venta, separado en volumen y facturacion.', 0.55, 6.35, 12.15);
@@ -334,6 +356,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
     showValue: false,
     showPercent: true,
     dataLabelPosition: 'bestFit',
+    chartColors: ZONE_COLORS,
   });
   addTable(providerShare, [
     ['Zona', `${dossier.marca} u`, 'Total u', 'Share u', `${dossier.marca} $`, 'Share $'],
@@ -374,6 +397,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
     valAxisLabelFormatCode: '0.0%',
     lineSize: 2.5,
     showMarker: true,
+    chartColors: brandChartColors,
   });
   addTable(evolution, [
     ['Mes', 'Share u', 'Share $', `${dossier.marca} u`, `${dossier.marca} $`],
@@ -398,6 +422,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
       x: 0.55, y: 1.1, w: 7.4, h: 4.85,
       barDir: 'col',
       valAxisLabelFormatCode: '0.0%',
+      chartColors: TYPE_COLORS,
     });
     addTable(shareByTipo, [
       ['Tipo', 'Share u', 'Share $', `${dossier.marca} u`, `${dossier.marca} $`],
@@ -438,6 +463,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
     showLegend: rankingStack.length > 0,
     valAxisLabelFormatCode: metricFmt,
     catAxisLabelFontSize: 7,
+    chartColors: rankingStack.length ? TYPE_COLORS : COMPETITOR_COLORS,
   });
   addTable(ranking, [
     ['Marca', 'Facturación', 'Unidades', 'Productos', 'Share'],
@@ -447,7 +473,6 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
 
   rankingByTipo
     .filter((block) => selectedTipos.includes(block.tipo))
-    .slice(0, 4)
     .forEach((block) => {
       const typedRanking = addBase(`Ranking competitivo · ${block.tipo}`, `${metricLabel} por marca dentro de ${block.tipo}`);
       const rows = block.rows.slice(0, 8);
@@ -457,6 +482,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
         showLegend: false,
         valAxisLabelFormatCode: metricFmt,
         catAxisLabelRotate: 35,
+        chartColors: COMPETITOR_COLORS,
       });
       addTable(typedRanking, [
         ['Marca', 'Facturación', 'Unidades', 'Productos', 'Share'],
@@ -476,6 +502,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
       barDir: 'col',
       catAxisLabelRotate: 45,
       valAxisLabelFormatCode: metricFmt,
+      chartColors: [brandColor, ...COMPETITOR_COLORS],
     });
     const duelRows = [dossier.marca, ...competitors]
       .map((name) => dossier.ranking.find((row) => row.name === name))
@@ -498,6 +525,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
     barDir: 'bar',
     valAxisLabelFormatCode: '0.0%',
     showLegend: false,
+    chartColors: TYPE_COLORS,
   });
   addTable(cats, [
     ['Categoría', 'Facturación marca', 'Share', 'Rank', 'Líder', 'Índice'],
@@ -522,6 +550,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
       x: 0.55, y: 1.1, w: 6.1, h: 4.8,
       barDir: 'col',
       valAxisLabelFormatCode: '0.0%',
+      chartColors: [brandColor, MUTED],
     });
     addTable(bands, [
       ['Gama', `Unid. ${dossier.marca}`, 'Share unid.', 'Facturación'],
@@ -549,6 +578,33 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
       ...bandTipoRows.map((row) => [row.tipo, row.banda, num(row.unidades), compactMoney(row.pvp), pct(row.share), pct(row.mix)]),
     ], 0.55, 1.15, 12.15, 4.8, [1.55, 1.4, 1.0, 1.25, 0.9, 1.0], 7);
     addTakeaway(bandsByTipo, 'Lectura comercial: permite ver si la marca compite mejor en entrada, media o premium dentro de cada tipo seleccionado.');
+
+    dossier.price_bands_by_tipo
+      .filter((block) => !selectedTipos.length || selectedTipos.includes(block.tipo))
+      .forEach((block) => {
+        const bandsByTypeSlide = addBase(`Gamas de precio · ${block.tipo}`, `Mix de unidades de ${dossier.marca} vs mercado`);
+        addChart(bandsByTypeSlide, 'bar', [
+          { name: dossier.marca, labels: block.bands.map((band) => band.banda), values: block.bands.map((band) => band.brand_mix_units_pct / 100) },
+          { name: 'Mercado', labels: block.bands.map((band) => band.banda), values: block.bands.map((band) => band.market_mix_units_pct / 100) },
+        ], {
+          x: 0.55, y: 1.1, w: 6.65, h: 4.85,
+          barDir: 'col',
+          valAxisLabelFormatCode: '0.0%',
+          chartColors: [brandColor, MUTED],
+        });
+        addTable(bandsByTypeSlide, [
+          ['Gama', `${dossier.marca} u`, 'Mercado u', 'Share u', `${dossier.marca} $`, 'Share $'],
+          ...block.bands.map((band) => [
+            band.banda,
+            num(band.brand_unidades),
+            num(band.market_unidades),
+            pct(band.share_units_pct),
+            compactMoney(band.brand_pvp),
+            pct(band.share_pvp_pct),
+          ]),
+        ], 7.55, 1.2, 4.85, 3.25, [0.85, 0.8, 0.85, 0.75, 1.05, 0.75], 6.8);
+        addTakeaway(bandsByTypeSlide, `Lectura por tipo: compara si ${dossier.marca} se concentra más en entrada, media o premium dentro de ${block.tipo}.`, 7.55, 4.9, 4.85);
+      });
   }
 
   const typesSlide = addBase('Tipos destacados', `Tipos que empujan a ${dossier.marca}`);
@@ -579,30 +635,34 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
   ], 0.55, 1.05, 12.2, 5.35, [1.75, 0.8, 1.25, 0.8, ...zoneNames.map(() => 1.15)], 6.9);
   addTakeaway(typesSlide, dossier.narratives?.tipos || 'Vista para marcas: el foco queda en tipos comerciales, no en productos puntuales.');
 
-  const branches = addBase('Presencia por sucursal', `Peso de ${dossier.marca} en cada sucursal`);
-  const branchRows = dossier.branches.slice(0, 8);
-  addChart(branches, 'bar', chartData('Facturación', branchRows.map((row) => row.sucursal), branchRows.map((row) => row.brand_pvp)), {
+  const branches = addBase('Presencia por zona', `Peso de ${dossier.marca} en CABA, GBA y Venta Web`);
+  const zonePresenceRows = shareSource.slice(0, 8);
+  addChart(branches, 'bar', chartData(metric === 'units' ? 'Unidades' : 'Facturación', zonePresenceRows.map((row) => row.zona), zonePresenceRows.map((row) => (
+    metric === 'units' ? row.brand_unidades : row.brand_pvp
+  ))), {
     x: 0.55, y: 1.1, w: 5.8, h: 4.9,
-    barDir: 'bar',
+    barDir: 'col',
     showLegend: false,
-    valAxisLabelFormatCode: '$ #,##0',
+    valAxisLabelFormatCode: metricFmt,
+    chartColors: [brandColor],
   });
   addTable(branches, [
-    ['Sucursal', 'Facturación', 'Unidades', 'Share suc.', 'Mix marca'],
-    ...branchRows.map((row) => [
-      row.sucursal,
+    ['Zona', 'Facturación', 'Unidades', 'Share u', 'Share $', 'Mix marca'],
+    ...zonePresenceRows.map((row) => [
+      row.zona,
       compactMoney(row.brand_pvp),
       num(row.brand_unidades),
-      pct(row.share_in_branch_pct),
-      pct(row.brand_mix_pct),
+      pct(row.share_units_pct),
+      pct(row.share_pvp_pct),
+      pct(metric === 'units' ? row.brand_mix_units_pct : row.brand_mix_pvp_pct),
     ]),
-  ], 6.65, 1.1, 5.8, 4.0, [1.25, 1.3, 0.85, 1.0, 1.0]);
-  addTakeaway(branches, dossier.narratives?.sucursales, 6.65, 5.45, 5.8);
+  ], 6.65, 1.1, 5.8, 4.0, [0.95, 1.15, 0.75, 0.75, 0.75, 0.85], 6.8);
+  addTakeaway(branches, 'La presencia queda agrupada por zona para mostrar CABA, GBA y Venta Web sin dispersar la lectura por sucursales.', 6.65, 5.45, 5.8);
 
   const closing = addBase('Conclusiones y próximos pasos', 'Lectura accionable para reunión comercial');
   addTwoColumnList(closing, 0.55, 1.15, 3.9, 'Fortalezas', dossier.conclusions.fortalezas, GREEN);
   addTwoColumnList(closing, 4.72, 1.15, 3.9, 'Oportunidades', dossier.conclusions.oportunidades, AMBER);
-  addTwoColumnList(closing, 8.88, 1.15, 3.9, 'Acciones sugeridas', dossier.conclusions.acciones, BLUE);
+  addTwoColumnList(closing, 8.88, 1.15, 3.9, 'Acciones sugeridas', dossier.conclusions.acciones, brandColor);
 
   await pptx.writeFile({
     fileName: `informe-editable-${cleanFileName(dossier.marca)}-${dossier.filters.fecha_desde}.pptx`,

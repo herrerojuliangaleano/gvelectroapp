@@ -840,6 +840,13 @@ export interface SalesBIBrandDossier {
     updated_at: number | null;
     data_url: string;
   };
+  brand_style?: {
+    marca: string;
+    slug: string;
+    primary_color: string;
+    custom: boolean;
+    updated_at: number | null;
+  };
   available_tipos?: string[];
   selected_tipos?: string[];
   tipo_groups?: Record<string, string[]>;

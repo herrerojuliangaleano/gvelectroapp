@@ -175,6 +175,8 @@ Bearer token salvo endpoints publicos como `/api/health` y login.
 | GET | `/api/sales-bi/commercial/brand-logos/{marca}` | Devuelve metadata y data URL del logo PNG guardado para la marca del dossier. |
 | POST | `/api/sales-bi/commercial/brand-logos/{marca}` | Sube/reemplaza logo PNG de la marca principal para informes PowerPoint. |
 | DELETE | `/api/sales-bi/commercial/brand-logos/{marca}` | Elimina el logo PNG guardado para la marca. |
+| GET | `/api/sales-bi/commercial/brand-styles/{marca}` | Devuelve el color HEX guardado o sugerido para la marca principal. |
+| PUT | `/api/sales-bi/commercial/brand-styles/{marca}` | Guarda/reemplaza el color HEX de la marca principal para PowerPoint. |
 | GET | `/api/sales-bi/brands/report` | Dashboard comercial por marcas. |
 | GET | `/api/sales-bi/brands/compare` | Comparacion comercial de marcas por periodo. |
 | GET | `/api/sales-bi/lines/report` | Dashboard comercial por lineas/tipos. |

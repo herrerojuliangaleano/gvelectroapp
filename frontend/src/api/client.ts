@@ -1169,6 +1169,16 @@ export async function deleteSalesBIBrandLogo(marca: string): Promise<NonNullable
   return request(`/api/sales-bi/commercial/brand-logos/${encodeURIComponent(marca)}`, { method: 'DELETE' });
 }
 
+export async function updateSalesBIBrandStyle(
+  marca: string,
+  primary_color: string,
+): Promise<NonNullable<import('../types').SalesBIBrandDossier['brand_style']>> {
+  return request(`/api/sales-bi/commercial/brand-styles/${encodeURIComponent(marca)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ primary_color }),
+  });
+}
+
 export async function downloadSalesBIBrandDossierXlsx(params: {
   marca: string;
   fecha_desde?: string;

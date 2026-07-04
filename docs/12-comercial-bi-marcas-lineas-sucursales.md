@@ -110,8 +110,9 @@ Exportaciones del informe de marca:
   resumen ejecutivo, evolucion, ranking competitivo, comparacion con
   competidores, categorias, bandas de precio, tipos comerciales, zonas y
   conclusiones. La version 2.0 usa logo PNG de la marca principal, selector de
-  tipos, `Lavado` como agrupacion ejecutiva, zonas `CABA/GBA/Venta Web` y evita
-  que la narrativa principal dependa de productos/SKUs puntuales.
+  tipos, color HEX persistente por marca, `Lavado` como agrupacion ejecutiva,
+  zonas `CABA/GBA/Venta Web` y evita que la narrativa principal dependa de
+  productos/SKUs puntuales.
   Como PowerPoint no conserva el hover de la app, los graficos editables se
   acompañan con tablas compactas y lecturas breves por slide.
 - `PowerPoint visual`: captura las secciones del dashboard como imagen y las
@@ -130,9 +131,13 @@ La especificacion viva del PowerPoint editable esta en
 Corte actual:
 
 - Logo PNG por marca principal guardado en storage.
+- Color HEX por marca principal guardado en storage.
 - Selector de tipos comerciales para el dossier.
+- Selector de tipos muestra todos los tipos disponibles.
 - `Lavado` agrupa lavarropas, lavasecarropas/lavaseca y secarropas.
 - Share por zonas: `CABA`, `GBA` y `Venta Web`.
+- Presencia por zona reemplaza presencia por sucursal.
+- Gamas de precio genera graficos por cada tipo seleccionado.
 - Ranking competitivo apilado por tipos y ranking separado por tipo.
 - Slides principales por tipos, no por productos puntuales.
 - Vista externa sin costos, diferencias ni margen.

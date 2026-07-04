@@ -12,7 +12,7 @@
  */
 import {
   ArrowLeft, ArrowUpRight, ArrowDownRight, CheckCircle2, FileDown, FileSpreadsheet, Lightbulb, ListChecks,
-  Image as ImageIcon, Loader2, Presentation, ShieldCheck, Trash2, Upload, X,
+  Image as ImageIcon, Loader2, Palette, Presentation, ShieldCheck, Trash2, Upload, X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -20,7 +20,7 @@ import {
   Pie, PieChart, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis,
 } from 'recharts';
 import {
-  deleteSalesBIBrandLogo, downloadSalesBIBrandDossierXlsx, fetchSalesBIBrandDossier, uploadSalesBIBrandLogo,
+  deleteSalesBIBrandLogo, downloadSalesBIBrandDossierXlsx, fetchSalesBIBrandDossier, updateSalesBIBrandStyle, uploadSalesBIBrandLogo,
 } from '../api/client';
 import type { SalesBIBrandDossier, SalesBICommercialMix } from '../types';
 import {
@@ -153,6 +153,8 @@ export function BrandDossierView({
   const [exportProgress, setExportProgress] = useState('');
   const [selectedTipos, setSelectedTipos] = useState<string[]>([]);
   const [logoUploading, setLogoUploading] = useState(false);
+  const [brandStyleSaving, setBrandStyleSaving] = useState(false);
+  const [brandColorDraft, setBrandColorDraft] = useState('#1E3A8A');
   const [gran, setGran] = useState<Granularity>('monthly');
   const [drill, setDrill] = useState<string | null>(null);
   // Métrica del informe: solo unidades, solo pesos, o ambas (default).
@@ -182,6 +184,7 @@ export function BrandDossierView({
       .then((data) => {
         if (cancelled) return;
         setDossier(data);
+        setBrandColorDraft(data.brand_style?.primary_color || '#1E3A8A');
         setDrill(null);
         // Granularidad inicial acorde al rango.
         const from = new Date(data.filters.fecha_desde);
@@ -491,6 +494,26 @@ export function BrandDossierView({
     }
   }
 
+  async function handleSaveBrandStyle() {
+    if (!dossier) return;
+    const normalized = brandColorDraft.trim().startsWith('#') ? brandColorDraft.trim() : `#${brandColorDraft.trim()}`;
+    if (!/^#[0-9a-fA-F]{6}$/.test(normalized)) {
+      setError('El color de marca debe tener formato HEX, por ejemplo #1428A0.');
+      return;
+    }
+    setBrandStyleSaving(true);
+    setError('');
+    try {
+      const brand_style = await updateSalesBIBrandStyle(dossier.marca, normalized.toUpperCase());
+      setBrandColorDraft(brand_style.primary_color);
+      setDossier((current) => (current ? { ...current, brand_style } : current));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo guardar el color de marca');
+    } finally {
+      setBrandStyleSaving(false);
+    }
+  }
+
   if (!brandNames.length) {
     return <EmptyChartState minHeight={320} description="Importa datos comerciales para armar el informe de marca." />;
   }
@@ -500,6 +523,7 @@ export function BrandDossierView({
   const marketTot = dossier?.totals.market;
   const availableTipos = dossier?.available_tipos || [];
   const activeTipos = selectedTipos.length ? selectedTipos : (dossier?.selected_tipos || []);
+  const safeBrandColor = /^#[0-9a-fA-F]{6}$/.test(brandColorDraft) ? brandColorDraft : '#1E3A8A';
 
   return (
     <div className="space-y-4">
@@ -558,11 +582,31 @@ export function BrandDossierView({
             ))}
           </div>
           {availableTipos.length > 0 && (
-            <div className="flex max-w-full flex-wrap items-center gap-1.5 rounded-2xl border border-white/10 bg-slate-950/30 px-2.5 py-2">
-              <span className="mr-1 text-[10px] font-black uppercase tracking-[0.18em] text-[color:var(--text-3)]">Tipos PPT</span>
-              {availableTipos.slice(0, 12).map((name) => {
-                const active = activeTipos.includes(name);
-                return (
+            <div className="flex max-w-5xl flex-col gap-2 rounded-2xl border border-white/10 bg-slate-950/30 px-2.5 py-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="mr-1 text-[10px] font-black uppercase tracking-[0.18em] text-[color:var(--text-3)]">Tipos PPT</span>
+                <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-bold text-[color:var(--text-3)]">
+                  {activeTipos.length} de {availableTipos.length}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedTipos(availableTipos)}
+                  className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] font-black text-[color:var(--text-2)] hover:border-[color:var(--chart-blue)] hover:text-white"
+                >
+                  Todos
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedTipos([])}
+                  className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] font-black text-[color:var(--text-2)] hover:border-white/25 hover:text-white"
+                >
+                  Default
+                </button>
+              </div>
+              <div className="flex max-h-28 flex-wrap items-center gap-1.5 overflow-y-auto pr-1">
+                {availableTipos.map((name) => {
+                  const active = activeTipos.includes(name);
+                  return (
                   <button
                     key={name}
                     type="button"
@@ -577,8 +621,9 @@ export function BrandDossierView({
                   >
                     {name}
                   </button>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
@@ -587,7 +632,7 @@ export function BrandDossierView({
             <ShieldCheck size={12} /> Sin costos ni márgenes
           </span>
           {dossier && (
-            <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/30 px-2.5 py-1.5">
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-slate-950/30 px-2.5 py-1.5">
               <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-white">
                 {dossier.brand_logo?.data_url
                   ? <img src={dossier.brand_logo.data_url} alt="" className="h-full w-full object-contain" />
@@ -618,6 +663,33 @@ export function BrandDossierView({
                   <Trash2 size={14} />
                 </button>
               )}
+              <div className="mx-1 h-6 w-px bg-white/10" />
+              <label className="inline-flex h-8 items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-2 text-xs font-bold text-white">
+                <Palette size={14} className="text-[color:var(--text-3)]" />
+                <input
+                  type="color"
+                  value={safeBrandColor}
+                  onChange={(e) => setBrandColorDraft(e.target.value.toUpperCase())}
+                  className="h-5 w-7 cursor-pointer rounded border-0 bg-transparent p-0"
+                  title="Color principal de la marca en PowerPoint"
+                />
+                <input
+                  value={brandColorDraft}
+                  onChange={(e) => setBrandColorDraft(e.target.value.toUpperCase())}
+                  className="h-6 w-20 rounded-md border border-white/10 bg-slate-950/60 px-1.5 font-mono text-[11px] text-white outline-none focus:border-[color:var(--chart-blue)]"
+                  title="Color HEX de marca"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => void handleSaveBrandStyle()}
+                disabled={brandStyleSaving || brandColorDraft.toUpperCase() === (dossier.brand_style?.primary_color || '').toUpperCase()}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/15 px-2.5 text-xs font-bold text-white hover:bg-white/10 disabled:opacity-40"
+                title="Guardar color para esta marca"
+              >
+                {brandStyleSaving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                Guardar color
+              </button>
             </div>
           )}
           <button

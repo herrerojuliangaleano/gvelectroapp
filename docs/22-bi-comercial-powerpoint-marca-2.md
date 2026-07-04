@@ -45,6 +45,8 @@ mismo paso.
 - Fuente de datos: endpoint `GET /api/sales-bi/commercial/brand-dossier`.
 - Logo de marca: PNG guardado en el storage activo del backend bajo
   `storage/brand-logos/{marca_slug}.png`.
+- Color de marca: HEX guardado en el storage activo del backend bajo
+  `storage/brand-styles/{marca_slug}.json`.
 
 Decision: mantener el PowerPoint editable en frontend por ahora. La razon es
 que la salida actual ya queda bien visualmente y `pptxgenjs` permite conservar
@@ -56,7 +58,10 @@ Incluido:
 
 - Persistir logo PNG por marca principal.
 - Permitir cambiar/reemplazar el logo guardado.
+- Persistir color principal HEX por marca principal.
 - Usar logo solo para la marca principal del informe.
+- Usar color de marca solo para la marca principal; competidores, zonas, tipos
+  y categorias usan paletas secundarias desaturadas.
 - Mostrar competidores como texto, no como logos.
 - Agregar selector de tipos comerciales para el dossier.
 - Agregar la agrupacion especial `Lavado`.
@@ -97,6 +102,22 @@ Implementacion sugerida:
 - En el corte 1 no se agrego tabla nueva: la metadata se deriva del archivo
   guardado para evitar migracion innecesaria.
 - Exponer endpoints internos para obtener, subir y reemplazar logo.
+
+### Color de marca
+
+Cada marca puede tener un color principal HEX guardado. Ese color se usa para
+la marca principal en portada, KPIs, series propias y comparaciones donde la
+marca aparece como serie.
+
+Reglas:
+
+- Formato aceptado: `#RRGGBB`.
+- Samsung usa por defecto `#1428A0` si no hay color guardado.
+- Si se guarda otro color para la misma marca, reemplaza al anterior.
+- Los competidores nunca usan el color de la marca principal.
+- Tipos, categorias y zonas usan una paleta secundaria menos saturada para no
+  opacar el color de marca.
+- El color es un asset visual de presentacion; no cambia ningun dato comercial.
 
 ### Tipo comercial
 
@@ -153,7 +174,8 @@ Al exportar PowerPoint editable desde el dossier:
 3. Elegir tipos comerciales a incluir.
 4. Ver logo guardado de la marca principal, si existe.
 5. Subir o reemplazar logo PNG de la marca principal.
-6. Exportar PPT editable.
+6. Elegir/guardar color principal de marca.
+7. Exportar PPT editable.
 
 Defaults recomendados para tipos:
 
@@ -313,6 +335,7 @@ El dossier debe poder devolver:
 - `selected_tipos`: tipos elegidos para el informe.
 - `tipo_groups`: definicion de `Lavado` y tipos directos.
 - `brand_logo`: metadata/URL del logo de marca principal, si existe.
+- `brand_style`: color principal de la marca.
 - `ranking_by_tipo`: ranking de marcas por tipo comercial.
 - `monthly_share_by_tipo`: participacion mensual por tipo comercial.
 - `zone_share`: share por `CABA`, `GBA`, `Venta Web`.
@@ -327,6 +350,11 @@ Logo de marca:
 - `GET /api/sales-bi/commercial/brand-logos/{marca}`
 - `POST /api/sales-bi/commercial/brand-logos/{marca}`
 - `DELETE /api/sales-bi/commercial/brand-logos/{marca}`
+
+Estilo de marca:
+
+- `GET /api/sales-bi/commercial/brand-styles/{marca}`
+- `PUT /api/sales-bi/commercial/brand-styles/{marca}`
 
 Dossier:
 
@@ -349,16 +377,21 @@ En `BrandDossierView`:
 - Agregar selector de tipos comerciales.
 - Mostrar logo actual de la marca.
 - Permitir subir/reemplazar logo PNG.
+- Permitir elegir y guardar color HEX de marca.
+- Mostrar todos los tipos disponibles, no solo los primeros.
 - Enviar `tipos` al dossier y al export Excel.
 - Pasar el logo al generador de PPT editable.
 
 En `exportBrandDossierEditable.ts`:
 
 - Insertar logo de marca principal.
+- Usar el color de marca solo para la marca principal.
 - Rediseñar slides segun este documento.
 - Reemplazar productos por tipos.
 - Usar barras verticales/apiladas para rankings y comparaciones.
 - Usar torta/donut para in-house share por zona.
+- Cambiar presencia por sucursal a presencia por zona.
+- Generar gamas de precio con graficos de barras por cada tipo seleccionado.
 
 ## Validacion esperada
 
@@ -369,6 +402,7 @@ Backend:
 - Dossier con marca + competidores + tipos devuelve datos sin romper el contrato
   actual.
 - Logo PNG se guarda, reemplaza y sirve correctamente.
+- Color HEX de marca se guarda y queda asociado a la marca.
 - `Lavado` suma correctamente lavarropas, lavasecarropas/lavaseca y secarropas.
 - `Venta Web` clasifica por canal antes que por sucursal.
 
@@ -378,6 +412,8 @@ Frontend:
 - Export PPT con logo guardado.
 - Export PPT sin logo guardado.
 - Selector de tipos con defaults correctos.
+- Selector de tipos muestra todos los tipos disponibles.
+- Selector de color guarda el color de la marca.
 - Competidores siguen funcionando sin logo.
 
 Manual:
@@ -421,11 +457,13 @@ Archivos tocados:
 Cambios hechos:
 
 - Se agregaron endpoints para consultar, subir y borrar logo PNG de marca.
+- Se agregaron endpoints para consultar y guardar color HEX por marca.
 - El dossier acepta `tipos` y devuelve:
   - `available_tipos`;
   - `selected_tipos`;
   - `tipo_groups`;
   - `brand_logo`;
+  - `brand_style`;
   - `ranking_by_tipo`;
   - `monthly_share_by_tipo`;
   - `zone_share`;
@@ -435,7 +473,11 @@ Cambios hechos:
 - `Venta Web` se detecta primero por canal/tipo de venta y despues por sucursal.
 - La UI del dossier permite seleccionar tipos comerciales y subir/reemplazar el
   logo PNG de la marca principal.
+- La UI muestra todos los tipos disponibles y permite guardar color principal de
+  marca.
 - El PowerPoint editable usa logo de marca en portada y encabezado.
+- El PowerPoint editable usa el color de la marca solo para la marca principal y
+  usa paletas secundarias desaturadas para tipos, zonas y competidores.
 - El PowerPoint reemplaza slides centradas en productos por:
   - tipos x punto de venta;
   - tipos destacados;
@@ -445,6 +487,8 @@ Cambios hechos:
   - ranking competitivo por tipo.
 - `Marca vs competidores` usa barras verticales por periodo.
 - `In-house share` se muestra por zonas `CABA`, `GBA` y `Venta Web`.
+- `Presencia por sucursal` queda reemplazada por `Presencia por zona`.
+- `Gamas de precio` genera graficos de barras por cada tipo seleccionado.
 
 Validacion ejecutada:
 
