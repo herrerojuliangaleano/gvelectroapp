@@ -289,6 +289,10 @@ export function BrandDossierView({
   }, [dossier, gran, drill]);
 
   const compList = dossier?.filters.competidores || [];
+  const selectedComparableLabels = useMemo(
+    () => [...competidores, ...competitorGroups.map((group) => group.alias)],
+    [competidores, competitorGroups],
+  );
   const groupAliasSet = useMemo(() => new Set(competitorGroups.map((group) => group.alias)), [competitorGroups]);
   const groupMemberSet = useMemo(() => new Set(competitorGroups.flatMap((group) => group.marcas)), [competitorGroups]);
   const selectedComparableCount = competidores.length + competitorGroups.length;
@@ -628,7 +632,7 @@ export function BrandDossierView({
           </label>
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-[11px] font-black uppercase tracking-[0.18em] text-[color:var(--text-3)]">vs</span>
-            {compList.map((name, i) => (
+            {selectedComparableLabels.map((name, i) => (
               <button
                 key={name}
                 type="button"
@@ -648,10 +652,15 @@ export function BrandDossierView({
               disabled={selectedComparableCount >= MAX_COMPETITORS}
             >
               <option value="">+ competidor ({selectedComparableCount}/{MAX_COMPETITORS})</option>
-              {brandNames.filter((name) => name !== marca && !compList.includes(name) && !groupMemberSet.has(name)).slice(0, 80).map((name) => (
+              {brandNames.filter((name) => name !== marca && !competidores.includes(name) && !groupMemberSet.has(name)).slice(0, 80).map((name) => (
                 <option key={name} value={name}>{name}</option>
               ))}
             </select>
+            {!selectedComparableCount && compList.length > 0 && (
+              <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-bold text-[color:var(--text-3)]">
+                Sugeridos auto: {compList.slice(0, 4).join(' · ')}{compList.length > 4 ? ` +${compList.length - 4}` : ''}
+              </span>
+            )}
           </div>
           <div className="flex max-w-5xl flex-col gap-2 rounded-2xl border border-white/10 bg-slate-950/30 px-2.5 py-2">
             <div className="flex flex-wrap items-center gap-2">

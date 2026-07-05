@@ -217,7 +217,8 @@ Regla de comparacion:
 - Si el usuario elige marcas o grupos, la comparacion queda cerrada a esa
   lista. No se agrega `OTRAS` ni marcas externas en los graficos comparativos.
 - Si el usuario no elige nada, el sistema propone comparables automaticos por
-  ranking.
+  ranking. Esos sugeridos no cuentan como seleccion manual y no deben bloquear
+  el selector de competidores.
 - Un grupo con alias cuenta como un solo comparable, aunque incluya varias
   marcas. Ejemplo: `Proveedor X = Drean + Philco + Noblex`.
 
