@@ -602,6 +602,7 @@ def get_brand_dossier(
     sucursales: str | None = Query(default=None),
     tipo_venta: str | None = Query(default=None),
     competidores: str | None = Query(default=None),
+    competidor_grupos: str | None = Query(default=None),
     tipos: str | None = Query(default=None),
 ):
     """Informe presentable a una marca. Nunca incluye costos ni margen."""
@@ -609,7 +610,7 @@ def get_brand_dossier(
     dossier = build_brand_dossier(
         marca, fecha_desde, fecha_hasta,
         empresa=empresa, sucursal=sucursal, sucursales=sucursales,
-        tipo_venta=tipo_venta, competidores=competidores, tipos=tipos,
+        tipo_venta=tipo_venta, competidores=competidores, competidor_grupos=competidor_grupos, tipos=tipos,
     )
     if not dossier["totals"]["brand"]["lineas"] and not dossier["totals"]["brand"]["unidades"]:
         raise HTTPException(status_code=404, detail=f"No hay ventas de '{marca}' en el período seleccionado.")
@@ -627,6 +628,7 @@ def export_brand_dossier_xlsx(
     sucursales: str | None = Query(default=None),
     tipo_venta: str | None = Query(default=None),
     competidores: str | None = Query(default=None),
+    competidor_grupos: str | None = Query(default=None),
     tipos: str | None = Query(default=None),
     metric: str = Query(default="both", pattern="^(units|pvp|both)$"),
 ):
@@ -635,7 +637,7 @@ def export_brand_dossier_xlsx(
     dossier = build_brand_dossier(
         marca, fecha_desde, fecha_hasta,
         empresa=empresa, sucursal=sucursal, sucursales=sucursales,
-        tipo_venta=tipo_venta, competidores=competidores, tipos=tipos,
+        tipo_venta=tipo_venta, competidores=competidores, competidor_grupos=competidor_grupos, tipos=tipos,
         detail_series=True,
     )
     if not dossier["totals"]["brand"]["lineas"] and not dossier["totals"]["brand"]["unidades"]:

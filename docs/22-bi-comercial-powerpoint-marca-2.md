@@ -204,13 +204,22 @@ antes de mirar sucursal. Si no es online, se clasifica por sucursal.
 Al exportar PowerPoint editable desde el dossier:
 
 1. Elegir marca principal.
-2. Elegir hasta 4 competidores. Para Samsung, el set recomendado es Midea,
-   Drean, Whirlpool y Enova.
+2. Elegir hasta 6 comparables. Cada comparable puede ser una marca individual
+   o un grupo de marcas con alias de proveedor.
 3. Elegir tipos comerciales a incluir.
 4. Ver logo guardado de la marca principal, si existe.
 5. Subir o reemplazar logo PNG de la marca principal.
 6. Elegir/guardar color principal de marca.
 7. Exportar PPT editable.
+
+Regla de comparacion:
+
+- Si el usuario elige marcas o grupos, la comparacion queda cerrada a esa
+  lista. No se agrega `OTRAS` ni marcas externas en los graficos comparativos.
+- Si el usuario no elige nada, el sistema propone comparables automaticos por
+  ranking.
+- Un grupo con alias cuenta como un solo comparable, aunque incluya varias
+  marcas. Ejemplo: `Proveedor X = Drean + Philco + Noblex`.
 
 Defaults recomendados para tipos:
 
@@ -288,7 +297,7 @@ Grafico:
 - Columnas agrupadas o apiladas por mes y tipo.
 - Debe permitir ver si la participacion mejora o cae en cada tipo seleccionado.
 
-### 7. In-house share por zona
+### 7. Venta por zona
 
 Grafico:
 
@@ -299,15 +308,24 @@ Grafico:
 
 Lectura esperada:
 
-- Como se reparte la participacion de la marca en la red.
+- Como se reparte la venta propia de la marca en la red.
 - Donde la marca esta mas fuerte o mas debil.
 
-### 8. Share por punto de venta / zona
+Esta metrica NO es in-house share. Es distribucion interna de la marca.
+
+### 8. In-house share por zona
 
 Grafico:
 
-- Barras verticales por zona o sucursal, segun espacio.
-- Debe complementar la torta de in-house share con valores comparables.
+- Barras verticales por `CABA`, `GBA` y `Venta Web`.
+- Mide la participacion de la marca sobre la venta total de cada zona.
+- Debe poder verse en unidades y pesos.
+
+Formula:
+
+- Share unidades zona = unidades de la marca en la zona / unidades totales de
+  la zona.
+- Share pesos zona = PVP vendido de la marca en la zona / PVP total de la zona.
 
 ### 9. Tipos destacados
 
@@ -350,8 +368,15 @@ Reemplaza la comparacion de lineas.
 Grafico:
 
 - Barras verticales por periodo.
-- Serie por marca principal y competidores.
+- Serie por marca principal y comparables elegidos.
 - Debe poder verse en unidades y pesos.
+
+Detalle adicional:
+
+- Agregar una slide de tabla mensual con todos los meses disponibles.
+- La tabla muestra marca principal y comparables elegidos, incluyendo grupos
+  por alias.
+- No sumar competidores que no esten en la seleccion.
 
 ### 13. Conclusiones y proximos pasos
 
@@ -374,6 +399,8 @@ El dossier debe poder devolver:
 - `ranking_by_tipo`: ranking de marcas por tipo comercial.
 - `monthly_share_by_tipo`: participacion mensual por tipo comercial.
 - `zone_share`: share por `CABA`, `GBA`, `Venta Web`.
+- `comparison_items`: marca principal + comparables elegidos.
+- `comparison_ranking`: ranking cerrado para marca individual o grupos.
 - `tipo_zone_matrix`: matriz tipo comercial x zona/sucursal.
 - `price_bands_by_tipo`: gamas de precio por tipo comercial.
 - `competitor_period_bars`: marca vs competidores por periodo.

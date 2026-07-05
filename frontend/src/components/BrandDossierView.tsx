@@ -32,8 +32,8 @@ import { exportDeckToPdf, exportDeckToPptx, type DeckSection } from '../lib/expo
 
 const POSITIVE = 'var(--chart-positive)';
 const MARKET_COLOR = '#64748b';
-const MAX_COMPETITORS = 4;
-const COMP_COLORS = ['#0098D1', '#2A6FBA', '#EEB111', '#7B3FB3'];
+const MAX_COMPETITORS = 6;
+const COMP_COLORS = ['#0098D1', '#2A6FBA', '#EEB111', '#7B3FB3', '#2A9D8F', '#D06A7A'];
 const TYPE_HEX_COLORS = ['#3E9FC5', '#2A9D8F', '#4E8EDB', '#7B61B8', '#D99A2B', '#D06A7A'];
 const BRAND_HEX_COLORS: Record<string, string> = {
   SAMSUNG: '#1428A0',
@@ -46,6 +46,7 @@ const BRAND_HEX_COLORS: Record<string, string> = {
 const MESES_CORTOS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
 type Granularity = 'daily' | 'weekly' | 'monthly' | 'bimonthly' | 'quarterly';
+type CompetitorGroupDraft = { alias: string; marcas: string[] };
 
 const GRAN_LABELS: Record<Granularity, string> = {
   daily: 'Diario',
@@ -175,6 +176,9 @@ export function BrandDossierView({
   const brandNames = useMemo(() => brands.map((b) => b.name), [brands]);
   const [marca, setMarca] = useState(initialMarca || brandNames[0] || '');
   const [competidores, setCompetidores] = useState<string[]>([]);
+  const [competitorGroups, setCompetitorGroups] = useState<CompetitorGroupDraft[]>([]);
+  const [groupAliasDraft, setGroupAliasDraft] = useState('');
+  const [groupBrandDraft, setGroupBrandDraft] = useState<string[]>([]);
   const [dossier, setDossier] = useState<SalesBIBrandDossier | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -189,6 +193,10 @@ export function BrandDossierView({
   // Métrica del informe: solo unidades, solo pesos, o ambas (default).
   const [metric, setMetric] = useState<'units' | 'pvp' | 'both'>('both');
   const mfmt = metric === 'units' ? num : money;
+  const competitorGroupQuery = useMemo(
+    () => (competitorGroups.length ? JSON.stringify(competitorGroups) : undefined),
+    [competitorGroups],
+  );
 
   const slideRefs = useRef<Record<string, HTMLElement | null>>({});
 
@@ -208,6 +216,7 @@ export function BrandDossierView({
       sucursal: sucursal || undefined,
       tipo_venta: tipoVenta || undefined,
       competidores: competidores.length ? competidores.join(',') : undefined,
+      competidor_grupos: competitorGroupQuery,
       tipos: selectedTipos.length ? selectedTipos.join(',') : undefined,
     })
       .then((data) => {
@@ -224,7 +233,7 @@ export function BrandDossierView({
       .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : 'No se pudo cargar el informe'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [marca, fechaDesde, fechaHasta, sucursal, tipoVenta, competidores, selectedTipos]);
+  }, [marca, fechaDesde, fechaHasta, sucursal, tipoVenta, competidores, competitorGroupQuery, selectedTipos]);
 
   // ── Serie de evolución con granularidad + drill-down ─────────────────
   const spanDays = useMemo(() => {
@@ -280,6 +289,13 @@ export function BrandDossierView({
   }, [dossier, gran, drill]);
 
   const compList = dossier?.filters.competidores || [];
+  const groupAliasSet = useMemo(() => new Set(competitorGroups.map((group) => group.alias)), [competitorGroups]);
+  const groupMemberSet = useMemo(() => new Set(competitorGroups.flatMap((group) => group.marcas)), [competitorGroups]);
+  const selectedComparableCount = competidores.length + competitorGroups.length;
+  const groupOptions = useMemo(
+    () => brandNames.filter((name) => name !== marca && !competidores.includes(name)),
+    [brandNames, marca, competidores],
+  );
   const competencia = useMemo(() => {
     if (!dossier) return [];
     return dossier.monthly_series.map((m) => {
@@ -317,13 +333,13 @@ export function BrandDossierView({
   // Share apilado semanal (marca + competidores + OTRAS).
   const shareStack = useMemo(() => {
     const src = dossier?.share_series || [];
-    if (!src.length) return { rows: [] as Array<Record<string, number | string>>, names: [] as string[] };
+    if (!src.length) return { rows: [] as Array<Record<string, number | string>>, names: [] as string[], hasOthers: false };
     const names = Object.keys(src[0].values).filter((n) => n !== 'OTRAS');
     const rows = src.map((w) => ({
       label: bucketLabel(w.semana, 'weekly'),
       ...(metric === 'units' ? (w.values_units || w.values) : w.values),
     }));
-    return { rows, names };
+    return { rows, names, hasOthers: Object.prototype.hasOwnProperty.call(metric === 'units' ? (src[0].values_units || src[0].values) : src[0].values, 'OTRAS') };
   }, [dossier, metric]);
 
   // Evolución por categoría (unidades de la marca), diaria o semanal según rango.
@@ -346,10 +362,11 @@ export function BrandDossierView({
   // Cara a cara: filas del ranking para la marca + competidores.
   const duel = useMemo(() => {
     if (!dossier) return null;
-    const names = [dossier.marca, ...compList];
-    const rows = names
-      .map((n) => dossier.ranking.find((r) => r.name === n))
-      .filter((r): r is SalesBIBrandDossier['ranking'][number] => !!r);
+    const rows = dossier.comparison_ranking?.length
+      ? dossier.comparison_ranking
+      : [dossier.marca, ...compList]
+          .map((n) => dossier.ranking.find((r) => r.name === n))
+          .filter((r): r is SalesBIBrandDossier['ranking'][number] => !!r);
     return rows.length >= 2 ? rows : null;
   }, [dossier, compList]);
 
@@ -413,7 +430,8 @@ export function BrandDossierView({
           fecha_hasta: fechaHasta || undefined,
           sucursal: sucursal || undefined,
           tipo_venta: tipoVenta || undefined,
-          competidores: compList.length ? compList.join(',') : undefined,
+          competidores: competidores.length ? competidores.join(',') : undefined,
+          competidor_grupos: competitorGroupQuery,
           tipos: (dossier.selected_tipos || selectedTipos).length ? (dossier.selected_tipos || selectedTipos).join(',') : undefined,
           metric,
         });
@@ -479,9 +497,41 @@ export function BrandDossierView({
   function toggleCompetidor(name: string) {
     setCompetidores((current) => {
       if (current.includes(name)) return current.filter((c) => c !== name);
-      if (current.length >= MAX_COMPETITORS) return [...current.slice(1), name];
+      if (groupMemberSet.has(name) || selectedComparableCount >= MAX_COMPETITORS) return current;
       return [...current, name];
     });
+  }
+
+  function removeComparable(name: string) {
+    if (groupAliasSet.has(name)) {
+      setCompetitorGroups((current) => current.filter((group) => group.alias !== name));
+      return;
+    }
+    setCompetidores((current) => current.filter((comp) => comp !== name));
+  }
+
+  function toggleGroupBrand(name: string) {
+    setGroupBrandDraft((current) => (
+      current.includes(name)
+        ? current.filter((brand) => brand !== name)
+        : [...current, name]
+    ));
+  }
+
+  function addCompetitorGroup() {
+    const marcas = groupBrandDraft.filter((name) => name !== marca);
+    if (!marcas.length || selectedComparableCount >= MAX_COMPETITORS) return;
+    const aliasBase = groupAliasDraft.trim() || marcas.join(' + ');
+    const used = new Set([...competidores, ...competitorGroups.map((group) => group.alias), marca]);
+    let alias = aliasBase;
+    let index = 2;
+    while (used.has(alias)) {
+      alias = `${aliasBase} ${index}`;
+      index += 1;
+    }
+    setCompetitorGroups((current) => [...current, { alias, marcas }]);
+    setGroupAliasDraft('');
+    setGroupBrandDraft([]);
   }
 
   function toggleTipo(name: string) {
@@ -563,7 +613,14 @@ export function BrandDossierView({
             <span className="text-[11px] font-black uppercase tracking-[0.18em] text-[color:var(--text-3)]">Marca</span>
             <select
               value={marca}
-              onChange={(e) => { setCompetidores([]); setSelectedTipos([]); setMarca(e.target.value); }}
+              onChange={(e) => {
+                setCompetidores([]);
+                setCompetitorGroups([]);
+                setGroupAliasDraft('');
+                setGroupBrandDraft([]);
+                setSelectedTipos([]);
+                setMarca(e.target.value);
+              }}
               className="h-10 rounded-xl border border-white/15 bg-slate-950/40 px-3 text-sm font-bold text-white outline-none focus:border-[color:var(--chart-blue)]"
             >
               {brandNames.map((name) => <option key={name} value={name}>{name}</option>)}
@@ -575,12 +632,12 @@ export function BrandDossierView({
               <button
                 key={name}
                 type="button"
-                onClick={() => toggleCompetidor(name)}
+                onClick={() => removeComparable(name)}
                 className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-bold text-white"
                 style={{ borderColor: competitorColor(name, i), background: 'rgba(255,255,255,0.04)' }}
-                title="Quitar competidor"
+                title={groupAliasSet.has(name) ? 'Quitar grupo proveedor' : 'Quitar competidor'}
               >
-                {name} <X size={11} />
+                {groupAliasSet.has(name) ? `${name} · grupo` : name} <X size={11} />
               </button>
             ))}
             <select
@@ -588,12 +645,57 @@ export function BrandDossierView({
               onChange={(e) => { if (e.target.value) toggleCompetidor(e.target.value); }}
               className="h-8 rounded-full border border-white/15 bg-slate-950/40 px-2 text-xs font-bold text-[color:var(--text-2)] outline-none"
               title="Agregar competidor"
+              disabled={selectedComparableCount >= MAX_COMPETITORS}
             >
-              <option value="">+ competidor</option>
-              {(dossier?.ranking || brands).filter((b) => b.name !== marca && !compList.includes(b.name)).slice(0, 20).map((b) => (
-                <option key={b.name} value={b.name}>{b.name}</option>
+              <option value="">+ competidor ({selectedComparableCount}/{MAX_COMPETITORS})</option>
+              {brandNames.filter((name) => name !== marca && !compList.includes(name) && !groupMemberSet.has(name)).slice(0, 80).map((name) => (
+                <option key={name} value={name}>{name}</option>
               ))}
             </select>
+          </div>
+          <div className="flex max-w-5xl flex-col gap-2 rounded-2xl border border-white/10 bg-slate-950/30 px-2.5 py-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-[color:var(--text-3)]">Grupo proveedor</span>
+              <input
+                value={groupAliasDraft}
+                onChange={(e) => setGroupAliasDraft(e.target.value)}
+                placeholder="Alias, ej. Newsan"
+                className="h-8 w-40 rounded-lg border border-white/10 bg-slate-950/60 px-2 text-xs font-bold text-white outline-none focus:border-[color:var(--chart-blue)]"
+              />
+              <select
+                value=""
+                onChange={(e) => { if (e.target.value) toggleGroupBrand(e.target.value); }}
+                className="h-8 rounded-lg border border-white/10 bg-slate-950/60 px-2 text-xs font-bold text-[color:var(--text-2)] outline-none"
+                disabled={selectedComparableCount >= MAX_COMPETITORS}
+              >
+                <option value="">Agregar marca al grupo</option>
+                {groupOptions.filter((name) => !groupBrandDraft.includes(name) && !groupMemberSet.has(name)).slice(0, 80).map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={addCompetitorGroup}
+                disabled={!groupBrandDraft.length || selectedComparableCount >= MAX_COMPETITORS}
+                className="h-8 rounded-lg border border-[color:var(--chart-blue)]/50 px-3 text-xs font-black text-white hover:bg-[color:var(--chart-blue)]/20 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Crear grupo
+              </button>
+            </div>
+            {groupBrandDraft.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {groupBrandDraft.map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => toggleGroupBrand(name)}
+                    className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-[11px] font-bold text-[color:var(--text-2)]"
+                  >
+                    {name} <X size={10} />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-1 rounded-full border border-white/15 p-1">
             {([['units', '# Unidades'], ['pvp', '$ PVP'], ['both', 'Ambos']] as const).map(([value, label]) => (
@@ -925,7 +1027,7 @@ export function BrandDossierView({
                       contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} itemStyle={CHART_TOOLTIP_ITEM_STYLE}
                     />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
-                    {[...shareStack.names, 'OTRAS'].map((name) => (
+                    {[...shareStack.names, ...(shareStack.hasOthers ? ['OTRAS'] : [])].map((name) => (
                       <Area
                         key={name}
                         dataKey={name}

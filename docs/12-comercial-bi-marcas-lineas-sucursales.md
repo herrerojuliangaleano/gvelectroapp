@@ -132,7 +132,11 @@ Corte actual:
 
 - Logo PNG por marca principal guardado en storage.
 - Color HEX por marca principal guardado en storage.
-- Hasta 4 competidores seleccionables para el dossier de marca.
+- Hasta 6 comparables seleccionables para el dossier de marca.
+- Los comparables pueden ser marcas individuales o grupos con alias de
+  proveedor. Ejemplo: `Proveedor X = Drean + Philco + Noblex`.
+- Si se seleccionan comparables, los graficos comparativos quedan cerrados a
+  esa lista; no se agrega `OTRAS` ni marcas externas.
 - Paleta operativa para Samsung + Midea, Drean, Whirlpool y Enova:
   `#1428A0`, `#0098D1`, `#2A6FBA`, `#EEB111` y `#7B3FB3`.
 - Paleta fija de tipos clave: Heladera `#3E9FC5`, Lavado `#2A9D8F`,
@@ -142,7 +146,10 @@ Corte actual:
 - Selector de tipos comerciales para el dossier.
 - Selector de tipos muestra todos los tipos disponibles.
 - `Lavado` agrupa lavarropas, lavasecarropas/lavaseca y secarropas.
-- Share por zonas: `CABA`, `GBA` y `Venta Web`.
+- Venta por zona: distribucion propia de la marca entre `CABA`, `GBA` y
+  `Venta Web`.
+- In-house share por zona: participacion de la marca sobre la venta total de
+  cada zona, en unidades y pesos.
 - Presencia por zona reemplaza presencia por sucursal.
 - Gamas de precio genera graficos por cada tipo seleccionado.
 - Ranking competitivo apilado por tipos y ranking separado por tipo.
@@ -161,6 +168,10 @@ Parametros relevantes:
 - `marca`: marca principal del informe.
 - `competidores`: lista separada por coma. Los competidores elegidos se fuerzan
   dentro del ranking base aunque no esten en el top 12.
+- `competidor_grupos`: JSON opcional con grupos de marcas. Formato:
+  `[{"alias":"Proveedor X","marcas":["Drean","Philco"]}]`.
+- Cuando `competidores` o `competidor_grupos` tienen valor, la comparacion se
+  limita a esos comparables.
 - `metric`: `units`, `pvp` o `both`.
 - `fecha_desde`, `fecha_hasta`, `empresa`, `sucursal`, `sucursales`,
   `tipo_venta`: mismos filtros del dashboard.
@@ -177,8 +188,8 @@ Hojas principales:
   absoluta y porcentual contra la marca base.
 - `Competidores por mes`: evolucion mensual de la marca base y cada competidor,
   con unidades, pesos, share y diferencia contra la marca base.
-- `Share semanal`: serie semanal de participacion de marca base, competidores
-  y `OTRAS`, equivalente al grafico apilado de la app.
+- `Share semanal`: serie semanal de participacion de marca base y comparables.
+  `OTRAS` solo aparece cuando el sistema propuso comparables automaticos.
 - `Cara a cara`: metricas comparadas, lider de cada metrica y ventaja porcentual
   del mejor contra la marca base.
 - `Competidores x Sucursal`: comparacion por sucursal con share local y

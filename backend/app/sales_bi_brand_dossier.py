@@ -10,6 +10,7 @@ NUNCA incluye costos ni márgenes (equivale a presentation=True siempre).
 """
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any
@@ -179,6 +180,123 @@ def _resolve_brand_name(marca: str, names: list[str]) -> str:
     return lowered.get(wanted.lower(), wanted)
 
 
+def _merge_metric_bucket(target: dict[str, Any], source: dict[str, Any] | None) -> dict[str, Any]:
+    if not source:
+        return target
+    target["total_vendido"] += float(source.get("total_vendido") or 0.0)
+    target["unidades"] += int(source.get("unidades") or 0)
+    target["lineas"] += int(source.get("lineas") or 0)
+    target["diferencia"] += float(source.get("diferencia") or 0.0)
+    target["costo_total"] += float(source.get("costo_total") or 0.0)
+    target["productos"].update(source.get("productos") or set())
+    return target
+
+
+def _bucket_for_brands(source: dict[str, dict[str, Any]], brand_names: list[str]) -> dict[str, Any]:
+    bucket = _metric_bucket()
+    for name in brand_names:
+        _merge_metric_bucket(bucket, source.get(name))
+    return bucket
+
+
+def _parse_competitor_groups(value: Any, brand_names: list[str]) -> list[dict[str, Any]]:
+    if not value:
+        return []
+    payload: Any = value
+    if isinstance(value, str):
+        try:
+            payload = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    if isinstance(payload, dict):
+        payload = [{"alias": alias, "marcas": marcas} for alias, marcas in payload.items()]
+    if not isinstance(payload, list):
+        return []
+
+    groups: list[dict[str, Any]] = []
+    for raw in payload:
+        if not isinstance(raw, dict):
+            continue
+        alias = str(raw.get("alias") or raw.get("name") or "").strip()
+        marcas_raw = raw.get("marcas") or raw.get("brands") or []
+        marcas = []
+        for item in _parse_csv_list(marcas_raw):
+            resolved = _resolve_brand_name(item, brand_names)
+            if resolved in brand_names and resolved not in marcas:
+                marcas.append(resolved)
+        if not alias and marcas:
+            alias = " + ".join(marcas)
+        if alias and marcas:
+            groups.append({"alias": alias, "marcas": marcas})
+    return groups
+
+
+def _comparison_label(alias: str, used: set[str]) -> str:
+    base = alias.strip() or "Grupo"
+    if base not in used:
+        used.add(base)
+        return base
+    idx = 2
+    while f"{base} {idx}" in used:
+        idx += 1
+    value = f"{base} {idx}"
+    used.add(value)
+    return value
+
+
+def _build_comparisons(
+    brand_name: str,
+    brands: dict[str, dict[str, Any]],
+    ranked: list[dict[str, Any]],
+    competidores: list[str] | str | None,
+    competidor_grupos: list[dict[str, Any]] | dict[str, Any] | str | None,
+    max_competidores: int,
+) -> list[dict[str, Any]]:
+    brand_names = sorted(brands.keys())
+    used = {brand_name}
+    out: list[dict[str, Any]] = []
+
+    for raw in _parse_csv_list(competidores):
+        name = _resolve_brand_name(raw, brand_names)
+        if name in brands and name != brand_name:
+            out.append({"label": _comparison_label(name, used), "marcas": [name], "kind": "brand"})
+
+    for group in _parse_competitor_groups(competidor_grupos, brand_names):
+        marcas = [name for name in group["marcas"] if name != brand_name]
+        if marcas:
+            out.append({"label": _comparison_label(str(group["alias"]), used), "marcas": marcas, "kind": "group"})
+
+    if not out:
+        for row in ranked:
+            name = row["name"]
+            if name != brand_name:
+                out.append({"label": _comparison_label(name, used), "marcas": [name], "kind": "brand"})
+            if len(out) >= max_competidores:
+                break
+    return out[:max_competidores]
+
+
+def _comparison_rows(
+    source: dict[str, dict[str, Any]],
+    comparisons: list[dict[str, Any]],
+    total_reference: float,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in comparisons:
+        bucket = _bucket_for_brands(source, list(item["marcas"]))
+        if not bucket["unidades"] and not bucket["total_vendido"]:
+            continue
+        rows.append({
+            "name": item["label"],
+            **_fin(bucket, total_reference=total_reference),
+            "is_brand": False,
+            "is_competitor": True,
+            "kind": item["kind"],
+            "marcas": item["marcas"],
+        })
+    return rows
+
+
 def build_brand_dossier(
     marca: str,
     fecha_desde: str | None = None,
@@ -189,8 +307,9 @@ def build_brand_dossier(
     sucursales: list[str] | str | None = None,
     tipo_venta: str | None = None,
     competidores: list[str] | str | None = None,
+    competidor_grupos: list[dict[str, Any]] | dict[str, Any] | str | None = None,
     tipos: list[str] | str | None = None,
-    max_competidores: int = 3,
+    max_competidores: int = 6,
     detail_series: bool = False,
 ) -> dict[str, Any]:
     records, bounds = _commercial_rows(
@@ -367,10 +486,31 @@ def build_brand_dossier(
     )
     prev_rank = next((i + 1 for i, (n, _) in enumerate(prev_ranked) if n == brand_name), None)
 
-    comp_list = _parse_csv_list(competidores)
-    if not comp_list:
-        comp_list = [row["name"] for row in ranked if row["name"] != brand_name][:max_competidores]
-    comp_list = [c for c in comp_list if c in brands and c != brand_name][:5]
+    brand_names_all = sorted(brands.keys())
+    comparison_closed = bool(
+        _parse_csv_list(competidores)
+        or _parse_competitor_groups(competidor_grupos, brand_names_all)
+    )
+    comparisons = _build_comparisons(
+        brand_name,
+        brands,
+        ranked,
+        competidores,
+        competidor_grupos,
+        max_competidores,
+    )
+    comp_list = [item["label"] for item in comparisons]
+    comp_detail = [{"alias": item["label"], "marcas": item["marcas"], "kind": item["kind"]} for item in comparisons]
+    comparison_rows = _comparison_rows(brands, comparisons, float(market_tot["total_vendido"] or 0.0))
+    brand_comparison_row = {
+        "name": brand_name,
+        **brand_tot,
+        "is_brand": True,
+        "is_competitor": False,
+        "kind": "brand",
+        "marcas": [brand_name],
+    }
+    comparison_ranking = [brand_comparison_row, *comparison_rows]
 
     # Ranking para el gráfico: top 12 + la marca si quedó afuera.
     ranking_rows = ranked[:12]
@@ -379,12 +519,11 @@ def build_brand_dossier(
         if me:
             ranking_rows.append(me)
     ranking_names = {row["name"] for row in ranking_rows}
-    for comp in comp_list:
+    for comp_row in comparison_rows:
+        comp = comp_row["name"]
         if comp not in ranking_names:
-            comp_row = next((row for row in ranked if row["name"] == comp), None)
-            if comp_row:
-                ranking_rows.append(comp_row)
-                ranking_names.add(comp)
+            ranking_rows.append(comp_row)
+            ranking_names.add(comp)
     for row in ranking_rows:
         row["is_brand"] = row["name"] == brand_name
         row["is_competitor"] = row["name"] in comp_list
@@ -411,15 +550,34 @@ def build_brand_dossier(
             key=lambda row: (float(row["total_vendido"]), int(row["unidades"])),
             reverse=True,
         )
-        tipo_rows = tipo_ranked[:8]
-        keep_names = {row["name"] for row in tipo_rows}
-        for required_name in [brand_name, *comp_list]:
-            if required_name in keep_names:
-                continue
-            found = next((row for row in tipo_ranked if row["name"] == required_name), None)
-            if found:
-                tipo_rows.append(found)
-                keep_names.add(required_name)
+        tipo_comparison_rows = _comparison_rows(
+            commercial_tipo_brands.get(tipo_sel, {}),
+            comparisons,
+            float(mk_tipo["total_vendido"] or 0.0),
+        )
+        if comparison_closed:
+            brand_tipo_row = next((row for row in tipo_ranked if row["name"] == brand_name), None) or {
+                "name": brand_name,
+                **_fin(
+                    commercial_tipo_brands.get(tipo_sel, {}).get(brand_name) or _metric_bucket(),
+                    total_reference=float(mk_tipo["total_vendido"] or 0.0),
+                ),
+                "is_brand": True,
+                "is_competitor": False,
+            }
+            tipo_rows = [brand_tipo_row, *tipo_comparison_rows]
+        else:
+            tipo_rows = tipo_ranked[:8]
+            keep_names = {row["name"] for row in tipo_rows}
+            for required_name in [brand_name, *comp_list]:
+                if required_name in keep_names:
+                    continue
+                found = next((row for row in tipo_ranked if row["name"] == required_name), None)
+                if not found:
+                    found = next((row for row in tipo_comparison_rows if row["name"] == required_name), None)
+                if found:
+                    tipo_rows.append(found)
+                    keep_names.add(required_name)
         ranking_by_tipo.append({
             "tipo": tipo_sel,
             "market": mk_tipo,
@@ -508,9 +666,9 @@ def build_brand_dossier(
             "share_units_pct": _share(br["unidades"], mk["unidades"]),
             "competidores": {},
         }
-        for comp in comp_list:
-            cb = _fin(monthly_by_brand[mes].get(comp) or _metric_bucket())
-            row["competidores"][comp] = {"unidades": cb["unidades"], "total_vendido": cb["total_vendido"]}
+        for item in comparisons:
+            cb = _fin(_bucket_for_brands(monthly_by_brand[mes], list(item["marcas"])))
+            row["competidores"][item["label"]] = {"unidades": cb["unidades"], "total_vendido": cb["total_vendido"]}
         monthly_series.append(row)
 
     weekly_series = [
@@ -642,9 +800,9 @@ def build_brand_dossier(
             "share_pvp_pct": _share(br["total_vendido"], mk["total_vendido"]),
         })
 
-    # ── Share apilado por semana (marca + competidores + OTRAS) ──────────
+    # ── Share apilado por semana (marca + competidores/grupos) ───────────
     share_series: list[dict[str, Any]] = []
-    stack_names = [brand_name] + comp_list
+    stack_items = [{"label": brand_name, "marcas": [brand_name], "kind": "brand"}, *comparisons]
     for sem in sorted(weekly_market.keys()):
         mk_fin = _fin(weekly_market[sem])
         mk_total = float(mk_fin["total_vendido"])
@@ -652,16 +810,18 @@ def build_brand_dossier(
         row: dict[str, Any] = {"semana": sem, "values": {}, "values_units": {}}
         usado = 0.0
         usado_u = 0.0
-        for n in stack_names:
-            b_fin = _fin(weekly_by_brand[sem].get(n) or _metric_bucket())
+        for item in stack_items:
+            n = item["label"]
+            b_fin = _fin(_bucket_for_brands(weekly_by_brand[sem], list(item["marcas"])))
             pct = _share(float(b_fin["total_vendido"]), mk_total)
             pct_u = _share(int(b_fin["unidades"]), mk_units)
             row["values"][n] = pct
             row["values_units"][n] = pct_u
             usado += pct
             usado_u += pct_u
-        row["values"]["OTRAS"] = round(max(0.0, 100.0 - usado), 2) if mk_total else 0.0
-        row["values_units"]["OTRAS"] = round(max(0.0, 100.0 - usado_u), 2) if mk_units else 0.0
+        if not comparison_closed:
+            row["values"]["OTRAS"] = round(max(0.0, 100.0 - usado), 2) if mk_total else 0.0
+            row["values_units"]["OTRAS"] = round(max(0.0, 100.0 - usado_u), 2) if mk_units else 0.0
         share_series.append(row)
 
     # ── Evolución diaria por categoría (solo la marca, top 5 categorías) ─
@@ -678,8 +838,9 @@ def build_brand_dossier(
     branch_compare: list[dict[str, Any]] = []
     for suc in sorted(branch_market.keys(), key=lambda s: -float(_fin(branch_market[s])["total_vendido"])):
         row = {"sucursal": suc, "values": {}}
-        for n in stack_names:
-            b = _fin(branch_brands[suc].get(n) or _metric_bucket())
+        for item in stack_items:
+            n = item["label"]
+            b = _fin(_bucket_for_brands(branch_brands[suc], list(item["marcas"])))
             row["values"][n] = {"unidades": b["unidades"], "total_vendido": b["total_vendido"]}
         branch_compare.append(row)
 
@@ -1002,6 +1163,8 @@ def build_brand_dossier(
             "sucursales": _parse_csv_list(sucursales),
             "tipo_venta": tipo_venta or "",
             "competidores": comp_list,
+            "competidor_grupos": comp_detail,
+            "comparison_closed": comparison_closed,
             "tipos": selected_tipos,
         },
         "source": "Ventas Vs. Costos",
@@ -1049,6 +1212,8 @@ def build_brand_dossier(
         "conclusions": conclusions,
         "narratives": narratives,
         "ranking": ranking_rows,
+        "comparison_items": [{"alias": brand_name, "marcas": [brand_name], "kind": "brand", "is_brand": True}, *comp_detail],
+        "comparison_ranking": comparison_ranking,
         "categories": categories,
         "tipos_top": tipos_top,
         "branches": branches,

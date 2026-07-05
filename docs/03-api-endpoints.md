@@ -183,8 +183,8 @@ Bearer token salvo endpoints publicos como `/api/health` y login.
 | GET | `/api/sales-bi/branches/report` | Dashboard comercial por sucursales. |
 | POST | `/api/sales-bi/commercial/export-pdf` | Exporta informe comercial a PDF. |
 | POST | `/api/sales-bi/commercial/export-xlsx` | Exporta informe comercial a Excel. |
-| GET | `/api/sales-bi/commercial/brand-dossier` | Devuelve el informe de una marca con ranking, competidores, share, tipos comerciales, zonas y logo. Acepta `tipos`. |
-| GET | `/api/sales-bi/commercial/brand-dossier/export-xlsx` | Exporta el dossier de marca a Excel auditable, incluyendo comparativas contra competidores y porcentajes. Acepta `tipos`. |
+| GET | `/api/sales-bi/commercial/brand-dossier` | Devuelve el informe de una marca con ranking, comparables, share, tipos comerciales, zonas y logo. Acepta `tipos`, `competidores` y `competidor_grupos` para agrupar marcas con alias. |
+| GET | `/api/sales-bi/commercial/brand-dossier/export-xlsx` | Exporta el dossier de marca a Excel auditable, incluyendo comparativas contra comparables y porcentajes. Acepta `tipos`, `competidores` y `competidor_grupos`. |
 
 ## Catalogo maestro
 

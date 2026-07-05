@@ -1152,6 +1152,7 @@ export async function fetchSalesBIBrandDossier(params: {
   sucursales?: string;
   tipo_venta?: string;
   competidores?: string;
+  competidor_grupos?: string;
   tipos?: string;
 }): Promise<import('../types').SalesBIBrandDossier> {
   const qs = new URLSearchParams();
@@ -1187,6 +1188,7 @@ export async function downloadSalesBIBrandDossierXlsx(params: {
   sucursales?: string;
   tipo_venta?: string;
   competidores?: string;
+  competidor_grupos?: string;
   tipos?: string;
   metric?: 'units' | 'pvp' | 'both';
 }): Promise<Blob> {

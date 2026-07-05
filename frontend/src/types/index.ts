@@ -827,6 +827,8 @@ export interface SalesBIBrandDossier {
     sucursales: string[];
     tipo_venta: string;
     competidores: string[];
+    competidor_grupos?: Array<{ alias: string; marcas: string[]; kind: 'brand' | 'group' | string }>;
+    comparison_closed?: boolean;
     tipos?: string[];
   };
   source: string;
@@ -882,7 +884,7 @@ export interface SalesBIBrandDossier {
     tipo: string;
     market: SalesBICommercialMetric;
     brand: SalesBICommercialMetric;
-    rows: Array<SalesBICommercialMix & { is_brand: boolean; is_competitor: boolean }>;
+    rows: Array<SalesBICommercialMix & { is_brand: boolean; is_competitor: boolean; kind?: string; marcas?: string[] }>;
   }>;
   monthly_share_by_tipo?: Array<{
     tipo: string;
@@ -988,7 +990,9 @@ export interface SalesBIBrandDossier {
   conclusions: { fortalezas: string[]; oportunidades: string[]; acciones: string[] };
   /** "La lectura" por sección: una línea narrativa por slide (data storytelling). */
   narratives: Record<string, string>;
-  ranking: Array<SalesBICommercialMix & { is_brand: boolean; is_competitor: boolean }>;
+  ranking: Array<SalesBICommercialMix & { is_brand: boolean; is_competitor: boolean; kind?: string; marcas?: string[] }>;
+  comparison_items?: Array<{ alias: string; marcas: string[]; kind: 'brand' | 'group' | string; is_brand?: boolean }>;
+  comparison_ranking?: Array<SalesBICommercialMix & { is_brand: boolean; is_competitor: boolean; kind?: string; marcas?: string[] }>;
   categories: BrandDossierCategory[];
   tipos_top: Array<{ tipo: string; unidades: number; total_vendido: number; share_pvp_pct: number; market_pvp: number }>;
   branches: Array<{
