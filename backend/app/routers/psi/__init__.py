@@ -24,6 +24,7 @@ from ...auth import require_permission
 from ...commercial.gfk_reader import (
     get_most_recent_gfk_for_range, load_gfk_sales_for_range,
 )
+from ...commercial.psi_informe_reader import load_psi_sales_for_range
 from ...commercial.matching import build_product_indexes, normalize_descripcion, resolve_product
 from ...commercial.stock_reader import load_stock_data
 from ...db import db_session
@@ -253,8 +254,13 @@ def psi_report(
         stock_meta_by_sku: dict[str, dict[str, Any]] = stock_data["meta_by_sku"]
         stock_fetched_at = datetime.utcnow().isoformat() + "Z"
 
-        # 4. Ventas (desde GFK output, no del libro mensual)
-        gfk_data = load_gfk_sales_for_range(pi, pf, force_refresh=force_refresh)
+        # 4. Ventas: prioriza el INFORME PSI (data cruda, outlet distinguido y
+        # PVP real). Si no hay INFORME PSI que cubra el rango, cae al GFK viejo.
+        gfk_data = load_psi_sales_for_range(pi, pf, force_refresh=force_refresh)
+        data_source = "informe_psi"
+        if gfk_data.get("no_informe_psi_available"):
+            gfk_data = load_gfk_sales_for_range(pi, pf, force_refresh=force_refresh)
+            data_source = "gfk"
         gfk_rows: list[dict[str, Any]] = gfk_data["rows"]
         gfk_files_used: list[dict[str, Any]] = gfk_data["files_used"]
         no_gfk_available: bool = gfk_data["no_gfk_available"]
@@ -673,6 +679,7 @@ def psi_apply_pending_adjustments(
                     valor_estimado=float(adj.valor_estimado) if adj.valor_estimado is not None else None,
                     periodo_inicio=pi,
                     periodo_fin=pf,
+                    condicion=adj.condicion_snapshot,
                 )
                 adj.status = "applied_to_sheet"
                 adj.applied_at = datetime.utcnow()
@@ -752,13 +759,16 @@ def psi_adjust_revert(
                 adjustment_id=adjustment_id,
                 book_id=adj.applied_to_book,
             )
+            # El ajuste pudo haberse escrito al INFORME PSI (nuevo) o al GFK
+            # (histórico). Invalidamos ambas cachés por las dudas.
+            cache_invalidate(f"psi_informe:{adj.applied_to_book}")
+            cache_invalidate(f"gfk:{adj.applied_to_book}")
             if found:
-                sheet_message = "Fila eliminada del GFK. Ajuste revertido."
-                cache_invalidate(f"gfk:{adj.applied_to_book}")
+                sheet_message = "Fila eliminada del INFORME PSI. Ajuste revertido."
             else:
                 sheet_message = (
-                    "No encontré la fila en el GFK (puede haberse regenerado o "
-                    "borrado). Marcado como reverted igual."
+                    "No encontré la fila en el INFORME PSI (puede haberse regenerado "
+                    "o borrado). Marcado como reverted igual."
                 )
 
         adj.status = "reverted"
