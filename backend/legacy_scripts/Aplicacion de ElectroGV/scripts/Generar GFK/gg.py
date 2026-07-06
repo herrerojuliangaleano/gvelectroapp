@@ -645,6 +645,42 @@ def calcular_precio_gmv(modelo_limpio: str, price_map: dict[str, float]):
     return round(pvp * MARGEN_PRECIO, 2)
 
 
+# ── Salida paralela: INFORME PSI (data cruda, uso interno) ──────────────────
+# A diferencia del GFK, el INFORME PSI muestra los productos TAL CUAL: el outlet
+# queda marcado como outlet (columna Condicion + "(O)" en el modelo) y el precio
+# es el PVP directo, SIN el +10% de margen GMV ni la conversión outlet→primera.
+SALIDA_PSI_HEADERS = [
+    "Fecha de venta",
+    "Sucursal",
+    "Descripcion del item",
+    "Marca del item",
+    "Modelo del item",
+    "Condicion",
+    "Precio PVP",
+    "Cantidad vendida",
+]
+
+
+def modelo_para_psi(sku_raw, descripcion_raw) -> str:
+    """Modelo para el INFORME PSI: conserva el sufijo ``(O)`` si es outlet."""
+    base = limpiar_modelo(sku_raw)
+    if not base:
+        return ""
+    return f"{base} (O)" if es_outlet(sku_raw, descripcion_raw) else base
+
+
+def condicion_producto(sku_raw, descripcion_raw) -> str:
+    return "OUTLET" if es_outlet(sku_raw, descripcion_raw) else "PRIMERA"
+
+
+def calcular_precio_psi(modelo_limpio: str, price_map: dict[str, float]):
+    """PVP directo, SIN el margen GMV. Para el INFORME PSI interno."""
+    pvp = price_map.get(clave_modelo(modelo_limpio))
+    if pvp is None:
+        return "NA"
+    return round(pvp, 2)
+
+
 # ============================================================
 # LECTURA Y TRANSFORMACIÓN DEL ARCHIVO DE VENTAS
 # ============================================================
@@ -654,9 +690,12 @@ def leer_ventas_desde_archivo(
     fecha_inicio: date,
     fecha_fin: date,
     price_map: dict[str, float],
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Devuelve (df_gfk, df_psi). El GFK informa outlet como primera con precio
+    +10%; el PSI muestra la data cruda (outlet marcado, PVP sin margen)."""
     excel = pd.ExcelFile(local_path)
     resultados = []
+    resultados_psi = []
 
     for hoja, sucursal in HOJAS_VALIDAS.items():
         if hoja not in excel.sheet_names:
@@ -724,12 +763,30 @@ def leer_ventas_desde_archivo(
 
         resultados.append(salida)
 
+        # ── INFORME PSI (crudo): outlet marcado, PVP sin margen GMV ─────
+        salida_psi = pd.DataFrame({
+            "Fecha de venta": df["fecha_limpia"],
+            "Sucursal": df["tipo de venta"].apply(lambda x: transformar_tipo_venta(x, sucursal)),
+            "Descripcion del item": df["descripcion"],
+            "Marca del item": df["marca"],
+            "Modelo del item": df.apply(lambda row: modelo_para_psi(row["sku"], row["descripcion"]), axis=1),
+            "Condicion": df.apply(lambda row: condicion_producto(row["sku"], row["descripcion"]), axis=1),
+            "Precio PVP": modelo_limpio.apply(lambda x: calcular_precio_psi(x, price_map)),
+            "Cantidad vendida": df["cantidad"],
+        })
+        resultados_psi.append(salida_psi)
+
     if resultados:
         df_final = pd.concat(resultados, ignore_index=True)
     else:
         df_final = pd.DataFrame(columns=SALIDA_HEADERS)
 
-    return df_final[SALIDA_HEADERS]
+    if resultados_psi:
+        df_final_psi = pd.concat(resultados_psi, ignore_index=True)
+    else:
+        df_final_psi = pd.DataFrame(columns=SALIDA_PSI_HEADERS)
+
+    return df_final[SALIDA_HEADERS], df_final_psi[SALIDA_PSI_HEADERS]
 
 
 # ============================================================
@@ -983,6 +1040,79 @@ def pedir_fecha(titulo: str, texto: str):
 
 
 # ============================================================
+# ESCRITURA DEL INFORME PSI (Google Sheet)
+# ============================================================
+
+def crear_spreadsheet_en_carpeta(drive_service, sheets_service, nombre: str, dest_folder_id: str) -> str:
+    """Crea un Google Sheet y lo mueve a la carpeta destino. Devuelve el ID."""
+    created = sheets_service.spreadsheets().create(
+        body={"properties": {"title": nombre}},
+        fields="spreadsheetId",
+    ).execute()
+    sid = created["spreadsheetId"]
+    f = drive_service.files().get(fileId=sid, fields="parents", supportsAllDrives=True).execute()
+    prev = ",".join(f.get("parents", []))
+    drive_service.files().update(
+        fileId=sid, addParents=dest_folder_id, removeParents=prev,
+        supportsAllDrives=True, fields="id,parents",
+    ).execute()
+    return sid
+
+
+def _valor_celda_psi(col: str, valor):
+    """Convierte un valor del DataFrame PSI a lo que va a la celda (números
+    reales para precio/cantidad, fecha DD/MM/YYYY, texto para el resto)."""
+    if col == "Fecha de venta":
+        try:
+            return valor.strftime("%d/%m/%Y")
+        except AttributeError:
+            return "" if valor is None else str(valor)
+    if col == "Precio PVP":
+        return valor if isinstance(valor, (int, float)) else str(valor)
+    if col == "Cantidad vendida":
+        try:
+            return int(valor)
+        except (TypeError, ValueError):
+            return valor
+    return "" if valor is None else str(valor)
+
+
+def escribir_informe_psi(drive_service, sheets_service, df_psi, fecha_inicio, fecha_fin, fecha_carpeta) -> str:
+    """Genera el INFORME PSI (Google Sheet) en ``<AÑO>/INFORME PSI/<mes>``.
+
+    Data cruda de uso interno: primera y outlet tal cual (outlet marcado con
+    ``(O)`` y columna Condicion), PVP directo SIN el margen GMV. Se genera junto
+    con el GFK pero en su propia carpeta.
+    """
+    carpeta_psi = obtener_o_crear_carpeta(drive_service, YEAR_FOLDER_ID, "INFORME PSI")
+    carpeta_psi_mes = obtener_o_crear_carpeta(
+        drive_service, carpeta_psi["id"], obtener_nombre_carpeta_gfk_mes(fecha_carpeta),
+    )
+    nombre = (
+        f"INFORME PSI del {fecha_inicio.day:02d}#{fecha_inicio.month:02d} al "
+        f"{fecha_fin.day:02d}#{fecha_fin.month:02d}"
+    )
+    sid = crear_spreadsheet_en_carpeta(drive_service, sheets_service, nombre, carpeta_psi_mes["id"])
+    hoja0 = sheets_service.spreadsheets().get(
+        spreadsheetId=sid, fields="sheets(properties(title))",
+    ).execute()["sheets"][0]["properties"]["title"]
+
+    headers = list(df_psi.columns)
+    valores = [headers]
+    for _, row in df_psi.iterrows():
+        valores.append([_valor_celda_psi(col, row[col]) for col in headers])
+
+    sheets_service.spreadsheets().values().update(
+        spreadsheetId=sid,
+        range=f"{hoja0}!A1",
+        valueInputOption="RAW",
+        body={"values": valores},
+    ).execute()
+    print(f"✅ INFORME PSI generado: {nombre}  (INFORME PSI/{carpeta_psi_mes['name']}, {len(df_psi)} filas)")
+    return sid
+
+
+# ============================================================
 # MAIN
 # ============================================================
 
@@ -1015,6 +1145,7 @@ def main():
             return
 
         dfs = []
+        dfs_psi = []
 
         for mes_ref in meses_entre_fechas(fecha_inicio, fecha_fin):
             nombre_carpeta_ventas = obtener_nombre_carpeta_ventas(mes_ref)
@@ -1040,7 +1171,7 @@ def main():
                 rango_inicio = max(fecha_inicio, inicio_de_mes(mes_ref))
                 rango_fin = min(fecha_fin, fin_de_mes(mes_ref))
 
-                df_mes = leer_ventas_desde_archivo(
+                df_mes, df_mes_psi = leer_ventas_desde_archivo(
                     temp_ventas,
                     rango_inicio,
                     rango_fin,
@@ -1049,6 +1180,8 @@ def main():
 
                 if not df_mes.empty:
                     dfs.append(df_mes)
+                if not df_mes_psi.empty:
+                    dfs_psi.append(df_mes_psi)
 
             finally:
                 try:
@@ -1060,6 +1193,11 @@ def main():
             df_final = pd.concat(dfs, ignore_index=True)
         else:
             df_final = pd.DataFrame(columns=SALIDA_HEADERS)
+
+        if dfs_psi:
+            df_final_psi = pd.concat(dfs_psi, ignore_index=True)
+        else:
+            df_final_psi = pd.DataFrame(columns=SALIDA_PSI_HEADERS)
 
         secuencia_actual = obtener_secuencia_actual()
 
@@ -1123,6 +1261,17 @@ def main():
         )
 
         guardar_siguiente_secuencia(secuencia_actual + 1)
+
+        # ── INFORME PSI: Google Sheet crudo (primera + outlet, PVP sin margen) ──
+        # Se genera junto con el GFK, en su propia carpeta. Si falla, NO rompe la
+        # generación del GFK (que ya se guardó): solo avisa.
+        try:
+            escribir_informe_psi(
+                drive_service, sheets_service, df_final_psi,
+                fecha_inicio, fecha_fin, fecha_carpeta,
+            )
+        except Exception as e_psi:
+            print(f"⚠ No se pudo generar el INFORME PSI: {e_psi}")
 
         sin_precio = df_final[
             (df_final["Precio unitario GMV"] == "NA") &
