@@ -222,6 +222,24 @@ Regla de comparacion:
 - Un grupo con alias cuenta como un solo comparable, aunque incluya varias
   marcas. Ejemplo: `Proveedor X = Drean + Philco + Noblex`.
 
+Regla de metricas y shares:
+
+- No existe `share combinado`, `share promedio` ni ranking calculado mezclando
+  unidades y facturacion. Eso genera lecturas falsas.
+- `Share unidades` = unidades de la marca / unidades totales del mercado,
+  categoria, tipo o zona analizada.
+- `Share facturacion` = PVP vendido de la marca / PVP vendido total del mercado,
+  categoria, tipo o zona analizada.
+- Si el usuario exporta en `Unidades`, todo el PowerPoint debe enfocarse en
+  unidades: KPIs, rankings, tablas, shares y graficos. No se muestran columnas
+  de facturacion/PVP.
+- Si el usuario exporta en `Facturacion`, todo el PowerPoint debe enfocarse en
+  facturacion/PVP: KPIs, rankings, tablas, shares y graficos. No se muestran
+  columnas de unidades.
+- Si el usuario elige `Ambos`, el exportador genera dos presentaciones separadas:
+  una de unidades y otra de facturacion. No se mezclan metricas en una misma
+  diapositiva.
+
 Defaults recomendados para tipos:
 
 - `HELADERA`
@@ -248,10 +266,8 @@ Contenido:
 
 Contenido:
 
-- Unidades.
-- Facturacion/PVP vendido.
-- Share en unidades.
-- Share en pesos.
+- Metrica activa: unidades o facturacion/PVP vendido.
+- Share de la metrica activa: `Share unidades` o `Share facturacion`.
 - Ranking total.
 - Tipos donde la marca es fuerte.
 - Oportunidades principales.
@@ -281,14 +297,14 @@ Una seccion por tipo seleccionado:
 Grafico:
 
 - Barras verticales por marca para el tipo.
-- Mostrar unidades y pesos segun metrica seleccionada.
+- Mostrar solo la metrica seleccionada.
 
 ### 5. Participacion mensual total
 
 Grafico:
 
 - Barras verticales por mes.
-- Puede mostrar share de marca en unidades y/o pesos.
+- Muestra un solo share: `Share unidades` o `Share facturacion`.
 - Evitar lineas si la comparacion se entiende mejor como columnas por periodo.
 
 ### 6. Participacion mensual por tipo
@@ -320,7 +336,8 @@ Grafico:
 
 - Barras verticales por `CABA`, `GBA` y `Venta Web`.
 - Mide la participacion de la marca sobre la venta total de cada zona.
-- Debe poder verse en unidades y pesos.
+- Debe poder verse en modo unidades o modo facturacion, pero nunca como promedio
+  combinado.
 
 Formula:
 
@@ -335,9 +352,8 @@ Reemplaza `Productos destacados`.
 Contenido:
 
 - Ranking de tipos comerciales de la marca.
-- Unidades.
-- Pesos/PVP vendido.
-- Share dentro de cada tipo.
+- Metrica activa: unidades o facturacion/PVP vendido.
+- Share de la metrica activa dentro de cada tipo.
 - Mix dentro de la marca.
 
 ### 10. Tipos x punto de venta
@@ -347,7 +363,7 @@ Reemplaza `Producto x punto de venta`.
 Contenido:
 
 - Matriz tipo comercial x zona/sucursal.
-- Unidades y pesos.
+- Metrica activa: unidades o facturacion/PVP vendido.
 - Resaltar tipos fuertes y debiles por zona.
 
 ### 11. Gamas de precio por tipo
@@ -553,6 +569,11 @@ Cambios hechos:
 - `In-house share` se muestra por zonas `CABA`, `GBA` y `Venta Web`.
 - `Presencia por sucursal` queda reemplazada por `Presencia por zona`.
 - `Gamas de precio` genera graficos de barras por cada tipo seleccionado.
+- El PowerPoint editable separa `Share unidades` y `Share facturacion`.
+- Exportar en `Unidades` genera una presentacion enfocada solo en unidades.
+- Exportar en `Facturacion` genera una presentacion enfocada solo en PVP vendido.
+- Exportar en `Ambos` genera dos archivos separados para evitar rankings o shares
+  promediados entre metricas.
 
 Validacion ejecutada:
 
