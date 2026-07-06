@@ -195,6 +195,22 @@ def fecha_a_texto(d: date, muestra: str) -> str:
 # GENERACION DE VARIANTES
 # ============================================================
 
+_OUTLET_MARK_RX = re.compile(r"\s*\(\s*[Oo0]\s*\)\s*")
+_OUTLET_WORD_RX = re.compile(r"\s*\(?\s*OUTLET\s*\)?\s*", re.IGNORECASE)
+
+
+def _limpiar_outlet(texto: Any) -> str:
+    """Quita marcas de outlet ((O)/(o)/(0)/(OUTLET)/OUTLET) de un texto.
+
+    GFK informa los productos outlet COMO DE PRIMERA. El examen debe respetar la
+    misma convención que el GFK real, así que se limpian descripción y modelo.
+    """
+    s = str(texto if texto is not None else "")
+    s = _OUTLET_MARK_RX.sub(" ", s)
+    s = _OUTLET_WORD_RX.sub(" ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
 def construir_variante(
     headers: list[str],
     filas: list[list[str]],
@@ -209,6 +225,18 @@ def construir_variante(
     i_cant = col_idx(headers, "Cantidad vendida", "cantidad")
     if i_fecha < 0 or i_marca < 0:
         raise ValueError("El GFK no tiene las columnas de Fecha y/o Marca esperadas.")
+
+    # Outlet se informa como primera: limpiar (O)/(OUTLET) de descripción y
+    # modelo de las filas de origen (idempotente). El precio ya viene del GFK
+    # generado, que toma el precio del primera. Así las filas reales y las
+    # infladas (clones) salen sin marcas de outlet.
+    i_desc = col_idx(headers, "Descripcion del item", "descripcion")
+    i_modelo = col_idx(headers, "Modelo del item", "modelo")
+    for f in filas:
+        if 0 <= i_desc < len(f):
+            f[i_desc] = _limpiar_outlet(f[i_desc])
+        if 0 <= i_modelo < len(f):
+            f[i_modelo] = _limpiar_outlet(f[i_modelo])
 
     # Periodo (min/max de fechas reales) y muestra de formato.
     fechas = [parse_fecha(f[i_fecha]) for f in filas if i_fecha < len(f)]

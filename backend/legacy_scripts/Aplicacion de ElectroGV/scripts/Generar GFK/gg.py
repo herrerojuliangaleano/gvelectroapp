@@ -307,19 +307,33 @@ def es_outlet(sku_raw, descripcion_raw) -> bool:
     return False
 
 
-def modelo_para_gfk(sku_raw, descripcion_raw) -> str:
+# "(OUTLET)" o la palabra OUTLET suelta en la descripción (con o sin paréntesis).
+OUTLET_WORD_RX = re.compile(r"\s*\(?\s*OUTLET\s*\)?\s*", re.IGNORECASE)
+
+
+def modelo_para_gfk(sku_raw, descripcion_raw=None) -> str:
     """SKU como debe quedar en el GFK output.
 
-    Si el producto es outlet (por SKU o descripción), se conserva el sufijo
-    ``" (O)"`` aunque el SKU venga sin él. Si no es outlet, se devuelve el SKU
-    limpio.
+    GFK informa los productos OUTLET **como de primera**: el modelo va SIN el
+    sufijo ``(O)`` y sin marca de outlet, igual que el producto de primera. El
+    precio también se toma del primera (ver `calcular_precio_gmv`, que busca por
+    el modelo limpio). `descripcion_raw` se mantiene por compatibilidad de firma.
     """
-    base = limpiar_modelo(sku_raw)
-    if not base:
+    return limpiar_modelo(sku_raw)
+
+
+def descripcion_para_gfk(valor) -> str:
+    """Descripción como debe ir al GFK: SIN marcas de outlet.
+
+    Outlet se informa como primera, así que se quitan de la descripción los
+    marcadores ``(O)`` / ``(o)`` / ``(0)`` y ``(OUTLET)`` / ``OUTLET``.
+    """
+    if pd.isna(valor):
         return ""
-    if es_outlet(sku_raw, descripcion_raw):
-        return f"{base} (O)"
-    return base
+    texto = OUTLET_MARK_RX.sub(" ", str(valor))
+    texto = OUTLET_WORD_RX.sub(" ", texto)
+    texto = re.sub(r"\s+", " ", texto).strip()
+    return texto
 
 
 def clave_modelo(valor) -> str:
@@ -687,19 +701,17 @@ def leer_ventas_desde_archivo(
         # Precio: se busca por modelo limpio (sin (O)), porque el catálogo
         # PVP tiene los SKUs base. El outlet hereda el precio del primera.
         precio_gmv = modelo_limpio.apply(lambda x: calcular_precio_gmv(x, price_map))
-        # Modelo del item (output del GFK): preservar (O) si descripción dice
-        # OUTLET o tiene (O), aunque el SKU venga limpio. Fix del bug histórico.
-        modelo_para_output = df.apply(
-            lambda row: modelo_para_gfk(row["sku"], row["descripcion"]),
-            axis=1,
-        )
+        # GFK informa el OUTLET como de primera: el modelo va limpio (sin "(O)")
+        # y la descripción sin marcas de outlet. El precio ya es el del primera.
+        modelo_para_output = modelo_limpio
+        descripcion_output = df["descripcion"].apply(descripcion_para_gfk)
 
         salida = pd.DataFrame({
             "Fecha de venta": df["fecha_limpia"],
             "N°/Nombre de la sucursal": df["tipo de venta"].apply(lambda x: transformar_tipo_venta(x, sucursal)),
             "ID del item": "",
             "EAN del item": "",
-            "Descripcion del item": df["descripcion"],
+            "Descripcion del item": descripcion_output,
             "Marca del item": df["marca"],
             "Modelo del item": modelo_para_output,
             "Familia de productos (por ejemplo MDA, Telecom, etc)": "",
