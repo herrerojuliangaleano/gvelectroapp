@@ -48,6 +48,10 @@ SECUENCIA_INICIAL = 12
 # - GFK/01, GFK/02, GFK/03, etc.         -> salida final
 YEAR_FOLDER_ID = "1FU6G8gqqI73DjsrpbseG-0sbzX7_a2YK"
 
+# Carpeta destino de los INFORME PSI (fija, no cuelga del año). Adentro se crea
+# una subcarpeta por mes ("04-Abril 2026", etc.).
+PSI_FOLDER_ID = "19EzczD80Bp_TDYaV0PnRLQdlDJ_3xwJI"
+
 # ID directo del archivo plantilla virgen de GFK
 TEMPLATE_FILE_ID = "1H05FfGTE7vU65cjPDZNdXZbF8SYnhlVm4PxnLlEmlus"
 
@@ -1082,12 +1086,10 @@ def escribir_informe_psi(drive_service, sheets_service, df_psi, fecha_inicio, fe
 
     Data cruda de uso interno: primera y outlet tal cual (outlet marcado con
     ``(O)`` y columna Condicion), PVP directo SIN el margen GMV. Se genera junto
-    con el GFK pero en su propia carpeta.
+    con el GFK pero en su propia carpeta (PSI_FOLDER_ID), con subcarpeta por mes.
     """
-    carpeta_psi = obtener_o_crear_carpeta(drive_service, YEAR_FOLDER_ID, "INFORME PSI")
-    carpeta_psi_mes = obtener_o_crear_carpeta(
-        drive_service, carpeta_psi["id"], obtener_nombre_carpeta_gfk_mes(fecha_carpeta),
-    )
+    nombre_mes = f"{obtener_nombre_carpeta_ventas(fecha_carpeta)} {fecha_carpeta.year}"
+    carpeta_psi_mes = obtener_o_crear_carpeta(drive_service, PSI_FOLDER_ID, nombre_mes)
     nombre = (
         f"INFORME PSI del {fecha_inicio.day:02d}#{fecha_inicio.month:02d} al "
         f"{fecha_fin.day:02d}#{fecha_fin.month:02d}"
@@ -1108,7 +1110,7 @@ def escribir_informe_psi(drive_service, sheets_service, df_psi, fecha_inicio, fe
         valueInputOption="RAW",
         body={"values": valores},
     ).execute()
-    print(f"✅ INFORME PSI generado: {nombre}  (INFORME PSI/{carpeta_psi_mes['name']}, {len(df_psi)} filas)")
+    print(f"✅ INFORME PSI generado: {nombre}  (carpeta {carpeta_psi_mes['name']}, {len(df_psi)} filas)")
     return sid
 
 
