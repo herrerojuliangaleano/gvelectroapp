@@ -317,6 +317,18 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
   const brandColorDeep = mixColor(brandColor, INK, 0.18);
   const brandColorSoft = mixColor(brandColor, 'FFFFFF', 0.56);
   const brandChartColors = [brandColor, brandColorSoft];
+  const isMetricCompatibleText = (text: string | undefined) => {
+    const value = String(text || '').trim();
+    if (!value) return false;
+    const normalized = normalizeLabel(value);
+    if (isUnits) return !/(FACTURACION|PVP|PESOS?|\$)/.test(normalized);
+    return !/\b(UNIDADES?|UNID|U)\b/.test(normalized);
+  };
+  const metricSafeText = (text: string | undefined, fallback: string) => (
+    isMetricCompatibleText(text) ? String(text) : fallback
+  );
+  const metricSafeList = (items: string[] | undefined) => (items || []).filter(isMetricCompatibleText);
+  const summaryHighlights = metricSafeList(dossier.highlights).slice(0, 5);
   const page = { value: 1 };
   const addBase = (slideTitle: string, subtitle?: string) => {
     const slide = pptx.addSlide();
@@ -356,7 +368,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
   if (!isUnits) addKpi(summary, 8.2, 1.1, 1.85, 'Precio índice', dossier.price_index_global.toFixed(0), '100 = mercado', brandColor);
   addTable(summary, [
     ['Lecturas principales'],
-    ...dossier.highlights.slice(0, 5).map((h) => [h]),
+    ...(summaryHighlights.length ? summaryHighlights : [`Lectura enfocada en ${metricNoun} para el periodo.`]).map((h) => [h]),
   ], 0.55, 2.35, 5.75, 3.5, [5.75]);
   addTable(summary, [
     ['Métrica', dossier.marca, 'Mercado', shareTitle],
@@ -364,12 +376,12 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
     ['Productos activos', num(brand.productos), num(market.productos), ''],
     ...(!isUnits ? [['PVP promedio', money(brand.pvp_promedio), money(market.pvp_promedio), '']] : []),
   ], 6.55, 2.35, 6.15, 2.35, [1.55, 1.55, 1.6, 1.45]);
-  addTakeaway(summary, dossier.narratives?.resumen || dossier.highlights[0], 6.55, 5.15, 6.15);
+  addTakeaway(summary, metricSafeText(dossier.narratives?.resumen || summaryHighlights[0], `Resumen enfocado en ${metricNoun} para el periodo.`), 6.55, 5.15, 6.15);
 
-  const branchRowsForProvider = [...dossier.branches].sort((a, b) => b.brand_unidades - a.brand_unidades);
+  const branchRowsForProvider = [...dossier.branches].sort((a, b) => metricValue(b.brand_unidades, b.brand_pvp) - metricValue(a.brand_unidades, a.brand_pvp));
   const branchColumns = branchRowsForProvider.map((row) => row.sucursal).slice(0, 4);
   const tipoRows = [...(dossier.tipo_zone_matrix || [])]
-    .sort((a, b) => (metric === 'units' ? b.brand_unidades - a.brand_unidades : b.brand_pvp - a.brand_pvp));
+    .sort((a, b) => (isUnits ? b.brand_unidades - a.brand_unidades : b.brand_pvp - a.brand_pvp));
   const selectedTipos = (dossier.selected_tipos?.length
     ? dossier.selected_tipos
     : tipoRows.map((row) => row.tipo).slice(0, 4)
@@ -397,6 +409,16 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
   );
   const zoneMix = (row: { brand_mix_units_pct?: number; brand_mix_pvp_pct?: number }) => (
     isUnits ? (row.brand_mix_units_pct || 0) : (row.brand_mix_pvp_pct || 0)
+  );
+  const categoryRank = (row: SalesBIBrandDossier['categories'][number]) => (
+    isUnits
+      ? (row.rank_units_in_categoria ?? null)
+      : (row.rank_pvp_in_categoria ?? row.rank_in_categoria ?? null)
+  );
+  const categoryLeader = (row: SalesBIBrandDossier['categories'][number]) => (
+    isUnits
+      ? (row.leader_units_name || row.leader_name || 's/d')
+      : (row.leader_pvp_name || row.leader_name || 's/d')
   );
 
   const providerMonthly = addBase(`${metricTitle} mensuales`, `${dossier.marca} por mes · ${metricNoun}`);
@@ -519,7 +541,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
       monthKeys.map(monthLabel),
       monthKeys.map((month) => {
         const row = block.rows.find((item) => item.mes === month);
-        return ((metric === 'units' ? row?.share_units_pct : row?.share_pvp_pct) || 0) / 100;
+        return ((isUnits ? row?.share_units_pct : row?.share_pvp_pct) || 0) / 100;
       }),
     )), {
       x: 0.55, y: 1.1, w: 7.4, h: 4.85,
@@ -548,7 +570,9 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
 
   const ranking = addBase('Ranking competitivo', `${dossier.marca} frente al resto de marcas`);
   const comparisonRows = dossier.comparison_ranking?.length ? dossier.comparison_ranking : null;
-  const rankRows = dossier.filters.comparison_closed && comparisonRows ? comparisonRows : dossier.ranking.slice(0, 10);
+  const rankRows = [...(dossier.filters.comparison_closed && comparisonRows ? comparisonRows : dossier.ranking)]
+    .sort((a, b) => rowMetric(b) - rowMetric(a))
+    .slice(0, 10);
   const rankShareTotalUnits = dossier.filters.comparison_closed ? rankRows.reduce((acc, row) => acc + row.unidades, 0) : market.unidades;
   const rankShareTotalPvp = dossier.filters.comparison_closed ? rankRows.reduce((acc, row) => acc + row.total_vendido, 0) : market.total_vendido;
   const rankingStack = selectedTipos
@@ -584,13 +608,13 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
       pct(metricShare(row.unidades, row.total_vendido, rankShareTotalUnits, rankShareTotalPvp)),
     ]),
   ], 6.55, 1.1, 6.15, 5.2, [1.85, 1.45, 0.9, 1.05]);
-  addTakeaway(ranking, dossier.narratives?.competencia);
+  addTakeaway(ranking, metricSafeText(dossier.narratives?.competencia, `${metricTitle}: ranking ordenado por ${metricNoun}.`));
 
   rankingByTipo
     .filter((block) => selectedTipos.includes(block.tipo))
     .forEach((block) => {
       const typedRanking = addBase(`Ranking competitivo · ${block.tipo}`, `${metricTitle} por marca dentro de ${block.tipo}`);
-      const rows = block.rows.slice(0, 8);
+      const rows = [...block.rows].sort((a, b) => rowMetric(b) - rowMetric(a)).slice(0, 8);
       const typedShareTotalUnits = dossier.filters.comparison_closed ? rows.reduce((acc, row) => acc + row.unidades, 0) : block.market.unidades;
       const typedShareTotalPvp = dossier.filters.comparison_closed ? rows.reduce((acc, row) => acc + row.total_vendido, 0) : block.market.total_vendido;
       addChart(typedRanking, 'bar', dossier.filters.comparison_closed
@@ -620,8 +644,8 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
   if (competitors.length) {
     const comp = addBase('Marca vs competidores', `Comparación directa contra ${competitors.join(', ')}`);
     addChart(comp, 'bar', [
-      { name: dossier.marca, labels: evoLabels, values: monthly.map((row) => (metric === 'units' ? row.brand_unidades : row.brand_pvp)) },
-      ...competitors.map((name) => ({ name, labels: evoLabels, values: monthly.map((row) => (metric === 'units' ? row.competidores?.[name]?.unidades : row.competidores?.[name]?.total_vendido) || 0) })),
+      { name: dossier.marca, labels: evoLabels, values: monthly.map((row) => (isUnits ? row.brand_unidades : row.brand_pvp)) },
+      ...competitors.map((name) => ({ name, labels: evoLabels, values: monthly.map((row) => (isUnits ? row.competidores?.[name]?.unidades : row.competidores?.[name]?.total_vendido) || 0) })),
     ], {
       x: 0.55, y: 1.1, w: 7.1, h: 4.95,
       barDir: 'col',
@@ -641,7 +665,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
         pct(metricShare(row.unidades, row.total_vendido, rankShareTotalUnits, rankShareTotalPvp)),
       ]),
     ], 7.9, 1.1, 4.85, 3.5, [1.2, 1.35, 0.75, 1.0]);
-    addTakeaway(comp, dossier.narratives?.competencia, 7.9, 4.95, 4.85);
+    addTakeaway(comp, metricSafeText(dossier.narratives?.competencia, `${metricTitle}: comparacion directa contra las marcas elegidas.`), 7.9, 4.95, 4.85);
 
     const monthlyDetail = addBase('Detalle mensual competitivo', `${dossier.marca} y comparables seleccionados · todos los meses`);
     const tableNames = [dossier.marca, ...competitors].slice(0, 7);
@@ -659,7 +683,9 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
   }
 
   const cats = addBase('Categorías y oportunidades', `Dónde participa ${dossier.marca}`);
-  const categoryRows = dossier.categories.slice(0, 8);
+  const categoryRows = [...dossier.categories]
+    .sort((a, b) => metricValue(b.brand_unidades, b.brand_pvp) - metricValue(a.brand_unidades, a.brand_pvp))
+    .slice(0, 8);
   addChart(cats, 'bar', chartData(
     `${shareTitle} %`,
     categoryRows.map((row) => row.categoria),
@@ -677,12 +703,12 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
       row.categoria,
       metricText(row.brand_unidades, row.brand_pvp),
       pct(isUnits ? row.share_units_pct : row.share_pvp_pct),
-      row.rank_in_categoria ? `#${row.rank_in_categoria}` : 's/d',
-      row.leader_name || 's/d',
+      categoryRank(row) ? `#${categoryRank(row)}` : 's/d',
+      categoryLeader(row),
       ...(!isUnits ? [row.price_index.toFixed(0)] : []),
     ]),
-  ], 6.65, 1.1, 6.0, 4.9, isUnits ? [1.35, 1.35, 1.0, 0.6, 1.45] : [1.2, 1.25, 0.85, 0.55, 1.25, 0.6]);
-  addTakeaway(cats, dossier.narratives?.categorias || dossier.narratives?.oportunidad);
+  ], 6.65, 1.1, 6.0, 4.9, isUnits ? [1.2, 1.2, 0.85, 0.5, 1.3] : [1.2, 1.25, 0.85, 0.55, 1.25, 0.6]);
+  addTakeaway(cats, metricSafeText(dossier.narratives?.categorias || dossier.narratives?.oportunidad, `${shareTitle}: participacion por categoria segun ${metricNoun}.`));
 
   if (dossier.price_bands?.bands?.length) {
     const bands = addBase('Gamas de precio', `${shareTitle} por posicionamiento de precio`);
@@ -701,10 +727,10 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
         row.banda,
         metricText(row.brand_unidades, row.brand_pvp),
         pct(isUnits ? row.share_units_pct : row.share_pvp_pct),
-        pct(isUnits ? row.brand_mix_units_pct : ratioPct(row.brand_pvp, bandBrandPvpTotal)),
+        pct(isUnits ? row.brand_mix_units_pct : (row.brand_mix_pvp_pct || ratioPct(row.brand_pvp, bandBrandPvpTotal))),
       ]),
     ], 7.05, 1.1, 5.1, 3.6, [1.25, 1.35, 1.1, 1.1]);
-    addTakeaway(bands, dossier.narratives?.bandas, 7.05, 5.05, 5.1);
+    addTakeaway(bands, metricSafeText(dossier.narratives?.bandas, `${shareTitle}: participacion por gama de precio.`), 7.05, 5.05, 5.1);
   }
 
   if (dossier.price_bands_by_tipo?.length) {
@@ -717,7 +743,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
           tipo: block.tipo,
           banda: band.banda,
           share: isUnits ? band.share_units_pct : band.share_pvp_pct,
-          mix: isUnits ? band.brand_mix_units_pct : ratioPct(band.brand_pvp, blockBrandPvpTotal),
+          mix: isUnits ? band.brand_mix_units_pct : (band.brand_mix_pvp_pct || ratioPct(band.brand_pvp, blockBrandPvpTotal)),
           unidades: band.brand_unidades,
           pvp: band.brand_pvp,
         }));
@@ -763,7 +789,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
         brand_pvp: row.total_vendido,
         zones: {} as Record<string, { brand_unidades: number; brand_pvp: number; market_unidades: number; market_pvp: number; share_units_pct: number; share_pvp_pct: number }>,
       }))
-  ).slice(0, 12);
+  ).sort((a, b) => metricValue(b.brand_unidades, b.brand_pvp) - metricValue(a.brand_unidades, a.brand_pvp)).slice(0, 12);
   addTable(typesSlide, [
     ['Tipo', metricTitle, shareTitle, ...zoneNames],
     ...typeRows.map((row) => {
@@ -776,7 +802,7 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
       const fallbackMarket = dossier.tipos_top.find((item) => item.tipo === row.tipo);
       const shareText = zoneTotals.marketUnits || zoneTotals.marketPvp
         ? pct(metricShare(zoneTotals.brandUnits, zoneTotals.brandPvp, zoneTotals.marketUnits, zoneTotals.marketPvp))
-        : (isUnits ? 's/d' : pct(fallbackMarket?.share_pvp_pct || 0));
+        : pct(isUnits ? (fallbackMarket?.share_units_pct || 0) : (fallbackMarket?.share_pvp_pct || 0));
       return [
         row.tipo,
         metricText(row.brand_unidades, row.brand_pvp),
@@ -788,7 +814,51 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
       ];
     }),
   ], 0.55, 1.05, 12.2, 5.35, [1.75, 1.25, 0.9, ...zoneNames.map(() => 1.25)], 6.9);
-  addTakeaway(typesSlide, dossier.narratives?.tipos || 'Vista para marcas: el foco queda en tipos comerciales, no en productos puntuales.');
+  addTakeaway(typesSlide, metricSafeText(dossier.narratives?.tipos, `Vista enfocada en ${metricNoun}: tipos comerciales, no productos puntuales.`));
+
+  const typeShareRows = typeRows
+    .map((row) => {
+      const zoneTotals = Object.values(row.zones || {}).reduce((acc, value) => ({
+        brandUnits: acc.brandUnits + value.brand_unidades,
+        brandPvp: acc.brandPvp + value.brand_pvp,
+        marketUnits: acc.marketUnits + value.market_unidades,
+        marketPvp: acc.marketPvp + value.market_pvp,
+      }), { brandUnits: 0, brandPvp: 0, marketUnits: 0, marketPvp: 0 });
+      const fallback = dossier.tipos_top.find((item) => item.tipo === row.tipo);
+      const marketUnits = zoneTotals.marketUnits || fallback?.market_unidades || 0;
+      const marketPvp = zoneTotals.marketPvp || fallback?.market_pvp || 0;
+      return {
+        tipo: row.tipo,
+        brand_unidades: row.brand_unidades,
+        brand_pvp: row.brand_pvp,
+        market_unidades: marketUnits,
+        market_pvp: marketPvp,
+        share: metricShare(row.brand_unidades, row.brand_pvp, marketUnits, marketPvp),
+      };
+    })
+    .filter((row) => row.brand_unidades || row.brand_pvp || row.market_unidades || row.market_pvp)
+    .sort((a, b) => b.share - a.share)
+    .slice(0, 10);
+  if (typeShareRows.length) {
+    const typeShareSlide = addBase('Share por tipo', `${dossier.marca}: participacion dentro de cada tipo`);
+    addChart(typeShareSlide, 'bar', chartData(shareTitle, typeShareRows.map((row) => row.tipo), typeShareRows.map((row) => row.share / 100)), {
+      x: 0.55, y: 1.1, w: 6.1, h: 4.9,
+      barDir: 'bar',
+      valAxisLabelFormatCode: '0.0%',
+      showLegend: false,
+      chartColors: [brandColor],
+    });
+    addTable(typeShareSlide, [
+      ['Tipo', dossier.marca, 'Mercado', shareTitle],
+      ...typeShareRows.map((row) => [
+        row.tipo,
+        metricText(row.brand_unidades, row.brand_pvp),
+        isUnits ? `${num(row.market_unidades)} u` : compactMoney(row.market_pvp),
+        pct(row.share),
+      ]),
+    ], 7.0, 1.1, 5.35, 4.55, [1.25, 1.25, 1.25, 1.0], 6.8);
+    addTakeaway(typeShareSlide, `Nuevo corte por ${metricNoun}: identifica en que tipos la marca gana share real y donde queda espacio comercial.`, 7.0, 5.9, 5.35);
+  }
 
   const branches = addBase('Presencia por zona', `Peso de ${dossier.marca} en CABA, GBA y Venta Web`);
   const zonePresenceRows = shareSource.slice(0, 8);
@@ -813,9 +883,9 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
   addTakeaway(branches, 'La presencia queda agrupada por zona para mostrar CABA, GBA y Venta Web sin dispersar la lectura por sucursales.', 6.65, 5.45, 5.8);
 
   const closing = addBase('Conclusiones y próximos pasos', 'Lectura accionable para reunión comercial');
-  addTwoColumnList(closing, 0.55, 1.15, 3.9, 'Fortalezas', dossier.conclusions.fortalezas, GREEN);
-  addTwoColumnList(closing, 4.72, 1.15, 3.9, 'Oportunidades', dossier.conclusions.oportunidades, AMBER);
-  addTwoColumnList(closing, 8.88, 1.15, 3.9, 'Acciones sugeridas', dossier.conclusions.acciones, brandColor);
+  addTwoColumnList(closing, 0.55, 1.15, 3.9, 'Fortalezas', metricSafeList(dossier.conclusions.fortalezas), GREEN);
+  addTwoColumnList(closing, 4.72, 1.15, 3.9, 'Oportunidades', metricSafeList(dossier.conclusions.oportunidades), AMBER);
+  addTwoColumnList(closing, 8.88, 1.15, 3.9, 'Acciones sugeridas', metricSafeList(dossier.conclusions.acciones), brandColor);
 
   await pptx.writeFile({
     fileName: `informe-editable-${cleanFileName(dossier.marca)}-${dossier.filters.fecha_desde}-${mode}.pptx`,

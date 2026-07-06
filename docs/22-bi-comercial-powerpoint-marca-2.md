@@ -419,8 +419,18 @@ El dossier debe poder devolver:
 - `comparison_items`: marca principal + comparables elegidos.
 - `comparison_ranking`: ranking cerrado para marca individual o grupos.
 - `tipo_zone_matrix`: matriz tipo comercial x zona/sucursal.
-- `price_bands_by_tipo`: gamas de precio por tipo comercial.
+- `price_bands_by_tipo`: gamas de precio por tipo comercial, con share y mix
+  separados en unidades y facturacion.
 - `competitor_period_bars`: marca vs competidores por periodo.
+- `categories`: ranking, lider y share separados para unidades y facturacion:
+  - `rank_units_in_categoria` / `rank_pvp_in_categoria`;
+  - `leader_units_name` / `leader_pvp_name`;
+  - `share_units_pct` / `share_pvp_pct`.
+- `tipos_top`: debe traer mercado y share para las dos metricas:
+  - `market_unidades`, `market_pvp`;
+  - `share_units_pct`, `share_pvp_pct`.
+- `weekly_series` y `daily_series`: deben incluir `market_unidades` y
+  `share_units_pct`, ademas de los campos de facturacion.
 
 ## Endpoints propuestos
 
@@ -574,6 +584,12 @@ Cambios hechos:
 - Exportar en `Facturacion` genera una presentacion enfocada solo en PVP vendido.
 - Exportar en `Ambos` genera dos archivos separados para evitar rankings o shares
   promediados entre metricas.
+- Cada slide debe leer la metrica activa de forma independiente:
+  - unidades: rankings por unidades, share unidades, mercado unidades;
+  - facturacion: rankings por PVP vendido, share facturacion, mercado PVP.
+- Se agrega una slide editable de `Share por tipo` para ver rapidamente en que
+  tipos comerciales la marca tiene mayor o menor participacion, respetando el
+  modo elegido.
 
 Validacion ejecutada:
 
@@ -592,6 +608,45 @@ Lo no validado todavia:
 - Export manual de PPT desde navegador con logo real.
 - Apertura del `.pptx` resultante en PowerPoint para revisar layout final.
 - Flujo real de subir/reemplazar/borrar logo desde la UI.
+
+## Corte 2 implementado
+
+Objetivo:
+
+- Evitar que las presentaciones mezclen unidades y facturacion.
+- Completar metricas del backend para que el frontend no infiera datos.
+- Agregar un grafico nuevo cuando aporte lectura comercial.
+
+Cambios hechos:
+
+- `categories` ahora expone ranking y lider por unidades y por facturacion.
+- `tipos_top` ahora expone mercado y share para unidades y facturacion.
+- `weekly_series` y `daily_series` ahora incluyen share por unidades.
+- `price_bands` y `price_bands_by_tipo` ahora incluyen mix PVP explicito.
+- El PPT editable usa ranking/lider de unidades cuando el modo es `Unidades`.
+- El PPT editable usa ranking/lider de PVP cuando el modo es `Facturacion`.
+- Se agrega la slide `Share por tipo`, alimentada por la metrica activa.
+
+Validacion ejecutada:
+
+- `python -m compileall -q backend/app`: OK.
+- `npm.cmd run build` en `frontend/`: OK.
+- `git diff --check`: OK.
+- `docker compose exec backend python -c "import app.main; print('ok')"`: OK.
+- Rebuild backend dev: OK.
+- Healthcheck dev `http://127.0.0.1:8000/api/health`: OK.
+- Rebuild backend mini-prod local: OK.
+- Healthcheck mini-prod `http://127.0.0.1:8010/api/health`: OK.
+- Verificacion dentro de dev y mini-prod confirma que el codigo cargado contiene
+  `rank_units_in_categoria`, `share_units_pct` y `brand_mix_pvp_pct`: OK.
+
+Pendiente de validacion manual:
+
+- Generar un PPT de Samsung en `Unidades` y confirmar que ninguna slide muestra
+  facturacion ni ranking por PVP.
+- Generar un PPT de Samsung en `Facturacion` y confirmar que ninguna slide usa
+  ranking por unidades.
+- Abrir ambos `.pptx` en PowerPoint y revisar que la nueva slide no corte texto.
 
 ## Protocolo de continuidad
 

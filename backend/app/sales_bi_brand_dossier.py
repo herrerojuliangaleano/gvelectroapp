@@ -148,6 +148,8 @@ def _price_bands(
     mk = bucketize(market_prices)
     br = bucketize(brand_prices)
     brand_units_total = sum(b["unidades"] for b in br)
+    brand_pvp_total = sum(b["pvp"] for b in br)
+    market_pvp_total = sum(b["pvp"] for b in mk)
     names = ["Entrada", "Media", "Premium"]
     bands = []
     for i, nombre in enumerate(names):
@@ -162,7 +164,9 @@ def _price_bands(
             "share_units_pct": _share(br[i]["unidades"], mk[i]["unidades"]),
             "share_pvp_pct": _share(br[i]["pvp"], mk[i]["pvp"]),
             "brand_mix_units_pct": _share(br[i]["unidades"], brand_units_total),
+            "brand_mix_pvp_pct": _share(br[i]["pvp"], brand_pvp_total),
             "market_mix_units_pct": _share(mk[i]["unidades"], total_units),
+            "market_mix_pvp_pct": _share(mk[i]["pvp"], market_pvp_total),
         })
     return {"cortes": {"entrada_hasta": round(c1, 2), "media_hasta": round(c2, 2)}, "bands": bands}
 
@@ -671,32 +675,43 @@ def build_brand_dossier(
             row["competidores"][item["label"]] = {"unidades": cb["unidades"], "total_vendido": cb["total_vendido"]}
         monthly_series.append(row)
 
-    weekly_series = [
-        {
+    weekly_series = []
+    for sem in sorted(weekly_market.keys()):
+        b = _fin(weekly_brand.get(sem) or _metric_bucket())
+        m = _fin(weekly_market[sem])
+        weekly_series.append({
             "semana": sem,
-            "brand_unidades": (b := _fin(weekly_brand.get(sem) or _metric_bucket()))["unidades"],
+            "brand_unidades": b["unidades"],
             "brand_pvp": b["total_vendido"],
-            "market_pvp": (m := _fin(weekly_market[sem]))["total_vendido"],
+            "market_unidades": m["unidades"],
+            "market_pvp": m["total_vendido"],
+            "share_units_pct": _share(b["unidades"], m["unidades"]),
             "share_pvp_pct": _share(b["total_vendido"], m["total_vendido"]),
-        }
-        for sem in sorted(weekly_market.keys())
-    ]
+        })
 
     # ── Categorías: dónde juega y dónde es fuerte ────────────────────────
     categories: list[dict[str, Any]] = []
     for cat in sorted(cat_market.keys()):
         mk = _fin(cat_market[cat])
         br = _fin(cat_brands[cat].get(brand_name) or _metric_bucket())
-        cat_rank_rows = sorted(
+        cat_rank_pvp_rows = sorted(
             ((n, float(_fin(b)["total_vendido"])) for n, b in cat_brands[cat].items()),
             key=lambda t: t[1], reverse=True,
         )
-        rank_in_cat = next((i + 1 for i, (n, _) in enumerate(cat_rank_rows) if n == brand_name), None)
-        leader_name, leader_total = (cat_rank_rows[0] if cat_rank_rows else ("", 0.0))
+        cat_rank_units_rows = sorted(
+            ((n, int(_fin(b)["unidades"])) for n, b in cat_brands[cat].items()),
+            key=lambda t: t[1], reverse=True,
+        )
+        rank_pvp_in_cat = next((i + 1 for i, (n, _) in enumerate(cat_rank_pvp_rows) if n == brand_name), None)
+        rank_units_in_cat = next((i + 1 for i, (n, _) in enumerate(cat_rank_units_rows) if n == brand_name), None)
+        leader_pvp_name, leader_pvp_total = (cat_rank_pvp_rows[0] if cat_rank_pvp_rows else ("", 0.0))
+        leader_units_name, leader_units_total = (cat_rank_units_rows[0] if cat_rank_units_rows else ("", 0))
         prev_br = _fin(prev_cat_brand.get(cat) or _metric_bucket())
         prev_mk = _fin(prev_cat_market.get(cat) or _metric_bucket())
         share_now = _share(br["total_vendido"], mk["total_vendido"])
         share_prev = _share(prev_br["total_vendido"], prev_mk["total_vendido"])
+        share_units_now = _share(br["unidades"], mk["unidades"])
+        share_units_prev = _share(prev_br["unidades"], prev_mk["unidades"])
         brand_avg = _avg(cat_brands[cat].get(brand_name) or _metric_bucket())
         market_avg = _avg(cat_market[cat])
         categories.append({
@@ -707,13 +722,21 @@ def build_brand_dossier(
             "market_pvp": mk["total_vendido"],
             "market_unidades": mk["unidades"],
             "share_pvp_pct": share_now,
-            "share_units_pct": _share(br["unidades"], mk["unidades"]),
+            "share_units_pct": share_units_now,
             "share_prev_pct": share_prev,
             "share_delta_pts": round(share_now - share_prev, 2),
-            "rank_in_categoria": rank_in_cat,
-            "marcas_en_categoria": len(cat_rank_rows),
-            "leader_name": leader_name,
-            "leader_share_pct": _share(leader_total, mk["total_vendido"]),
+            "share_units_prev_pct": share_units_prev,
+            "share_units_delta_pts": round(share_units_now - share_units_prev, 2),
+            "rank_in_categoria": rank_pvp_in_cat,
+            "rank_pvp_in_categoria": rank_pvp_in_cat,
+            "rank_units_in_categoria": rank_units_in_cat,
+            "marcas_en_categoria": len(cat_rank_pvp_rows),
+            "leader_name": leader_pvp_name,
+            "leader_share_pct": _share(leader_pvp_total, mk["total_vendido"]),
+            "leader_pvp_name": leader_pvp_name,
+            "leader_pvp_share_pct": _share(leader_pvp_total, mk["total_vendido"]),
+            "leader_units_name": leader_units_name,
+            "leader_units_share_pct": _share(leader_units_total, mk["unidades"]),
             "brand_avg_pvp": brand_avg,
             "market_avg_pvp": market_avg,
             "price_index": round(brand_avg / market_avg * 100, 1) if market_avg else 0.0,
@@ -731,8 +754,10 @@ def build_brand_dossier(
             "tipo": tipo,
             "unidades": br["unidades"],
             "total_vendido": br["total_vendido"],
+            "market_unidades": mk["unidades"],
             "share_pvp_pct": _share(br["total_vendido"], mk["total_vendido"]),
             "market_pvp": mk["total_vendido"],
+            "share_units_pct": _share(br["unidades"], mk["unidades"]),
         })
     tipos_top.sort(key=lambda t: float(t["total_vendido"]), reverse=True)
     tipos_top = tipos_top[:12]
@@ -797,6 +822,7 @@ def build_brand_dossier(
             "brand_pvp": br["total_vendido"],
             "market_unidades": mk["unidades"],
             "market_pvp": mk["total_vendido"],
+            "share_units_pct": _share(br["unidades"], mk["unidades"]),
             "share_pvp_pct": _share(br["total_vendido"], mk["total_vendido"]),
         })
 

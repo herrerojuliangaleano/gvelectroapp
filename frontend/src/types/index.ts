@@ -807,10 +807,18 @@ export interface BrandDossierCategory {
   share_units_pct: number;
   share_prev_pct: number;
   share_delta_pts: number;
+  share_units_prev_pct?: number;
+  share_units_delta_pts?: number;
   rank_in_categoria: number | null;
+  rank_pvp_in_categoria?: number | null;
+  rank_units_in_categoria?: number | null;
   marcas_en_categoria: number;
   leader_name: string;
   leader_share_pct: number;
+  leader_pvp_name?: string;
+  leader_pvp_share_pct?: number;
+  leader_units_name?: string;
+  leader_units_share_pct?: number;
   brand_avg_pvp: number;
   market_avg_pvp: number;
   price_index: number;
@@ -936,14 +944,18 @@ export interface SalesBIBrandDossier {
       share_units_pct: number;
       share_pvp_pct: number;
       brand_mix_units_pct: number;
+      brand_mix_pvp_pct: number;
       market_mix_units_pct: number;
+      market_mix_pvp_pct: number;
     }>;
   }>;
   weekly_series: Array<{
     semana: string;
     brand_unidades: number;
     brand_pvp: number;
+    market_unidades: number;
     market_pvp: number;
+    share_units_pct: number;
     share_pvp_pct: number;
   }>;
   daily_series: Array<{
@@ -952,6 +964,7 @@ export interface SalesBIBrandDossier {
     brand_pvp: number;
     market_unidades: number;
     market_pvp: number;
+    share_units_pct: number;
     share_pvp_pct: number;
   }>;
   /** Share % semanal apilado: marca + competidores + OTRAS (suma 100). */
@@ -973,7 +986,9 @@ export interface SalesBIBrandDossier {
       share_units_pct: number;
       share_pvp_pct: number;
       brand_mix_units_pct: number;
+      brand_mix_pvp_pct: number;
       market_mix_units_pct: number;
+      market_mix_pvp_pct: number;
     }>;
   } | null;
   category_momentum: Array<{
@@ -994,7 +1009,15 @@ export interface SalesBIBrandDossier {
   comparison_items?: Array<{ alias: string; marcas: string[]; kind: 'brand' | 'group' | string; is_brand?: boolean }>;
   comparison_ranking?: Array<SalesBICommercialMix & { is_brand: boolean; is_competitor: boolean; kind?: string; marcas?: string[] }>;
   categories: BrandDossierCategory[];
-  tipos_top: Array<{ tipo: string; unidades: number; total_vendido: number; share_pvp_pct: number; market_pvp: number }>;
+  tipos_top: Array<{
+    tipo: string;
+    unidades: number;
+    total_vendido: number;
+    market_unidades: number;
+    market_pvp: number;
+    share_units_pct: number;
+    share_pvp_pct: number;
+  }>;
   branches: Array<{
     sucursal: string;
     brand_unidades: number;
