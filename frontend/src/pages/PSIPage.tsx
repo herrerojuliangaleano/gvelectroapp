@@ -181,6 +181,11 @@ export function PSIPage() {
   const [aliasRow, setAliasRow] = useState<PSINoCatalogadoRow | null>(null);
   // Modal de exportar reporte
   const [exportOpen, setExportOpen] = useState(false);
+  // Overrides por producto para el reporte (se editan en la tabla principal, no en el modal).
+  const [exportExcluded, setExportExcluded] = useState<Record<number, boolean>>({});
+  const [pvpOvr, setPvpOvr] = useState<Record<number, number>>({});
+  const [inicioOvr, setInicioOvr] = useState<Record<number, number>>({});
+  const [finalOvr, setFinalOvr] = useState<Record<number, number>>({});
 
   const canExport = can('psi.export');
   const canAdjust = can('psi.adjust');
@@ -207,8 +212,13 @@ export function PSIPage() {
   // Recargar cuando cambia el modo o el filtro 0/0.
   useEffect(() => { load(false); }, [mode, excludeZeroActivity]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  function resetExportOverrides() {
+    setExportExcluded({}); setPvpOvr({}); setInicioOvr({}); setFinalOvr({});
+  }
+
   function applyFilters() {
     setLocalStockAdjustments({});
+    resetExportOverrides();
     load(false);
   }
   function clearFilters() {
@@ -217,6 +227,7 @@ export function PSIPage() {
     setMode('default');
     setExcludeZeroActivity(false);
     setLocalStockAdjustments({});
+    resetExportOverrides();
   }
 
   function applyLocalStockAdjustment(productId: number, delta: number) {
@@ -258,6 +269,13 @@ export function PSIPage() {
       productos_visibles: items.length,
     };
   }, [report, items]);
+
+  // ── Valores del reporte por producto (editables en la tabla principal) ─────
+  // Default: final = stock del sistema; inicio = final + sell-out; PVP = del catálogo.
+  const defExportFinal = (r: PSIReportRow) => (r.product_id in finalOvr ? finalOvr[r.product_id] : r.stock);
+  const defExportInicio = (r: PSIReportRow) => (r.product_id in inicioOvr ? inicioOvr[r.product_id] : defExportFinal(r) + r.sell_out);
+  const defExportPvp = (r: PSIReportRow) => (r.product_id in pvpOvr ? pvpOvr[r.product_id] : (r.pvp ?? 0));
+  const includedExportItems = useMemo(() => items.filter((r) => !exportExcluded[r.product_id]), [items, exportExcluded]);
 
   async function handleSavePendingToGfk() {
     if (!report || report.totals.ajustes_pendientes <= 0) return;
@@ -389,10 +407,20 @@ export function PSIPage() {
         title="Productos"
         subtitle={displayedTotals.productos_visibles ? `${displayedTotals.productos_visibles} producto${displayedTotals.productos_visibles === 1 ? '' : 's'} visible${displayedTotals.productos_visibles === 1 ? '' : 's'}` : undefined}
       >
+        {canExport && items.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-bold uppercase tracking-wide text-[color:var(--text-3)]">Reporte</span>
+            <span className="text-[color:var(--text-2)]">{includedExportItems.length} de {items.length} productos</span>
+            <button type="button" onClick={() => setExportExcluded({})} className={erpBtnGhost} style={{ padding: '2px 8px', fontSize: 12 }}>Todos</button>
+            <button type="button" onClick={() => setExportExcluded(Object.fromEntries(items.map((r) => [r.product_id, true])))} className={erpBtnGhost} style={{ padding: '2px 8px', fontSize: 12 }}>Ninguno</button>
+            <span className="text-[color:var(--text-4)]">Tildá los productos y editá PVP / stock inicio-final; después «Exportar».</span>
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="erp-table">
             <thead>
               <tr>
+                {canExport && <th style={{ textAlign: 'center' }} title="Incluir en el reporte">✓</th>}
                 <th>Marca</th>
                 <th>Tipo</th>
                 <th>SKU</th>
@@ -400,13 +428,27 @@ export function PSIPage() {
                 <th style={{ textAlign: 'center' }}>Cond.</th>
                 <th style={{ textAlign: 'right' }}>Stock</th>
                 <th style={{ textAlign: 'right' }}>Sell out</th>
+                {canExport && <th style={{ textAlign: 'right' }} title="Precio para el reporte">PVP</th>}
+                {canExport && <th style={{ textAlign: 'right' }} title="Stock inicio (final + sell-out)">Inicio</th>}
+                {canExport && <th style={{ textAlign: 'right' }} title="Stock final (del sistema)">Final</th>}
                 <th style={{ textAlign: 'right' }}>Δ ajuste</th>
                 {canAdjust && <th style={{ textAlign: 'center' }}>Acciones</th>}
               </tr>
             </thead>
             <tbody>
               {items.map((r) => (
-                <tr key={r.product_id}>
+                <tr key={r.product_id} className={canExport && exportExcluded[r.product_id] ? 'opacity-45' : undefined}>
+                  {canExport && (
+                    <td style={{ textAlign: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={!exportExcluded[r.product_id]}
+                        onChange={(e) => setExportExcluded((s) => ({ ...s, [r.product_id]: !e.target.checked }))}
+                        className="h-4 w-4 accent-blue-500"
+                        title="Incluir en el reporte"
+                      />
+                    </td>
+                  )}
                   <td className="font-semibold">{r.marca}</td>
                   <td className="text-[color:var(--text-3)]">{r.tipo}</td>
                   <td className="font-mono text-[12px]">{r.sku}</td>
@@ -427,6 +469,37 @@ export function PSIPage() {
                       </button>
                     ) : r.sell_out}
                   </td>
+                  {canExport && (
+                    <>
+                      <td style={{ textAlign: 'right' }}>
+                        <input
+                          type="number"
+                          value={defExportPvp(r)}
+                          onChange={(e) => setPvpOvr((s) => ({ ...s, [r.product_id]: Number(e.target.value) }))}
+                          className="w-28 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-right text-[13px] tabular-nums text-slate-100 outline-none focus:border-blue-400"
+                          title="PVP para el reporte"
+                        />
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <input
+                          type="number"
+                          value={defExportInicio(r)}
+                          onChange={(e) => setInicioOvr((s) => ({ ...s, [r.product_id]: Number(e.target.value) }))}
+                          className="w-16 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-right text-[13px] tabular-nums text-slate-100 outline-none focus:border-blue-400"
+                          title="Stock inicio"
+                        />
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <input
+                          type="number"
+                          value={defExportFinal(r)}
+                          onChange={(e) => setFinalOvr((s) => ({ ...s, [r.product_id]: Number(e.target.value) }))}
+                          className="w-16 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-right text-[13px] tabular-nums text-slate-100 outline-none focus:border-blue-400"
+                          title="Stock final"
+                        />
+                      </td>
+                    </>
+                  )}
                   <td style={{ textAlign: 'right' }} className="tabular-nums text-[color:var(--text-4)]">
                     {r.ajuste_delta !== 0 || r.stock_adjustment_delta !== 0 ? (
                       <span className="inline-flex flex-col items-end gap-0.5">
@@ -453,7 +526,7 @@ export function PSIPage() {
                 </tr>
               ))}
               {!loading && items.length === 0 && (
-                <tr><td colSpan={canAdjust ? 9 : 8} className="text-center text-[color:var(--text-3)]" style={{ padding: '48px 12px' }}>
+                <tr><td colSpan={8 + (canAdjust ? 1 : 0) + (canExport ? 4 : 0)} className="text-center text-[color:var(--text-3)]" style={{ padding: '48px 12px' }}>
                   No hay productos para los filtros aplicados.
                 </td></tr>
               )}
@@ -575,6 +648,10 @@ export function PSIPage() {
           }}
           stockAdjustments={stockAdjustmentList}
           items={items}
+          includedItems={includedExportItems}
+          pvpOverrides={pvpOvr}
+          inicioOverrides={inicioOvr}
+          finalOverrides={finalOvr}
           onClose={() => setExportOpen(false)}
         />
       )}
@@ -1132,7 +1209,7 @@ const PSI_EXPORT_COLUMNS: { key: string; label: string }[] = [
 ];
 
 function ExportReportModal({
-  filters, stockAdjustments, items, onClose,
+  filters, stockAdjustments, items, includedItems, pvpOverrides, inicioOverrides, finalOverrides, onClose,
 }: {
   filters: {
     marcas: string[]; tipos: string[]; condicion: PSICondicionFilter;
@@ -1141,6 +1218,10 @@ function ExportReportModal({
   };
   stockAdjustments: { product_id: number; delta: number }[];
   items: PSIReportRow[];
+  includedItems: PSIReportRow[];
+  pvpOverrides: Record<number, number>;
+  inicioOverrides: Record<number, number>;
+  finalOverrides: Record<number, number>;
   onClose: () => void;
 }) {
   const defaultTitle = useMemo(() => {
@@ -1155,20 +1236,9 @@ function ExportReportModal({
   const [cols, setCols] = useState<Record<string, boolean>>(
     () => Object.fromEntries(PSI_EXPORT_COLUMNS.map((c) => [c.key, true])),
   );
-  // Overrides manuales por producto. Default: final = stock (sistema), inicio = final + sell_out.
-  const [showStock, setShowStock] = useState(false);
-  const [inicioOvr, setInicioOvr] = useState<Record<number, number>>({});
-  const [finalOvr, setFinalOvr] = useState<Record<number, number>>({});
-  const [pvpOvr, setPvpOvr] = useState<Record<number, number>>({});
-  const [excluded, setExcluded] = useState<Record<number, boolean>>({});
   const [generating, setGenerating] = useState<'pdf' | 'xlsx' | null>(null);
   const [error, setError] = useState('');
 
-  const defFinal = (r: PSIReportRow) => (r.product_id in finalOvr ? finalOvr[r.product_id] : r.stock);
-  const defInicio = (r: PSIReportRow) => (r.product_id in inicioOvr ? inicioOvr[r.product_id] : defFinal(r) + r.sell_out);
-  const defPvp = (r: PSIReportRow) => (r.product_id in pvpOvr ? pvpOvr[r.product_id] : (r.pvp ?? 0));
-
-  const includedItems = items.filter((r) => !excluded[r.product_id]);
   const selectedColumns = PSI_EXPORT_COLUMNS.filter((c) => cols[c.key]).map((c) => c.key);
   const canGenerate = selectedColumns.length > 0 && includedItems.length > 0;
 
@@ -1187,9 +1257,9 @@ function ExportReportModal({
         mode: filters.mode,
         exclude_zero_activity: filters.exclude_zero_activity,
         stock_adjustments: stockAdjustments,
-        stock_inicio_overrides: Object.fromEntries(Object.entries(inicioOvr).map(([k, v]) => [k, v])),
-        stock_final_overrides: Object.fromEntries(Object.entries(finalOvr).map(([k, v]) => [k, v])),
-        pvp_overrides: Object.fromEntries(Object.entries(pvpOvr).map(([k, v]) => [k, v])),
+        stock_inicio_overrides: inicioOverrides,
+        stock_final_overrides: finalOverrides,
+        pvp_overrides: pvpOverrides,
         // Solo mandamos IDs si es un subconjunto; vacío = todos.
         include_product_ids: includedItems.length === items.length ? [] : includedItems.map((r) => r.product_id),
       };
@@ -1213,7 +1283,7 @@ function ExportReportModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-3xl border border-slate-700 bg-slate-900 shadow-2xl">
+      <div className="flex max-h-[90vh] w-full max-w-xl flex-col rounded-3xl border border-slate-700 bg-slate-900 shadow-2xl">
         <div className="flex items-start justify-between gap-4 p-6 pb-3">
           <h2 className="text-lg font-black text-white">Exportar reporte</h2>
           <button onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"><X size={18} /></button>
@@ -1250,7 +1320,7 @@ function ExportReportModal({
               ))}
             </div>
             {selectedColumns.length === 0 && <p className="mt-1 text-xs text-amber-300">Elegí al menos una columna.</p>}
-            {selectedColumns.length > 0 && includedItems.length === 0 && <p className="mt-1 text-xs text-amber-300">Elegí al menos un producto (sección de abajo).</p>}
+            {selectedColumns.length > 0 && includedItems.length === 0 && <p className="mt-1 text-xs text-amber-300">No hay productos seleccionados. Tildá al menos uno en la tabla.</p>}
           </div>
 
           <div>
@@ -1273,89 +1343,10 @@ function ExportReportModal({
             </div>
           </div>
 
-          {/* Productos: elegir cuáles incluir + editar PVP y stock inicio/final. */}
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/50">
-            <button
-              type="button"
-              onClick={() => setShowStock((v) => !v)}
-              className="flex w-full items-center justify-between px-4 py-3 text-left"
-            >
-              <div>
-                <div className="text-sm font-bold text-white">Productos, precio y stock</div>
-                <div className="text-xs text-slate-400">
-                  {includedItems.length} de {items.length} incluidos · editá PVP, stock inicio/final o destildá productos.
-                </div>
-              </div>
-              <span className="text-slate-400">{showStock ? '▲' : '▼'}</span>
-            </button>
-            {showStock && (
-              <div className="border-t border-slate-800">
-                <div className="flex items-center gap-2 px-3 py-2 text-xs">
-                  <span className="text-slate-400">Incluir:</span>
-                  <button type="button" onClick={() => setExcluded({})} className="rounded-md border border-slate-700 px-2 py-0.5 font-bold text-slate-200 hover:bg-slate-800">Todos</button>
-                  <button type="button" onClick={() => setExcluded(Object.fromEntries(items.map((r) => [r.product_id, true])))} className="rounded-md border border-slate-700 px-2 py-0.5 font-bold text-slate-200 hover:bg-slate-800">Ninguno</button>
-                </div>
-                <div className="max-h-64 overflow-y-auto">
-                  <table className="w-full text-xs">
-                    <thead className="sticky top-0 bg-slate-900 text-slate-400">
-                      <tr>
-                        <th className="px-2 py-2 text-center font-bold">✓</th>
-                        <th className="px-3 py-2 text-left font-bold">Producto</th>
-                        <th className="px-2 py-2 text-right font-bold">PVP</th>
-                        <th className="px-2 py-2 text-right font-bold">Inicio</th>
-                        <th className="px-2 py-2 text-right font-bold">Final</th>
-                        <th className="px-2 py-2 text-right font-bold">Sell-out</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {items.map((r) => {
-                        const inc = !excluded[r.product_id];
-                        return (
-                          <tr key={r.product_id} className={`border-t border-slate-800/70 ${inc ? '' : 'opacity-45'}`}>
-                            <td className="px-2 py-1.5 text-center">
-                              <input
-                                type="checkbox"
-                                checked={inc}
-                                onChange={(e) => setExcluded((s) => ({ ...s, [r.product_id]: !e.target.checked }))}
-                                className="h-4 w-4 accent-blue-500"
-                              />
-                            </td>
-                            <td className="max-w-[220px] truncate px-3 py-1.5 text-slate-200" title={r.descripcion}>
-                              <span className="font-mono text-slate-400">{r.sku}</span> {r.descripcion}
-                            </td>
-                            <td className="px-2 py-1.5 text-right">
-                              <input
-                                type="number"
-                                value={defPvp(r)}
-                                onChange={(e) => setPvpOvr((s) => ({ ...s, [r.product_id]: Number(e.target.value) }))}
-                                className="w-24 rounded-md border border-slate-700 bg-slate-950 px-1.5 py-1 text-right text-slate-100"
-                              />
-                            </td>
-                            <td className="px-2 py-1.5 text-right">
-                              <input
-                                type="number"
-                                value={defInicio(r)}
-                                onChange={(e) => setInicioOvr((s) => ({ ...s, [r.product_id]: Number(e.target.value) }))}
-                                className="w-16 rounded-md border border-slate-700 bg-slate-950 px-1.5 py-1 text-right text-slate-100"
-                              />
-                            </td>
-                            <td className="px-2 py-1.5 text-right">
-                              <input
-                                type="number"
-                                value={defFinal(r)}
-                                onChange={(e) => setFinalOvr((s) => ({ ...s, [r.product_id]: Number(e.target.value) }))}
-                                className="w-16 rounded-md border border-slate-700 bg-slate-950 px-1.5 py-1 text-right text-slate-100"
-                              />
-                            </td>
-                            <td className="px-2 py-1.5 text-right tabular-nums text-slate-400">{r.sell_out}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
+          {/* La selección de productos + PVP/stock inicio-final se edita en la tabla principal. */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs text-slate-400">
+            <span className="font-bold text-slate-200">{includedItems.length} de {items.length} productos</span> seleccionados para el reporte.
+            {' '}Elegí productos y editá PVP / stock inicio-final desde la tabla.
           </div>
         </div>
 
