@@ -2640,6 +2640,7 @@ export interface PSIReportRow {
   marca:                    string;
   tipo:                     string;
   condicion:                string;  // PRIMERA | OUTLET
+  pvp:                      number | null;  // PVP del catálogo
   // Stock
   stock:                    number;  // efectivo (base + delta de ajustes)
   stock_base:               number;

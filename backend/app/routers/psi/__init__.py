@@ -972,6 +972,10 @@ class PSIExportPDFPayload(BaseModel):
     # Overrides manuales por producto (clave = product_id como string).
     stock_inicio_overrides: dict[str, int] = Field(default_factory=dict)
     stock_final_overrides:  dict[str, int] = Field(default_factory=dict)
+    pvp_overrides:          dict[str, float] = Field(default_factory=dict)
+    # Si viene con IDs, el reporte incluye SOLO esos productos (acciones
+    # comerciales puntuales). Vacío = todos los del filtro.
+    include_product_ids:    list[int] = Field(default_factory=list)
 
 
 def _apply_export_stock_adjustments(report: PSIReportResponse, adjustments: list[dict[str, int]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -1013,25 +1017,37 @@ def _psi_enrich_export(
     items: list[dict[str, Any]],
     stock_inicio_overrides: dict[str, int],
     stock_final_overrides: dict[str, int],
+    pvp_overrides: dict[str, float] | None = None,
+    include_product_ids: list[int] | None = None,
 ) -> list[dict[str, Any]]:
-    """Agrega stock_inicio / stock_final a cada item para el export.
+    """Agrega stock_inicio / stock_final / pvp a cada item para el export y,
+    si viene ``include_product_ids``, deja SOLO esos productos.
 
     - stock_final = override manual, o el stock efectivo actual del sistema.
     - stock_inicio = override manual, o (stock_final + sell_out).
-    (pvp ya viene en el item desde PSIReportRow.)
+    - pvp = override manual (proveedor pide otro precio), o el del catálogo.
     """
     inicio_ovr = stock_inicio_overrides or {}
     final_ovr = stock_final_overrides or {}
+    pvp_ovr = pvp_overrides or {}
+    include = set(include_product_ids or [])
+    out: list[dict[str, Any]] = []
     for it in items:
-        pid = str(it.get("product_id"))
+        pid_int = int(it.get("product_id") or 0)
+        if include and pid_int not in include:
+            continue
+        pid = str(pid_int)
         stock = int(it.get("stock") or 0)
         sell = int(it.get("sell_out") or 0)
         stock_final = int(final_ovr.get(pid, stock))
         stock_inicio = int(inicio_ovr.get(pid, stock_final + sell))
         it["stock_final"] = stock_final
         it["stock_inicio"] = stock_inicio
+        if pid in pvp_ovr:
+            it["pvp"] = float(pvp_ovr[pid])
         it.setdefault("pvp", None)
-    return items
+        out.append(it)
+    return out
 
 
 @router.post("/export-pdf")
@@ -1074,7 +1090,7 @@ def psi_export_pdf(
         )
 
     export_items, export_totals = _apply_export_stock_adjustments(report, payload.stock_adjustments)
-    export_items = _psi_enrich_export(export_items, payload.stock_inicio_overrides, payload.stock_final_overrides)
+    export_items = _psi_enrich_export(export_items, payload.stock_inicio_overrides, payload.stock_final_overrides, payload.pvp_overrides, payload.include_product_ids)
 
     pdf_bytes = render_psi_pdf(
         titulo=payload.titulo.strip(),
@@ -1140,7 +1156,7 @@ def psi_export_xlsx(
         )
 
     export_items, export_totals = _apply_export_stock_adjustments(report, payload.stock_adjustments)
-    export_items = _psi_enrich_export(export_items, payload.stock_inicio_overrides, payload.stock_final_overrides)
+    export_items = _psi_enrich_export(export_items, payload.stock_inicio_overrides, payload.stock_final_overrides, payload.pvp_overrides, payload.include_product_ids)
 
     xlsx_bytes = render_psi_xlsx(
         titulo=payload.titulo.strip(),

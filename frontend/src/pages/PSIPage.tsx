@@ -1159,13 +1159,18 @@ function ExportReportModal({
   const [showStock, setShowStock] = useState(false);
   const [inicioOvr, setInicioOvr] = useState<Record<number, number>>({});
   const [finalOvr, setFinalOvr] = useState<Record<number, number>>({});
+  const [pvpOvr, setPvpOvr] = useState<Record<number, number>>({});
+  const [excluded, setExcluded] = useState<Record<number, boolean>>({});
   const [generating, setGenerating] = useState<'pdf' | 'xlsx' | null>(null);
   const [error, setError] = useState('');
 
   const defFinal = (r: PSIReportRow) => (r.product_id in finalOvr ? finalOvr[r.product_id] : r.stock);
   const defInicio = (r: PSIReportRow) => (r.product_id in inicioOvr ? inicioOvr[r.product_id] : defFinal(r) + r.sell_out);
+  const defPvp = (r: PSIReportRow) => (r.product_id in pvpOvr ? pvpOvr[r.product_id] : (r.pvp ?? 0));
 
+  const includedItems = items.filter((r) => !excluded[r.product_id]);
   const selectedColumns = PSI_EXPORT_COLUMNS.filter((c) => cols[c.key]).map((c) => c.key);
+  const canGenerate = selectedColumns.length > 0 && includedItems.length > 0;
 
   async function handleGenerate(format: 'pdf' | 'xlsx') {
     setGenerating(format); setError('');
@@ -1184,6 +1189,9 @@ function ExportReportModal({
         stock_adjustments: stockAdjustments,
         stock_inicio_overrides: Object.fromEntries(Object.entries(inicioOvr).map(([k, v]) => [k, v])),
         stock_final_overrides: Object.fromEntries(Object.entries(finalOvr).map(([k, v]) => [k, v])),
+        pvp_overrides: Object.fromEntries(Object.entries(pvpOvr).map(([k, v]) => [k, v])),
+        // Solo mandamos IDs si es un subconjunto; vacío = todos.
+        include_product_ids: includedItems.length === items.length ? [] : includedItems.map((r) => r.product_id),
       };
       const blob = format === 'pdf' ? await exportPSIPdf(payload) : await exportPSIXlsx(payload);
       const url = URL.createObjectURL(blob);
@@ -1205,7 +1213,7 @@ function ExportReportModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-3xl border border-slate-700 bg-slate-900 shadow-2xl">
+      <div className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-3xl border border-slate-700 bg-slate-900 shadow-2xl">
         <div className="flex items-start justify-between gap-4 p-6 pb-3">
           <h2 className="text-lg font-black text-white">Exportar reporte</h2>
           <button onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"><X size={18} /></button>
@@ -1242,6 +1250,7 @@ function ExportReportModal({
               ))}
             </div>
             {selectedColumns.length === 0 && <p className="mt-1 text-xs text-amber-300">Elegí al menos una columna.</p>}
+            {selectedColumns.length > 0 && includedItems.length === 0 && <p className="mt-1 text-xs text-amber-300">Elegí al menos un producto (sección de abajo).</p>}
           </div>
 
           <div>
@@ -1264,7 +1273,7 @@ function ExportReportModal({
             </div>
           </div>
 
-          {/* Stock inicio / final manual (opcional). Default: final=stock actual, inicio=final+sell out. */}
+          {/* Productos: elegir cuáles incluir + editar PVP y stock inicio/final. */}
           <div className="rounded-2xl border border-slate-800 bg-slate-950/50">
             <button
               type="button"
@@ -1272,51 +1281,79 @@ function ExportReportModal({
               className="flex w-full items-center justify-between px-4 py-3 text-left"
             >
               <div>
-                <div className="text-sm font-bold text-white">Ajustar stock inicio / final</div>
+                <div className="text-sm font-bold text-white">Productos, precio y stock</div>
                 <div className="text-xs text-slate-400">
-                  Por defecto: final = stock del sistema, inicio = final + sell-out. Editá lo que quieras.
+                  {includedItems.length} de {items.length} incluidos · editá PVP, stock inicio/final o destildá productos.
                 </div>
               </div>
               <span className="text-slate-400">{showStock ? '▲' : '▼'}</span>
             </button>
             {showStock && (
-              <div className="max-h-64 overflow-y-auto border-t border-slate-800">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-slate-900 text-slate-400">
-                    <tr>
-                      <th className="px-3 py-2 text-left font-bold">Producto</th>
-                      <th className="px-2 py-2 text-right font-bold">Inicio</th>
-                      <th className="px-2 py-2 text-right font-bold">Final</th>
-                      <th className="px-2 py-2 text-right font-bold">Sell-out</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((r) => (
-                      <tr key={r.product_id} className="border-t border-slate-800/70">
-                        <td className="max-w-[220px] truncate px-3 py-1.5 text-slate-200" title={r.descripcion}>
-                          <span className="font-mono text-slate-400">{r.sku}</span> {r.descripcion}
-                        </td>
-                        <td className="px-2 py-1.5 text-right">
-                          <input
-                            type="number"
-                            value={defInicio(r)}
-                            onChange={(e) => setInicioOvr((s) => ({ ...s, [r.product_id]: Number(e.target.value) }))}
-                            className="w-16 rounded-md border border-slate-700 bg-slate-950 px-1.5 py-1 text-right text-slate-100"
-                          />
-                        </td>
-                        <td className="px-2 py-1.5 text-right">
-                          <input
-                            type="number"
-                            value={defFinal(r)}
-                            onChange={(e) => setFinalOvr((s) => ({ ...s, [r.product_id]: Number(e.target.value) }))}
-                            className="w-16 rounded-md border border-slate-700 bg-slate-950 px-1.5 py-1 text-right text-slate-100"
-                          />
-                        </td>
-                        <td className="px-2 py-1.5 text-right tabular-nums text-slate-400">{r.sell_out}</td>
+              <div className="border-t border-slate-800">
+                <div className="flex items-center gap-2 px-3 py-2 text-xs">
+                  <span className="text-slate-400">Incluir:</span>
+                  <button type="button" onClick={() => setExcluded({})} className="rounded-md border border-slate-700 px-2 py-0.5 font-bold text-slate-200 hover:bg-slate-800">Todos</button>
+                  <button type="button" onClick={() => setExcluded(Object.fromEntries(items.map((r) => [r.product_id, true])))} className="rounded-md border border-slate-700 px-2 py-0.5 font-bold text-slate-200 hover:bg-slate-800">Ninguno</button>
+                </div>
+                <div className="max-h-64 overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-slate-900 text-slate-400">
+                      <tr>
+                        <th className="px-2 py-2 text-center font-bold">✓</th>
+                        <th className="px-3 py-2 text-left font-bold">Producto</th>
+                        <th className="px-2 py-2 text-right font-bold">PVP</th>
+                        <th className="px-2 py-2 text-right font-bold">Inicio</th>
+                        <th className="px-2 py-2 text-right font-bold">Final</th>
+                        <th className="px-2 py-2 text-right font-bold">Sell-out</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {items.map((r) => {
+                        const inc = !excluded[r.product_id];
+                        return (
+                          <tr key={r.product_id} className={`border-t border-slate-800/70 ${inc ? '' : 'opacity-45'}`}>
+                            <td className="px-2 py-1.5 text-center">
+                              <input
+                                type="checkbox"
+                                checked={inc}
+                                onChange={(e) => setExcluded((s) => ({ ...s, [r.product_id]: !e.target.checked }))}
+                                className="h-4 w-4 accent-blue-500"
+                              />
+                            </td>
+                            <td className="max-w-[220px] truncate px-3 py-1.5 text-slate-200" title={r.descripcion}>
+                              <span className="font-mono text-slate-400">{r.sku}</span> {r.descripcion}
+                            </td>
+                            <td className="px-2 py-1.5 text-right">
+                              <input
+                                type="number"
+                                value={defPvp(r)}
+                                onChange={(e) => setPvpOvr((s) => ({ ...s, [r.product_id]: Number(e.target.value) }))}
+                                className="w-24 rounded-md border border-slate-700 bg-slate-950 px-1.5 py-1 text-right text-slate-100"
+                              />
+                            </td>
+                            <td className="px-2 py-1.5 text-right">
+                              <input
+                                type="number"
+                                value={defInicio(r)}
+                                onChange={(e) => setInicioOvr((s) => ({ ...s, [r.product_id]: Number(e.target.value) }))}
+                                className="w-16 rounded-md border border-slate-700 bg-slate-950 px-1.5 py-1 text-right text-slate-100"
+                              />
+                            </td>
+                            <td className="px-2 py-1.5 text-right">
+                              <input
+                                type="number"
+                                value={defFinal(r)}
+                                onChange={(e) => setFinalOvr((s) => ({ ...s, [r.product_id]: Number(e.target.value) }))}
+                                className="w-16 rounded-md border border-slate-700 bg-slate-950 px-1.5 py-1 text-right text-slate-100"
+                              />
+                            </td>
+                            <td className="px-2 py-1.5 text-right tabular-nums text-slate-400">{r.sell_out}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>
@@ -1330,14 +1367,14 @@ function ExportReportModal({
           <button onClick={onClose} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-bold text-slate-200 hover:bg-slate-900">Cancelar</button>
           <button
             onClick={() => handleGenerate('xlsx')}
-            disabled={!!generating || selectedColumns.length === 0}
+            disabled={!!generating || !canGenerate}
             className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm font-black text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60"
           >
             <FileDown size={14} /> {generating === 'xlsx' ? 'Generando...' : 'Excel (.xlsx)'}
           </button>
           <button
             onClick={() => handleGenerate('pdf')}
-            disabled={!!generating || selectedColumns.length === 0}
+            disabled={!!generating || !canGenerate}
             className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-black text-white hover:bg-emerald-400 disabled:opacity-60"
           >
             <FileDown size={14} /> {generating === 'pdf' ? 'Generando...' : 'PDF'}

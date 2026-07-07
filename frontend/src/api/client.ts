@@ -1266,6 +1266,8 @@ export interface PSIExportPDFPayload {
   columns?: string[];
   stock_inicio_overrides?: Record<string, number>;
   stock_final_overrides?: Record<string, number>;
+  pvp_overrides?: Record<string, number>;
+  include_product_ids?: number[];
 }
 
 export async function searchPSIProducts(q: string, limit = 20): Promise<PSIProductSearchRow[]> {
