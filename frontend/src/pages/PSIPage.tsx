@@ -574,6 +574,7 @@ export function PSIPage() {
             exclude_zero_activity: excludeZeroActivity,
           }}
           stockAdjustments={stockAdjustmentList}
+          items={items}
           onClose={() => setExportOpen(false)}
         />
       )}
@@ -1120,8 +1121,18 @@ function AliasModal({
 // Modal: Exportar reporte
 // ──────────────────────────────────────────────────────────────────────────
 
+const PSI_EXPORT_COLUMNS: { key: string; label: string }[] = [
+  { key: 'sku', label: 'SKU' },
+  { key: 'descripcion', label: 'Descripción' },
+  { key: 'marca', label: 'Marca' },
+  { key: 'pvp', label: 'PVP' },
+  { key: 'stock_inicio', label: 'Stock inicio' },
+  { key: 'stock_final', label: 'Stock final' },
+  { key: 'sell_out', label: 'Sell-out' },
+];
+
 function ExportReportModal({
-  filters, stockAdjustments, onClose,
+  filters, stockAdjustments, items, onClose,
 }: {
   filters: {
     marcas: string[]; tipos: string[]; condicion: PSICondicionFilter;
@@ -1129,26 +1140,40 @@ function ExportReportModal({
     exclude_zero_activity: boolean;
   };
   stockAdjustments: { product_id: number; delta: number }[];
+  items: PSIReportRow[];
   onClose: () => void;
 }) {
   const defaultTitle = useMemo(() => {
     const marca = filters.marcas[0] ? filters.marcas[0].toUpperCase() : 'GENERAL';
     const pi = filters.periodo_inicio.split('-').slice(1).reverse().join('/');
     const pf = filters.periodo_fin.split('-').slice(1).reverse().join('/');
-    return `PSI ${marca} ${pi} al ${pf}`;
+    return `${marca} ${pi} al ${pf}`;
   }, [filters]);
 
   const [titulo, setTitulo] = useState(defaultTitle);
   const [logo, setLogo] = useState<'GV' | 'ABC' | 'NONE'>('GV');
+  const [cols, setCols] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(PSI_EXPORT_COLUMNS.map((c) => [c.key, true])),
+  );
+  // Overrides manuales por producto. Default: final = stock (sistema), inicio = final + sell_out.
+  const [showStock, setShowStock] = useState(false);
+  const [inicioOvr, setInicioOvr] = useState<Record<number, number>>({});
+  const [finalOvr, setFinalOvr] = useState<Record<number, number>>({});
   const [generating, setGenerating] = useState<'pdf' | 'xlsx' | null>(null);
   const [error, setError] = useState('');
+
+  const defFinal = (r: PSIReportRow) => (r.product_id in finalOvr ? finalOvr[r.product_id] : r.stock);
+  const defInicio = (r: PSIReportRow) => (r.product_id in inicioOvr ? inicioOvr[r.product_id] : defFinal(r) + r.sell_out);
+
+  const selectedColumns = PSI_EXPORT_COLUMNS.filter((c) => cols[c.key]).map((c) => c.key);
 
   async function handleGenerate(format: 'pdf' | 'xlsx') {
     setGenerating(format); setError('');
     try {
       const payload = {
-        titulo: titulo.trim() || 'PSI',
+        titulo: titulo.trim(),
         logo,
+        columns: selectedColumns,
         marcas: filters.marcas,
         tipos: filters.tipos,
         condicion: filters.condicion,
@@ -1157,12 +1182,14 @@ function ExportReportModal({
         mode: filters.mode,
         exclude_zero_activity: filters.exclude_zero_activity,
         stock_adjustments: stockAdjustments,
+        stock_inicio_overrides: Object.fromEntries(Object.entries(inicioOvr).map(([k, v]) => [k, v])),
+        stock_final_overrides: Object.fromEntries(Object.entries(finalOvr).map(([k, v]) => [k, v])),
       };
       const blob = format === 'pdf' ? await exportPSIPdf(payload) : await exportPSIXlsx(payload);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const slug = (titulo.trim() || 'psi').replace(/[^A-Za-z0-9_-]+/g, '-').toLowerCase();
+      const slug = (titulo.trim() || 'reporte').replace(/[^A-Za-z0-9_-]+/g, '-').toLowerCase();
       a.download = `psi-${slug}.${format}`;
       document.body.appendChild(a);
       a.click();
@@ -1178,21 +1205,43 @@ function ExportReportModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-md rounded-3xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
-        <div className="flex items-start justify-between gap-4">
-          <h2 className="text-lg font-black text-white">Exportar PSI</h2>
+      <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-3xl border border-slate-700 bg-slate-900 shadow-2xl">
+        <div className="flex items-start justify-between gap-4 p-6 pb-3">
+          <h2 className="text-lg font-black text-white">Exportar reporte</h2>
           <button onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"><X size={18} /></button>
         </div>
 
-        <div className="mt-4 grid gap-3">
+        <div className="grid gap-4 overflow-y-auto px-6">
           <div>
-            <label className={labelClass}>Título</label>
+            <label className={labelClass}>Título del PDF <span className="font-normal text-slate-500">(vacío = sin título)</span></label>
             <input
               value={titulo}
               onChange={(e) => setTitulo(e.target.value)}
+              placeholder="Sin título"
               className={inputClass}
               autoFocus
             />
+          </div>
+
+          <div>
+            <label className={labelClass}>Columnas a mostrar</label>
+            <div className="flex flex-wrap gap-2">
+              {PSI_EXPORT_COLUMNS.map((c) => (
+                <button
+                  key={c.key}
+                  type="button"
+                  onClick={() => setCols((s) => ({ ...s, [c.key]: !s[c.key] }))}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-bold ${
+                    cols[c.key]
+                      ? 'border-blue-400 bg-blue-500/15 text-blue-100'
+                      : 'border-slate-700 bg-slate-950 text-slate-400 hover:bg-slate-800'
+                  }`}
+                >
+                  {cols[c.key] ? '✓ ' : ''}{c.label}
+                </button>
+              ))}
+            </div>
+            {selectedColumns.length === 0 && <p className="mt-1 text-xs text-amber-300">Elegí al menos una columna.</p>}
           </div>
 
           <div>
@@ -1214,24 +1263,81 @@ function ExportReportModal({
               ))}
             </div>
           </div>
+
+          {/* Stock inicio / final manual (opcional). Default: final=stock actual, inicio=final+sell out. */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/50">
+            <button
+              type="button"
+              onClick={() => setShowStock((v) => !v)}
+              className="flex w-full items-center justify-between px-4 py-3 text-left"
+            >
+              <div>
+                <div className="text-sm font-bold text-white">Ajustar stock inicio / final</div>
+                <div className="text-xs text-slate-400">
+                  Por defecto: final = stock del sistema, inicio = final + sell-out. Editá lo que quieras.
+                </div>
+              </div>
+              <span className="text-slate-400">{showStock ? '▲' : '▼'}</span>
+            </button>
+            {showStock && (
+              <div className="max-h-64 overflow-y-auto border-t border-slate-800">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-slate-900 text-slate-400">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-bold">Producto</th>
+                      <th className="px-2 py-2 text-right font-bold">Inicio</th>
+                      <th className="px-2 py-2 text-right font-bold">Final</th>
+                      <th className="px-2 py-2 text-right font-bold">Sell-out</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((r) => (
+                      <tr key={r.product_id} className="border-t border-slate-800/70">
+                        <td className="max-w-[220px] truncate px-3 py-1.5 text-slate-200" title={r.descripcion}>
+                          <span className="font-mono text-slate-400">{r.sku}</span> {r.descripcion}
+                        </td>
+                        <td className="px-2 py-1.5 text-right">
+                          <input
+                            type="number"
+                            value={defInicio(r)}
+                            onChange={(e) => setInicioOvr((s) => ({ ...s, [r.product_id]: Number(e.target.value) }))}
+                            className="w-16 rounded-md border border-slate-700 bg-slate-950 px-1.5 py-1 text-right text-slate-100"
+                          />
+                        </td>
+                        <td className="px-2 py-1.5 text-right">
+                          <input
+                            type="number"
+                            value={defFinal(r)}
+                            onChange={(e) => setFinalOvr((s) => ({ ...s, [r.product_id]: Number(e.target.value) }))}
+                            className="w-16 rounded-md border border-slate-700 bg-slate-950 px-1.5 py-1 text-right text-slate-100"
+                          />
+                        </td>
+                        <td className="px-2 py-1.5 text-right tabular-nums text-slate-400">{r.sell_out}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
 
         {error && (
-          <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">{error}</div>
+          <div className="mx-6 mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">{error}</div>
         )}
 
-        <div className="mt-4 flex justify-end gap-2">
+        <div className="flex justify-end gap-2 p-6 pt-4">
           <button onClick={onClose} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-bold text-slate-200 hover:bg-slate-900">Cancelar</button>
           <button
             onClick={() => handleGenerate('xlsx')}
-            disabled={!!generating || !titulo.trim()}
+            disabled={!!generating || selectedColumns.length === 0}
             className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm font-black text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60"
           >
             <FileDown size={14} /> {generating === 'xlsx' ? 'Generando...' : 'Excel (.xlsx)'}
           </button>
           <button
             onClick={() => handleGenerate('pdf')}
-            disabled={!!generating || !titulo.trim()}
+            disabled={!!generating || selectedColumns.length === 0}
             className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-black text-white hover:bg-emerald-400 disabled:opacity-60"
           >
             <FileDown size={14} /> {generating === 'pdf' ? 'Generando...' : 'PDF'}

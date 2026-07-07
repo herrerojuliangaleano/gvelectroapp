@@ -1263,6 +1263,9 @@ export interface PSIExportPDFPayload {
   mode: 'default' | 'advanced';
   exclude_zero_activity?: boolean;
   stock_adjustments?: { product_id: number; delta: number }[];
+  columns?: string[];
+  stock_inicio_overrides?: Record<string, number>;
+  stock_final_overrides?: Record<string, number>;
 }
 
 export async function searchPSIProducts(q: string, limit = 20): Promise<PSIProductSearchRow[]> {

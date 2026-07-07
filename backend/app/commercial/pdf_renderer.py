@@ -123,9 +123,45 @@ def _kpi_card(label: str, value: str) -> Table:
 # Render principal
 # ──────────────────────────────────────────────────────────────────────────
 
+# ── Columnas configurables del export PSI ───────────────────────────────────
+# El caller elige cuáles incluir (cada proveedor pide distinto). "kind" define
+# el formato; width_mm/xl los anchos en PDF (mm) y Excel (unidades openpyxl).
+PSI_COLUMNS: dict[str, dict[str, Any]] = {
+    "sku":          {"header": "SKU",          "align": "left",  "kind": "text",  "width_mm": 30, "width_xl": 16},
+    "descripcion":  {"header": "Descripción",  "align": "left",  "kind": "text",  "width_mm": 74, "width_xl": 48},
+    "marca":        {"header": "Marca",        "align": "left",  "kind": "text",  "width_mm": 24, "width_xl": 16},
+    "pvp":          {"header": "PVP",          "align": "right", "kind": "money", "width_mm": 26, "width_xl": 14},
+    "stock_inicio": {"header": "Stock inicio", "align": "right", "kind": "int",   "width_mm": 24, "width_xl": 13},
+    "stock_final":  {"header": "Stock final",  "align": "right", "kind": "int",   "width_mm": 24, "width_xl": 13},
+    "sell_out":     {"header": "Sell-out",     "align": "right", "kind": "int",   "width_mm": 24, "width_xl": 13},
+}
+PSI_DEFAULT_COLUMNS = ["sku", "descripcion", "marca", "pvp", "stock_inicio", "stock_final", "sell_out"]
+
+
+def _psi_norm_columns(columns: Optional[list[str]]) -> list[str]:
+    cols = [c for c in (columns or []) if c in PSI_COLUMNS]
+    return cols or list(PSI_DEFAULT_COLUMNS)
+
+
+def _psi_fmt_val(kind: str, value: Any) -> str:
+    if kind == "money":
+        if value in (None, ""):
+            return "—"
+        try:
+            return "$ " + f"{float(value):,.0f}".replace(",", ".")
+        except (TypeError, ValueError):
+            return "—"
+    if kind == "int":
+        try:
+            return f"{int(value):,}".replace(",", ".")
+        except (TypeError, ValueError):
+            return "0"
+    return str(value or "")
+
+
 def render_psi_pdf(
     *,
-    titulo: str,                 # se mantiene para compat con caller, no se imprime
+    titulo: str,
     items: list[dict[str, Any]],
     totals: dict[str, Any],
     filters_applied: dict[str, Any],
@@ -134,15 +170,20 @@ def render_psi_pdf(
     responsable: Optional[str] = None,
     responsable_area: str = "Comercial",
     empresa_nombre: Optional[str] = None,
+    columns: Optional[list[str]] = None,
 ) -> bytes:
-    """Genera el PDF del PSI con layout simplificado (v3).
+    """Genera el PDF del PSI. Columnas configurables y título editable.
 
-    Args:
-        responsable: solo se imprime si != None (política: pasar solo si el
-            usuario tiene rol GERENTE_COMERCIAL).
+    - ``columns``: qué columnas incluir (ver PSI_COLUMNS). Cada item ya trae
+      pvp / stock_inicio / stock_final calculados por el router.
+    - ``titulo``: se imprime tal cual; si viene vacío, no se muestra título.
+    - ``responsable``: solo se imprime si != None.
     """
+    cols = _psi_norm_columns(columns)
     buffer = BytesIO()
-    page_size = A4  # vertical (caben las 5 columnas cómodas)
+    # A4 apaisado cuando hay muchas columnas; vertical si son pocas.
+    page_size = landscape(A4) if len(cols) > 5 else A4
+    usable_mm = (page_size[0] / mm) - 30.0  # ancho útil (márgenes 15mm por lado)
     doc = SimpleDocTemplate(
         buffer,
         pagesize=page_size,
@@ -150,7 +191,7 @@ def render_psi_pdf(
         rightMargin=1.5 * cm,
         topMargin=1.2 * cm,
         bottomMargin=1.2 * cm,
-        title=titulo,
+        title=titulo or "Reporte",
     )
 
     styles = getSampleStyleSheet()
@@ -206,14 +247,16 @@ def render_psi_pdf(
     else:
         logo_img = Paragraph("", sub_style)
 
-    # Bloque izquierdo: logo + titulo/empresa.
-    titulo_block = [
-        Paragraph("Reporte PSI", h_title),
-        Paragraph(empresa_nombre, h_subtitle),
-    ]
+    # Bloque izquierdo: logo + titulo (editable, se omite si viene vacío) + empresa.
+    titulo_txt = (titulo or "").strip()
+    titulo_block = []
+    if titulo_txt:
+        titulo_block.append(Paragraph(titulo_txt, h_title))
+    titulo_block.append(Paragraph(empresa_nombre, h_subtitle))
+    left_w = usable_mm - 50.0  # el bloque derecho de metadata usa 50mm
     left_block = Table(
         [[logo_img, titulo_block]],
-        colWidths=[22 * mm, 110 * mm],
+        colWidths=[22 * mm, (left_w - 22) * mm],
         style=TableStyle([
             ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
             ("LEFTPADDING",  (0, 0), (-1, -1), 0),
@@ -252,7 +295,7 @@ def render_psi_pdf(
 
     header_table = Table(
         [[left_block, right_block]],
-        colWidths=[132 * mm, 50 * mm],
+        colWidths=[left_w * mm, 50 * mm],
         style=TableStyle([
             ("VALIGN",       (0, 0), (-1, -1), "TOP"),
             ("LEFTPADDING",  (0, 0), (-1, -1), 0),
@@ -262,77 +305,73 @@ def render_psi_pdf(
 
     story: list = [header_table, Spacer(1, 7 * mm)]
 
-    # ─── KPIs ────────────────────────────────────────────────────────────
-    stock_total = int(totals.get("stock") or 0)
-    sell_total  = int(totals.get("sell_out") or 0)
-    kpi_row = Table(
-        [[
-            _kpi_card("STOCK TOTAL", f"{stock_total:,}".replace(",", ".")),
-            _kpi_card("SELL OUT TOTAL", f"{sell_total:,}".replace(",", ".")),
-        ]],
-        colWidths=[60 * mm, 60 * mm],
-        style=TableStyle([
-            ("LEFTPADDING",  (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (0, 0), 8),
-            ("RIGHTPADDING", (1, 0), (1, 0), 0),
-        ]),
-        hAlign="LEFT",
-    )
-    story.append(kpi_row)
-    story.append(Spacer(1, 7 * mm))
+    # ─── KPIs: totales de las columnas numéricas que estén seleccionadas ──
+    def _tot(key: str) -> int:
+        return sum(int(r.get(key) or 0) for r in items)
+
+    kpi_cards = [
+        _kpi_card(lbl, f"{_tot(k):,}".replace(",", "."))
+        for k, lbl in (("stock_inicio", "STOCK INICIO"), ("stock_final", "STOCK FINAL"), ("sell_out", "SELL OUT"))
+        if k in cols
+    ]
+    if kpi_cards:
+        kpi_row = Table(
+            [kpi_cards],
+            colWidths=[58 * mm] * len(kpi_cards),
+            style=TableStyle([
+                ("LEFTPADDING",  (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-2, 0), 8),
+                ("RIGHTPADDING", (-1, 0), (-1, 0), 0),
+            ]),
+            hAlign="LEFT",
+        )
+        story.append(kpi_row)
+        story.append(Spacer(1, 7 * mm))
 
     # ─── TABLA SIMPLE ─────────────────────────────────────────────────────
     header_h = ParagraphStyle("H", parent=cell_style, fontName="Helvetica-Bold", textColor=C_TEXT_3)
     header_h_right = ParagraphStyle("HR", parent=header_h, alignment=TA_RIGHT)
 
+    right_cell = ParagraphStyle("RC", parent=cell_style, alignment=TA_RIGHT)
     headers_row = [
-        Paragraph("SKU",         header_h),
-        Paragraph("DESCRIPCIÓN", header_h),
-        Paragraph("MARCA",       header_h),
-        Paragraph("STOCK",       header_h_right),
-        Paragraph("SELL-OUT",    header_h_right),
+        Paragraph(PSI_COLUMNS[c]["header"], header_h_right if PSI_COLUMNS[c]["align"] == "right" else header_h)
+        for c in cols
     ]
     data_rows: list[list[Any]] = [headers_row]
 
     for r in items:
-        stock = int(r.get("stock") or 0)
-        sell  = int(r.get("sell_out") or 0)
-        stock_color = H_DANGER if stock < 0 else (H_TEXT_3 if stock == 0 else H_TEXT_1)
-        # Color verde en sell-out solo si vendió "bien" (>= 80% del stock actual)
-        if stock > 0 and sell >= stock * 0.8:
-            sell_color = H_SUCCESS
-        elif sell == 0:
-            sell_color = H_TEXT_3
-        else:
-            sell_color = H_TEXT_1
-
-        data_rows.append([
-            Paragraph(str(r.get("sku") or ""), cell_bold),
-            Paragraph(str(r.get("descripcion") or ""), cell_style),
-            Paragraph(str(r.get("marca") or ""), cell_style),
-            Paragraph(
-                f'<font color="{stock_color}"><b>{stock}</b></font>',
-                ParagraphStyle("StRa", parent=cell_style, alignment=TA_RIGHT),
-            ),
-            Paragraph(
-                f'<font color="{sell_color}"><b>{sell}</b></font>',
-                ParagraphStyle("SoRa", parent=cell_style, alignment=TA_RIGHT),
-            ),
-        ])
+        row_cells: list[Any] = []
+        for c in cols:
+            spec = PSI_COLUMNS[c]
+            txt = _psi_fmt_val(spec["kind"], r.get(c))
+            if spec["kind"] in ("int", "money"):
+                # Sell-out en verde si vendió "bien" (>= 80% del stock final).
+                color = None
+                if c == "sell_out":
+                    sf = int(r.get("stock_final") or 0)
+                    sell = int(r.get("sell_out") or 0)
+                    if sf > 0 and sell >= sf * 0.8:
+                        color = H_SUCCESS
+                    elif sell == 0:
+                        color = H_TEXT_3
+                elif c in ("stock_inicio", "stock_final") and int(r.get(c) or 0) < 0:
+                    color = H_DANGER
+                inner = f'<font color="{color}"><b>{txt}</b></font>' if color else f"<b>{txt}</b>"
+                row_cells.append(Paragraph(inner, right_cell))
+            elif c == "sku":
+                row_cells.append(Paragraph(txt, cell_bold))
+            else:
+                row_cells.append(Paragraph(txt, cell_style))
+        data_rows.append(row_cells)
 
     if len(data_rows) == 1:
-        data_rows.append([
-            Paragraph("Sin productos para los filtros aplicados.", cell_style),
-            "", "", "", "",
-        ])
+        data_rows.append([Paragraph("Sin productos para los filtros aplicados.", cell_style)] + [""] * (len(cols) - 1))
 
-    # A4 vertical: ancho útil ~ 18 cm
+    # Anchos: columnas cortas fijas; la descripción absorbe el resto del ancho útil.
+    fixed = sum(PSI_COLUMNS[c]["width_mm"] for c in cols if c != "descripcion")
     col_widths = [
-        32 * mm,  # SKU
-        78 * mm,  # Descripción
-        25 * mm,  # Marca
-        20 * mm,  # Stock
-        25 * mm,  # Sell-out
+        (max(40.0, usable_mm - fixed) * mm if c == "descripcion" else PSI_COLUMNS[c]["width_mm"] * mm)
+        for c in cols
     ]
     main_table = Table(data_rows, colWidths=col_widths, repeatRows=1)
     main_table.setStyle(TableStyle([
@@ -368,13 +407,14 @@ def render_psi_xlsx(
     responsable: Optional[str] = None,
     responsable_area: str = "Comercial",
     logo: str = "GV",
+    columns: Optional[list[str]] = None,
 ) -> bytes:
-    """Genera el reporte PSI como Excel (.xlsx).
+    """Genera el reporte PSI como Excel (.xlsx) con columnas configurables.
 
-    Estructura del workbook:
-      - Pestaña "Reporte PSI" con: metadata arriba, KPIs, y tabla de
-        productos (SKU/Descripción/Marca/Stock/Sell-out).
+    Los items ya traen pvp / stock_inicio / stock_final calculados. El título
+    es editable (si viene vacío se usa el nombre de la empresa).
     """
+    cols = _psi_norm_columns(columns)
     import openpyxl
     from openpyxl.drawing.image import Image as XLImage
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -382,7 +422,7 @@ def render_psi_xlsx(
 
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "Reporte PSI"
+    ws.title = "Reporte"
 
     if empresa_nombre is None:
         empresa_nombre = "ELECTRO GV" if logo.upper() == "GV" else "ELECTRO ABC SRL" if logo.upper() == "ABC" else "ELECTRO"
@@ -428,7 +468,7 @@ def render_psi_xlsx(
         except Exception:
             title_col = "A"
 
-    ws[f"{title_col}1"] = "Reporte PSI"
+    ws[f"{title_col}1"] = (titulo or "").strip() or empresa_nombre
     ws[f"{title_col}1"].font = title_font
     ws[f"{title_col}2"] = empresa_nombre
     ws[f"{title_col}2"].font = subt_font
@@ -449,48 +489,49 @@ def render_psi_xlsx(
         ws.cell(row=i, column=4).alignment = Alignment(horizontal="right")
         ws.cell(row=i, column=5, value=value).font = meta_value
 
-    # ── KPIs (filas 7-9)
-    stock_total = int(totals.get("stock") or 0)
-    sell_total  = int(totals.get("sell_out") or 0)
-    ws["A7"] = "STOCK TOTAL"
-    ws["A7"].font = kpi_label
-    ws["B7"] = "SELL OUT TOTAL"
-    ws["B7"].font = kpi_label
-    ws["A8"] = stock_total
-    ws["A8"].font = kpi_value
-    ws["A8"].number_format = "#,##0"
-    ws["B8"] = sell_total
-    ws["B8"].font = kpi_value
-    ws["B8"].number_format = "#,##0"
+    # ── KPIs (filas 7-8): totales de las columnas numéricas seleccionadas
+    kpi_defs = [(k, lbl) for k, lbl in
+                (("stock_inicio", "STOCK INICIO"), ("stock_final", "STOCK FINAL"), ("sell_out", "SELL OUT"))
+                if k in cols]
+    for i, (k, lbl) in enumerate(kpi_defs):
+        col = 1 + i
+        ws.cell(row=7, column=col, value=lbl).font = kpi_label
+        c8 = ws.cell(row=8, column=col, value=sum(int(r.get(k) or 0) for r in items))
+        c8.font = kpi_value
+        c8.number_format = "#,##0"
 
-    # ── Tabla (a partir de la fila 11)
+    # ── Tabla dinámica (a partir de la fila 11)
     table_start_row = 11
-    headers = ["SKU", "Descripción", "Marca", "Stock", "Sell-out"]
-    for col_idx, h in enumerate(headers, start=1):
-        cell = ws.cell(row=table_start_row, column=col_idx, value=h)
+    for col_idx, c in enumerate(cols, start=1):
+        spec = PSI_COLUMNS[c]
+        cell = ws.cell(row=table_start_row, column=col_idx, value=spec["header"])
         cell.font = header_font
         cell.fill = header_fill
         cell.border = grid_border
-        cell.alignment = Alignment(horizontal="right" if h in ("Stock", "Sell-out") else "left")
+        cell.alignment = Alignment(horizontal="right" if spec["align"] == "right" else "left")
 
     for offset, r in enumerate(items, start=1):
         row = table_start_row + offset
-        ws.cell(row=row, column=1, value=str(r.get("sku") or "")).font = Font(name="Calibri", size=10, bold=True)
-        ws.cell(row=row, column=2, value=str(r.get("descripcion") or ""))
-        ws.cell(row=row, column=3, value=str(r.get("marca") or ""))
-        stock_cell = ws.cell(row=row, column=4, value=int(r.get("stock") or 0))
-        stock_cell.alignment = Alignment(horizontal="right")
-        stock_cell.number_format = "#,##0"
-        sell_cell = ws.cell(row=row, column=5, value=int(r.get("sell_out") or 0))
-        sell_cell.alignment = Alignment(horizontal="right")
-        sell_cell.number_format = "#,##0"
-        for c in range(1, 6):
-            ws.cell(row=row, column=c).border = grid_border
+        for col_idx, c in enumerate(cols, start=1):
+            spec = PSI_COLUMNS[c]
+            if spec["kind"] == "text":
+                cell = ws.cell(row=row, column=col_idx, value=str(r.get(c) or ""))
+                if c == "sku":
+                    cell.font = Font(name="Calibri", size=10, bold=True)
+            else:
+                try:
+                    num: Any = float(r.get(c)) if r.get(c) not in (None, "") else None
+                except (TypeError, ValueError):
+                    num = None
+                if spec["kind"] == "int" and num is not None:
+                    num = int(num)
+                cell = ws.cell(row=row, column=col_idx, value=num)
+                cell.alignment = Alignment(horizontal="right")
+                cell.number_format = '"$" #,##0' if spec["kind"] == "money" else "#,##0"
+            cell.border = grid_border
 
-    # Anchos de columna
-    widths = [16, 50, 16, 12, 14]
-    for col_idx, w in enumerate(widths, start=1):
-        ws.column_dimensions[get_column_letter(col_idx)].width = w
+    for col_idx, c in enumerate(cols, start=1):
+        ws.column_dimensions[get_column_letter(col_idx)].width = PSI_COLUMNS[c]["width_xl"]
 
     # Freeze top-left para que el header de tabla quede fijo al scrollear
     ws.freeze_panes = ws.cell(row=table_start_row + 1, column=1)

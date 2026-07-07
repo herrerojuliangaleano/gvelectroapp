@@ -64,6 +64,7 @@ class PSIReportRow(BaseModel):
     marca:                    str
     tipo:                     str
     condicion:                str
+    pvp:                      Optional[float] = None  # PVP del catálogo
     # Stock
     stock:                    int   # stock efectivo = base + ajustes de stock
     stock_base:               int   # lo que dice la hoja Stock
@@ -421,6 +422,7 @@ def psi_report(
             marca=str(p.marca or ""),
             tipo=str(p.tipo or ""),
             condicion=str(p.condicion_producto or ""),
+            pvp=(float(p.pvp) if getattr(p, "pvp", None) is not None else None),
             stock=stock_efectivo,
             stock_base=stock_base,
             stock_adjustment_delta=stock_delta,
@@ -954,8 +956,10 @@ def psi_products_search(
 # ──────────────────────────────────────────────────────────────────────────
 
 class PSIExportPDFPayload(BaseModel):
-    titulo:         str = Field(min_length=1, max_length=200)
+    titulo:         str = Field(default="", max_length=200)  # editable; vacío = sin título
     logo:           Literal["GV", "ABC", "NONE"] = "GV"
+    # Columnas a incluir en el PDF/Excel (ver PSI_COLUMNS en pdf_renderer).
+    columns:        list[str] = Field(default_factory=list)  # vacío = default (todas)
     # Mismos filtros que /report
     marcas:         list[str] = Field(default_factory=list)
     tipos:          list[str] = Field(default_factory=list)
@@ -965,6 +969,9 @@ class PSIExportPDFPayload(BaseModel):
     mode:           Literal["default", "advanced"] = "default"
     exclude_zero_activity: bool = False
     stock_adjustments: list[dict[str, int]] = Field(default_factory=list)
+    # Overrides manuales por producto (clave = product_id como string).
+    stock_inicio_overrides: dict[str, int] = Field(default_factory=dict)
+    stock_final_overrides:  dict[str, int] = Field(default_factory=dict)
 
 
 def _apply_export_stock_adjustments(report: PSIReportResponse, adjustments: list[dict[str, int]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -1000,6 +1007,31 @@ def _apply_export_stock_adjustments(report: PSIReportResponse, adjustments: list
     totals["sell_out"] = total_sell_out
     totals["productos_visibles"] = len(rows)
     return rows, totals
+
+
+def _psi_enrich_export(
+    items: list[dict[str, Any]],
+    stock_inicio_overrides: dict[str, int],
+    stock_final_overrides: dict[str, int],
+) -> list[dict[str, Any]]:
+    """Agrega stock_inicio / stock_final a cada item para el export.
+
+    - stock_final = override manual, o el stock efectivo actual del sistema.
+    - stock_inicio = override manual, o (stock_final + sell_out).
+    (pvp ya viene en el item desde PSIReportRow.)
+    """
+    inicio_ovr = stock_inicio_overrides or {}
+    final_ovr = stock_final_overrides or {}
+    for it in items:
+        pid = str(it.get("product_id"))
+        stock = int(it.get("stock") or 0)
+        sell = int(it.get("sell_out") or 0)
+        stock_final = int(final_ovr.get(pid, stock))
+        stock_inicio = int(inicio_ovr.get(pid, stock_final + sell))
+        it["stock_final"] = stock_final
+        it["stock_inicio"] = stock_inicio
+        it.setdefault("pvp", None)
+    return items
 
 
 @router.post("/export-pdf")
@@ -1042,6 +1074,7 @@ def psi_export_pdf(
         )
 
     export_items, export_totals = _apply_export_stock_adjustments(report, payload.stock_adjustments)
+    export_items = _psi_enrich_export(export_items, payload.stock_inicio_overrides, payload.stock_final_overrides)
 
     pdf_bytes = render_psi_pdf(
         titulo=payload.titulo.strip(),
@@ -1052,6 +1085,7 @@ def psi_export_pdf(
         logo=payload.logo,
         responsable=responsable_name,
         responsable_area="Comercial",
+        columns=payload.columns,
     )
 
     # Slug del filename
@@ -1106,6 +1140,7 @@ def psi_export_xlsx(
         )
 
     export_items, export_totals = _apply_export_stock_adjustments(report, payload.stock_adjustments)
+    export_items = _psi_enrich_export(export_items, payload.stock_inicio_overrides, payload.stock_final_overrides)
 
     xlsx_bytes = render_psi_xlsx(
         titulo=payload.titulo.strip(),
@@ -1115,6 +1150,7 @@ def psi_export_xlsx(
         logo=payload.logo,
         responsable=responsable_name,
         responsable_area="Comercial",
+        columns=payload.columns,
     )
 
     import re as _re
