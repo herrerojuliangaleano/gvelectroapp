@@ -680,6 +680,42 @@ export async function exportBrandDossierEditablePptx(dossier: SalesBIBrandDossie
       ...dossier.monthly_series.map((row) => [monthLabel(row.mes), ...tableNames.map((name) => cellValue(row, name))]),
     ], 0.45, 1.05, 12.4, 5.75, [0.72, ...tableNames.map(() => 11.65 / tableNames.length)], 5.8);
     addTakeaway(monthlyDetail, 'Tabla pensada para auditoría rápida: la comparación queda cerrada a las marcas o grupos elegidos, sin sumar competidores externos.');
+
+    // Mismo duelo por período, pero solo sobre los tipos seleccionados.
+    const monthlyTipos = (dossier.competitor_period_bars_tipos || []).slice(-12);
+    const tiposHayDato = monthlyTipos.some((row) =>
+      (row.brand_unidades || row.brand_pvp) ||
+      competitors.some((name) => row.competidores?.[name]?.unidades || row.competidores?.[name]?.total_vendido));
+    if (selectedTipos.length && tiposHayDato) {
+      const tiposLabel = selectedTipos.join(', ');
+      const compTipos = addBase('Marca vs competidores (tipos)', `Comparación directa contra ${competitors.join(', ')} · solo ${tiposLabel}`);
+      const evoLabelsTipos = monthlyTipos.map((row) => monthLabel(row.mes));
+      addChart(compTipos, 'bar', [
+        { name: dossier.marca, labels: evoLabelsTipos, values: monthlyTipos.map((row) => (isUnits ? row.brand_unidades : row.brand_pvp)) },
+        ...competitors.map((name) => ({ name, labels: evoLabelsTipos, values: monthlyTipos.map((row) => (isUnits ? row.competidores?.[name]?.unidades : row.competidores?.[name]?.total_vendido) || 0) })),
+      ], {
+        x: 0.55, y: 1.1, w: 7.1, h: 4.95,
+        barDir: 'col',
+        catAxisLabelRotate: 45,
+        valAxisLabelFormatCode: metricFmt,
+        chartColors: [brandColor, ...competitors.map(competitorColor)],
+      });
+      // Tabla: total del período por marca, sumando únicamente los tipos elegidos.
+      const totalFor = (name: string) => monthlyTipos.reduce((acc, row) => {
+        const data = name === dossier.marca
+          ? { unidades: row.brand_unidades, total_vendido: row.brand_pvp }
+          : row.competidores?.[name] || { unidades: 0, total_vendido: 0 };
+        return acc + (isUnits ? (data.unidades || 0) : (data.total_vendido || 0));
+      }, 0);
+      const totalRows = [dossier.marca, ...competitors]
+        .map((name) => ({ name, value: totalFor(name) }))
+        .sort((a, b) => b.value - a.value);
+      addTable(compTipos, [
+        ['Marca', metricTitle],
+        ...totalRows.map((r) => [r.name, isUnits ? `${num(r.value)} u` : compactMoney(r.value)]),
+      ], 7.9, 1.1, 4.85, 3.5, [2.4, 2.45]);
+      addTakeaway(compTipos, `Comparación acotada a ${tiposLabel}: mismo duelo por período pero solo sobre los tipos del foco elegido, sin arrastrar el resto del catálogo.`, 7.9, 4.95, 4.85);
+    }
   }
 
   const cats = addBase('Categorías y oportunidades', `Dónde participa ${dossier.marca}`);

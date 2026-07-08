@@ -675,6 +675,40 @@ def build_brand_dossier(
             row["competidores"][item["label"]] = {"unidades": cb["unidades"], "total_vendido": cb["total_vendido"]}
         monthly_series.append(row)
 
+    # ── Igual que monthly_series pero restringido a los tipos seleccionados ──
+    # Alimenta la slide "Marca vs competidores (tipos)": misma comparación por
+    # período (marca + comparables), sumando únicamente los tipos elegidos.
+    monthly_series_tipos: list[dict[str, Any]] = []
+    for mes in sorted(monthly_market.keys()):
+        tipo_month_market = commercial_tipo_month_market.get(mes, {})
+        tipo_month_brands = commercial_tipo_month_brands.get(mes, {})
+        mk_bucket = _metric_bucket()
+        br_bucket = _metric_bucket()
+        for tipo_sel in selected_tipos:
+            _merge_metric_bucket(mk_bucket, tipo_month_market.get(tipo_sel))
+            _merge_metric_bucket(br_bucket, tipo_month_brands.get(tipo_sel, {}).get(brand_name))
+        mk = _fin(mk_bucket)
+        br = _fin(br_bucket)
+        row_t: dict[str, Any] = {
+            "mes": mes,
+            "brand_unidades": br["unidades"],
+            "brand_pvp": br["total_vendido"],
+            "market_unidades": mk["unidades"],
+            "market_pvp": mk["total_vendido"],
+            "share_pvp_pct": _share(br["total_vendido"], mk["total_vendido"]),
+            "share_units_pct": _share(br["unidades"], mk["unidades"]),
+            "competidores": {},
+        }
+        for item in comparisons:
+            cb_bucket = _metric_bucket()
+            for tipo_sel in selected_tipos:
+                tipo_brands = tipo_month_brands.get(tipo_sel, {})
+                for marca_name in item["marcas"]:
+                    _merge_metric_bucket(cb_bucket, tipo_brands.get(marca_name))
+            cb = _fin(cb_bucket)
+            row_t["competidores"][item["label"]] = {"unidades": cb["unidades"], "total_vendido": cb["total_vendido"]}
+        monthly_series_tipos.append(row_t)
+
     weekly_series = []
     for sem in sorted(weekly_market.keys()):
         b = _fin(weekly_brand.get(sem) or _metric_bucket())
@@ -1222,6 +1256,7 @@ def build_brand_dossier(
         "price_index_global": price_index_global,
         "monthly_series": monthly_series,
         "competitor_period_bars": monthly_series,
+        "competitor_period_bars_tipos": monthly_series_tipos,
         "weekly_series": weekly_series,
         "daily_series": daily_series,
         "share_series": share_series,

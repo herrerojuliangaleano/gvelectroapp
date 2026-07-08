@@ -648,6 +648,51 @@ Pendiente de validacion manual:
   ranking por unidades.
 - Abrir ambos `.pptx` en PowerPoint y revisar que la nueva slide no corte texto.
 
+## Corte 3 implementado
+
+Objetivo:
+
+- Agregar una slide "Marca vs competidores (tipos)": el mismo duelo por período
+  de la slide 12, pero restringido a los tipos seleccionados en el informe.
+
+Cambios hechos:
+
+- Backend `sales_bi_brand_dossier.py`: nuevo campo del dossier
+  `competitor_period_bars_tipos`. Es igual a `competitor_period_bars`
+  (marca + comparables por mes) pero suma únicamente los `selected_tipos`,
+  reutilizando `commercial_tipo_month_market` y `commercial_tipo_month_brands`.
+  No cambia ningún campo existente; solo agrega uno nuevo.
+- Frontend `types/index.ts`: se agrega `competitor_period_bars_tipos?` al
+  tipo del dossier (mismo shape que `monthly_series`).
+- Frontend `exportBrandDossierEditable.ts`: nueva slide editable
+  "Marca vs competidores (tipos)" después de "Detalle mensual competitivo".
+  Barras verticales por período (marca + comparables) sobre los tipos elegidos,
+  con tabla de total del período por marca y lectura al pie. Respeta el modo
+  activo (unidades o facturación). Solo se genera si hay competidores y tipos
+  seleccionados con datos.
+
+Contrato:
+
+- Endpoints: sin cambios.
+- Modelos/tablas: sin cambios.
+- Contrato del dossier: se agrega `competitor_period_bars_tipos` (aditivo).
+- Excel: sin cambios en esta corte.
+- PowerPoint editable: una slide nueva.
+
+Validación ejecutada:
+
+- `python -m compileall -q backend/app/sales_bi_brand_dossier.py`: OK.
+- `npx tsc --noEmit` en `frontend/`: OK.
+- `npm run build` en `frontend/`: OK.
+- Endpoint mini-prod `GET /commercial/brand-dossier?marca=SAMSUNG`: devuelve
+  `competitor_period_bars_tipos`. Verificado que el filtro por tipos es aditivo
+  y reconcilia: `tipos=HELADERA` (Samsung 3466) + `tipos=TV` (Samsung 41) =
+  `tipos=HELADERA,TV` (Samsung 3507); PHILCO 1809+695 = 2504.
+
+Pendiente de validación manual:
+
+- Abrir el `.pptx` exportado y revisar layout final de la slide nueva.
+
 ## Protocolo de continuidad
 
 Cuando se cierre una implementacion de esta fase, usar el formato de

@@ -888,6 +888,7 @@ export interface SalesBIBrandDossier {
     competidores: Record<string, { unidades: number; total_vendido: number }>;
   }>;
   competitor_period_bars?: SalesBIBrandDossier['monthly_series'];
+  competitor_period_bars_tipos?: SalesBIBrandDossier['monthly_series'];
   ranking_by_tipo?: Array<{
     tipo: string;
     market: SalesBICommercialMetric;
