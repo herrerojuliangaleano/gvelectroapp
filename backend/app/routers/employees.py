@@ -6,11 +6,17 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from ..audit import audit
 from ..auth import require_current_user, require_permission
 from ..config import get_settings
+from ..employee_credential_pdf import (
+    CredencialEmpleado,
+    build_credential_zip,
+    render_credencial_pdf,
+    render_mockup_png,
+)
 from ..schemas import (
     EmployeeCreateRequest,
     EmployeeInfo,
@@ -137,6 +143,82 @@ def get_employee_photo(username: str, user: Annotated[CurrentUser, Depends(requi
     if not path or not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="No se encontró el archivo de foto")
     return FileResponse(path)
+
+
+def _credential_for(employee_id: str) -> tuple[CredencialEmpleado, str, bool]:
+    """Arma la credencial desde el legajo. Devuelve (cred, slug, con_foto)."""
+    employee = get_employee_by_id(employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+
+    foto: bytes | None = None
+    path = _photo_path_from_value(str(employee.get("photo_url") or ""))
+    if path and path.exists() and path.is_file():
+        foto = path.read_bytes()
+
+    nombre = str(employee.get("display_name") or "").strip() or " ".join(
+        part for part in [str(employee.get("first_name") or ""), str(employee.get("last_name") or "")] if part
+    ).strip()
+    cred = CredencialEmpleado(
+        nombre=nombre or "Empleado",
+        area=str(employee.get("department") or ""),
+        rol=str(employee.get("position") or ""),
+        sucursal=str(employee.get("work_branch_name") or employee.get("branch_name") or ""),
+        empresa=str(employee.get("company_name") or "").strip() or "Electro GV",
+        foto=foto,
+    )
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", (nombre or "empleado").lower()).strip("-") or "empleado"
+    return cred, slug, bool(foto)
+
+
+@router.get("/{employee_id}/credencial.pdf")
+def employee_credential_pdf(
+    employee_id: str,
+    user: Annotated[CurrentUser, Depends(require_permission("employees.view"))],
+):
+    """Credencial PVC CR-80 (frente + dorso, con sangrado) armada con los datos del legajo."""
+    cred, slug, con_foto = _credential_for(employee_id)
+    pdf = render_credencial_pdf(cred)
+    audit(
+        "employees.credential_pdf", user=user, resource_type="employee", resource_id=employee_id,
+        message="Credencial PVC generada", details={"employee_id": employee_id, "con_foto": con_foto},
+    )
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="credencial-{slug}.pdf"'},
+    )
+
+
+@router.get("/{employee_id}/credencial/mockup.png")
+def employee_credential_mockup(
+    employee_id: str,
+    user: Annotated[CurrentUser, Depends(require_permission("employees.view"))],
+):
+    """Mockup PVC realista (frente + dorso) para previsualización. No es para imprenta."""
+    cred, slug, _ = _credential_for(employee_id)
+    png = render_mockup_png(cred)
+    return Response(
+        content=png, media_type="image/png",
+        headers={"Content-Disposition": f'inline; filename="mockup-{slug}.png"'},
+    )
+
+
+@router.get("/{employee_id}/credencial/pack.zip")
+def employee_credential_pack(
+    employee_id: str,
+    user: Annotated[CurrentUser, Depends(require_permission("employees.view"))],
+):
+    """Pack de imprenta: frente, dorso, guía de corte, spot UV, relieve y mockup."""
+    cred, slug, con_foto = _credential_for(employee_id)
+    data = build_credential_zip(cred)
+    audit(
+        "employees.credential_pack", user=user, resource_type="employee", resource_id=employee_id,
+        message="Pack de imprenta de credencial generado", details={"employee_id": employee_id, "con_foto": con_foto},
+    )
+    return Response(
+        content=data, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="credencial-{slug}-imprenta.zip"'},
+    )
 
 
 def _admin_user_response(username: str) -> UserInfo:

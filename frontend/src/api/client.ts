@@ -406,6 +406,15 @@ export async function changeEmployeeStatus(id: string, payload: EmployeeStatusCh
 export async function fetchEmployeeStatusHistory(id: string): Promise<EmployeeStatusHistoryResponse> {
   return request(`/api/employees/${encodeURIComponent(id)}/status-history`);
 }
+export async function downloadEmployeeCredential(id: string): Promise<Blob> {
+  return requestBlob(`/api/employees/${encodeURIComponent(id)}/credencial.pdf`);
+}
+export async function fetchEmployeeCredentialMockup(id: string): Promise<Blob> {
+  return requestBlob(`/api/employees/${encodeURIComponent(id)}/credencial/mockup.png`);
+}
+export async function downloadEmployeeCredentialPack(id: string): Promise<Blob> {
+  return requestBlob(`/api/employees/${encodeURIComponent(id)}/credencial/pack.zip`);
+}
 export async function fetchEmployeeLinkCandidates(q = ''): Promise<UserLinkCandidatesResponse> {
   return request(`/api/employees/users/link-candidates${buildQs({ q })}`);
 }

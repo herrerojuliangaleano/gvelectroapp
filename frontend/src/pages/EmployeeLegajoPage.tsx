@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, FileText, Link2, PencilLine, RefreshCw, UserMinus, UserPlus } from 'lucide-react';
+import { ArrowLeft, Download, FileText, IdCard, Link2, PencilLine, Printer, RefreshCw, UserMinus, UserPlus } from 'lucide-react';
 import {
   can,
   changeEmployeeStatus,
+  downloadEmployeeCredential,
+  downloadEmployeeCredentialPack,
+  fetchEmployeeCredentialMockup,
   fetchEmployee,
   fetchEmployeeLinkCandidates,
   fetchEmployeeStatusHistory,
@@ -71,6 +74,65 @@ export function EmployeeLegajoPage() {
   const [candidates, setCandidates] = useState<UserLinkCandidate[]>([]);
 
   const canManage = can('employees.manage');
+  const [credOpen, setCredOpen] = useState(false);
+  const [mockupUrl, setMockupUrl] = useState<string | null>(null);
+  const [mockupLoading, setMockupLoading] = useState(false);
+  const [credError, setCredError] = useState<string | null>(null);
+  const [credBusy, setCredBusy] = useState<'pdf' | 'zip' | null>(null);
+
+  function empSlug() {
+    return String(emp?.display_name || 'empleado').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'empleado';
+  }
+
+  async function openCredencial() {
+    setCredOpen(true);
+    setCredError(null);
+    if (mockupUrl) return;
+    setMockupLoading(true);
+    try {
+      const blob = await fetchEmployeeCredentialMockup(id);
+      setMockupUrl(URL.createObjectURL(blob));
+    } catch (err) {
+      setCredError(err instanceof Error ? err.message : 'No se pudo generar la previsualización');
+    } finally {
+      setMockupLoading(false);
+    }
+  }
+
+  function saveBlob(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function downloadCredPdf() {
+    setCredBusy('pdf');
+    setCredError(null);
+    try {
+      saveBlob(await downloadEmployeeCredential(id), `credencial-${empSlug()}.pdf`);
+    } catch (err) {
+      setCredError(err instanceof Error ? err.message : 'No se pudo generar el PDF');
+    } finally {
+      setCredBusy(null);
+    }
+  }
+
+  async function downloadCredPack() {
+    setCredBusy('zip');
+    setCredError(null);
+    try {
+      saveBlob(await downloadEmployeeCredentialPack(id), `credencial-${empSlug()}-imprenta.zip`);
+    } catch (err) {
+      setCredError(err instanceof Error ? err.message : 'No se pudo generar el pack de imprenta');
+    } finally {
+      setCredBusy(null);
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -207,6 +269,9 @@ export function EmployeeLegajoPage() {
         {canManage && (
           <div className="flex flex-wrap items-center gap-2">
             <button className="erp-btn erp-btn-secondary erp-btn-sm" onClick={load}><RefreshCw size={14} /> Actualizar</button>
+            <button className="erp-btn erp-btn-secondary erp-btn-sm" onClick={openCredencial}>
+              <IdCard size={14} /> Credencial
+            </button>
             <button className="erp-btn erp-btn-secondary erp-btn-sm" onClick={() => setStatusOpen(true)}>Cambiar estado</button>
             {emp.has_user
               ? <button className="erp-btn erp-btn-secondary erp-btn-sm" onClick={doUnlink}><UserMinus size={14} /> Desvincular</button>
@@ -361,6 +426,38 @@ export function EmployeeLegajoPage() {
           </section>
         )}
       </div>
+
+      {/* Modal: credencial PVC */}
+      <ErpModal open={credOpen} onClose={() => setCredOpen(false)} title={`Credencial PVC · ${emp.display_name}`}
+        footer={
+          <>
+            <button className="erp-btn erp-btn-secondary erp-btn-sm" onClick={() => setCredOpen(false)}>Cerrar</button>
+            <button className="erp-btn erp-btn-secondary erp-btn-sm" onClick={downloadCredPdf} disabled={credBusy !== null}>
+              <FileText size={14} /> {credBusy === 'pdf' ? 'Generando…' : 'PDF frente/dorso'}
+            </button>
+            <ErpButton variant="primary" size="sm" loading={credBusy === 'zip'} onClick={downloadCredPack}>
+              <Printer size={14} /> Pack imprenta (ZIP)
+            </ErpButton>
+          </>
+        }>
+        <div className="erp-stack-3">
+          <p className="text-[13px] text-[color:var(--text-2)]">
+            Vista previa del mockup PVC (frente y dorso). El <strong>PDF</strong> es la credencial lista para imprimir;
+            el <strong>Pack imprenta</strong> incluye frente, dorso, guía de corte, barniz sectorizado y relieve.
+          </p>
+          <div className="flex min-h-[220px] items-center justify-center rounded-lg border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3">
+            {mockupLoading && <span className="text-[13px] text-[color:var(--text-3)]">Generando previsualización…</span>}
+            {!mockupLoading && mockupUrl && <img src={mockupUrl} alt="Mockup credencial" className="max-h-[420px] w-full object-contain" />}
+            {!mockupLoading && !mockupUrl && !credError && <span className="text-[13px] text-[color:var(--text-3)]">—</span>}
+          </div>
+          {credError && <ErpNotice tone="error">{credError}</ErpNotice>}
+          {mockupUrl && (
+            <a href={mockupUrl} download={`credencial-${empSlug()}-mockup.png`} className="erp-btn erp-btn-secondary erp-btn-sm self-start">
+              <Download size={14} /> Descargar mockup (PNG)
+            </a>
+          )}
+        </div>
+      </ErpModal>
 
       {/* Modal: cambiar estado */}
       <ErpModal open={statusOpen} onClose={() => setStatusOpen(false)} title="Cambiar estado laboral"
