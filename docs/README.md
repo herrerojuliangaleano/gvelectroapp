@@ -30,6 +30,10 @@ Code puedan entender la aplicacion sin depender de memoria oral.
 21. [20 - Subsistema de archivos (object storage)](20-subsistema-archivos-object-storage.md)
 22. [21 - Relevamiento de mejoras (backlog priorizado)](21-relevamiento-mejoras.md)
 23. [22 - BI Comercial - PowerPoint de marca 2.0](22-bi-comercial-powerpoint-marca-2.md)
+24. [23 - Guia visual - Inteligencia Comercial](23-guia-visual-inteligencia-comercial.md)
+25. **[24 - Arquitectura de la v2 (reconstrucción modular)](24-arquitectura-v2.md)** · plan del rebuild: stack, patrón Clean/Hexagonal, capas, orden de módulos y ADRs.
+26. **[25 - Inventario completo de la v1](25-inventario-v1.md)** · qué es, con qué está hecha, librerías, módulos, casos borde, qué se rescata/descarta.
+27. **[26 - Prompt de arranque para el chat nuevo (build v2)](26-prompt-arranque-v2.md)** · prompt listo para copiar + cómo dar acceso a la v1.
 
 ## Documentacion por fases
 
@@ -66,6 +70,11 @@ Code puedan entender la aplicacion sin depender de memoria oral.
 | Subsistema de archivos (object storage) | [20-subsistema-archivos-object-storage.md](20-subsistema-archivos-object-storage.md) |
 | Relevamiento de mejoras (backlog priorizado) | [21-relevamiento-mejoras.md](21-relevamiento-mejoras.md) |
 | BI Comercial - PowerPoint de marca 2.0 | [22-bi-comercial-powerpoint-marca-2.md](22-bi-comercial-powerpoint-marca-2.md) |
+| Guia visual de Inteligencia Comercial | [23-guia-visual-inteligencia-comercial.md](23-guia-visual-inteligencia-comercial.md) |
+| **Arquitectura de la v2 (rebuild modular)** | **[24-arquitectura-v2.md](24-arquitectura-v2.md)** |
+| **Inventario completo de la v1** | **[25-inventario-v1.md](25-inventario-v1.md)** |
+| **Prompt de arranque para el chat nuevo (v2)** | **[26-prompt-arranque-v2.md](26-prompt-arranque-v2.md)** |
+| Referencia visual instalada (GV Electro Dynamics) | [referencias/bi-visual-gv-electro-dynamics/README.md](referencias/bi-visual-gv-electro-dynamics/README.md) |
 | Docker local | [fase-1-docker/README.md](fase-1-docker/README.md) |
 | Modelo de datos historico (Fase 2 · superado por 17/18) | [fase-2-postgres/01-modelo-datos.md](fase-2-postgres/01-modelo-datos.md) |
 | Administracion de base de datos | [fase-2-postgres/02-administracion-db.md](fase-2-postgres/02-administracion-db.md) |
