@@ -21,7 +21,7 @@ Antes de escribir una línea, leé en este orden:
 4. `docs/README.md` — índice de toda la documentación (00–26) para consultar cualquier módulo en detalle.
 
 # Stack (decidido — no reabrir sin razón fuerte, ver ADR-002)
-- **Frontend:** React + Vite (SPA) + TanStack Router + TanStack Query + Tailwind v4 + design system GV Electro Dynamics + Framer Motion. **Mobile-first**.
+- **Frontend:** React + Vite (SPA) + TanStack Router + TanStack Query + Tailwind v4 + design system GV Electro Dynamics + Framer Motion. **Desktop-first por ahora** (responsive/mobile-ready, mobile como objetivo posterior).
 - **Backend:** FastAPI + PostgreSQL (SQLAlchemy 2.0 + Alembic).
 - **Contratos:** OpenAPI → tipos TS generados.
 - **NO** Next.js, **NO** TanStack Start, **NO** cambiar de stack.
@@ -50,7 +50,8 @@ Copiá al repo v2 la carpeta `.agents/skills/` y el archivo `skills-lock.json` d
 - Deferí al design system GV Electro Dynamics. **Las convenciones del proyecto y lo que pida el dueño SIEMPRE ganan** sobre lo que diga una skill.
 
 # Reglas duras
-- Mobile-first (390px). Colores solo por tokens (**cero `#hex`**). `--price` naranja **solo** en montos. Permisos por módulo. Recursos externos por config (no IDs hardcodeados). Estados loading/empty/error en cada vista.
+- **Desktop-first por ahora** (la operación hoy es en PC): optimizá el layout primero para desktop 1280+, responsive y mobile-ready pero mobile es objetivo posterior. OJO: el GV-STYLE-GUIDE es mobile-first — adoptá su lenguaje visual (tokens/tipografía/componentes) pero, por decisión del dueño, invertí la prioridad de layout a desktop-first (ADR-014).
+- Colores solo por tokens (**cero `#hex`**). `--price` naranja **solo** en montos. Permisos por módulo. Recursos externos por config (no IDs hardcodeados). Estados loading/empty/error en cada vista.
 - No arrastrar código muerto: recibos de sueldo, deps npm `and`/`run`, restos de SQLite.
 - Deploy escalable: todo dockerizado, config por env, media en bucket externo, DB con dump/restore (mudarse = redeploy).
 ```

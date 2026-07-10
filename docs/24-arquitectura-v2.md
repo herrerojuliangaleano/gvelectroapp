@@ -34,7 +34,7 @@ Reconstruir ElectroGV como una **v2 profesional, escalable y sin código muerto*
 
 ## 2. Stack (decidido)
 
-- **Frontend:** React + **Vite (SPA)** + **TanStack Router** (ruteo tipado) + **TanStack Query** (estado del servidor) + **Tailwind v4** + design system **GV Electro Dynamics** + **Framer Motion**. Mobile-first (390×844) → desktop.
+- **Frontend:** React + **Vite (SPA)** + **TanStack Router** (ruteo tipado) + **TanStack Query** (estado del servidor) + **Tailwind v4** + design system **GV Electro Dynamics** + **Framer Motion**. **Desktop-first por ahora** (la operación hoy es en PC); responsive y mobile-ready, pero el layout se optimiza primero para desktop (1280+); mobile queda como objetivo posterior. Ver ADR-014.
 - **Backend:** **FastAPI + PostgreSQL** (SQLAlchemy 2.0 + Alembic). Se conserva Python por el trabajo pesado de datos (pandas, reportlab, openpyxl, PyMuPDF) — ver [25 §2.2](25-inventario-v1.md).
 - **Contratos:** OpenAPI → **tipos TypeScript generados**. Una sola fuente de la verdad front↔back.
 
@@ -163,6 +163,7 @@ En paralelo, sin código: **organización de Google Workspace** (unidades/grupos
 | ADR-011 | **Jobs pesados en worker con concurrencia acotada** (cola) | Aísla el pico de los ~15 usuarios pesados de los ~85 livianos; mantiene la web ágil y el hardware modesto. |
 | ADR-012 | **IA como capacidad de plataforma: API-first, grounded + guardrails + auditoría** (NO agente autónomo con shell) | Respuestas a clientes exactas y seguras; el modelo queda enchufable (swap a local después). |
 | ADR-013 | **Empezar en VPS chico (4GB) para dev/demo**, con arquitectura escalable; migrar a 16GB/4c/80GB + bucket para producción | Lean para arrancar; la escalabilidad la da el diseño, no el box. |
+| ADR-014 | **Desktop-first por ahora** (mobile como objetivo posterior), invirtiendo la prioridad mobile-first del GV-STYLE-GUIDE | Decisión del dueño: hoy la operación es en PC. Se adopta el lenguaje visual del design system (tokens/tipografía/componentes), pero el layout se optimiza primero para desktop. |
 
 ---
 
