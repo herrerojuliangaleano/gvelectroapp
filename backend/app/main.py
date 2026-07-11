@@ -14,6 +14,7 @@ from .routers import (
     price_cost_updates, products, remitos, sales_bi, sales_web, system, tools, warranties,
 )
 from .routers import psi
+from .routers import stock_valorizado
 
 settings = get_settings()
 
@@ -96,6 +97,7 @@ app.include_router(products.router)
 app.include_router(catalog.router)
 app.include_router(sales_bi.router)
 app.include_router(psi.router)
+app.include_router(stock_valorizado.router)
 app.include_router(organization.router)
 app.include_router(employees.router)
 app.include_router(payroll.router)

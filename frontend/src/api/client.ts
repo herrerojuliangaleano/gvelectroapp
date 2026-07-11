@@ -419,6 +419,34 @@ export async function fetchEmployeeLinkCandidates(q = ''): Promise<UserLinkCandi
   return request(`/api/employees/users/link-candidates${buildQs({ q })}`);
 }
 
+export interface StockValorizadoResult {
+  sucursal: string;
+  fecha: string;
+  items: number;
+  cantidad_total: number;
+  valuacion_total: number;
+  eliminados: number;
+  sheet_id: string;
+  sheet_name: string;
+  sheet_url: string;
+  folder_name: string;
+}
+export async function procesarStockValorizado(sucursal: string, file: File, fecha?: string): Promise<StockValorizadoResult> {
+  const form = new FormData();
+  form.append('sucursal', sucursal);
+  form.append('file', file);
+  if (fecha) form.append('fecha', fecha);
+  return request('/api/stock-valorizado/procesar', { method: 'POST', body: form });
+}
+export interface StockValorizadoMensaje {
+  fecha: string;
+  mensaje: string;
+  sucursales: { sucursal: string; valuacion: number; unidades: number }[];
+}
+export async function fetchStockValorizadoMensaje(fecha?: string): Promise<StockValorizadoMensaje> {
+  return request(`/api/stock-valorizado/mensaje${fecha ? `?fecha=${encodeURIComponent(fecha)}` : ''}`);
+}
+
 export async function fetchTools(): Promise<ToolInfo[]> { return request('/api/tools'); }
 export async function fetchTool(toolId: string): Promise<ToolInfo> { return request(`/api/tools/${toolId}`); }
 export async function runTool(toolId: string, payload: Record<string, unknown>, files: Record<string, File[]>): Promise<{ job_id: string; status: string }> {

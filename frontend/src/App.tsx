@@ -39,6 +39,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { SystemDiagnosticsPage } from './pages/SystemDiagnosticsPage';
 import { ToolRunPage } from './pages/ToolRunPage';
 import { ToolsPage } from './pages/ToolsPage';
+import { StockValorizadoPage } from './pages/StockValorizadoPage';
 import { WarrantiesListPage } from './pages/WarrantiesListPage';
 import { WarrantyCreatePage } from './pages/WarrantyCreatePage';
 import { WarrantyDashboardPage } from './pages/WarrantyDashboardPage';
@@ -135,6 +136,7 @@ export default function App() {
       <Route path="/mi-legajo" element={<ProtectedLayout permission="profile.view"><MyLegajoPage /></ProtectedLayout>} />
       <Route path="/about" element={<ProtectedLayout permission="about.view"><AboutSystemPage /></ProtectedLayout>} />
       <Route path="/tools" element={<ProtectedLayout permission="tools.view"><ToolsPage /></ProtectedLayout>} />
+      <Route path="/herramientas/stock-valorizado" element={<ProtectedLayout permission="tools.view"><StockValorizadoPage /></ProtectedLayout>} />
       <Route path="/tools/:toolId" element={<ProtectedLayout permission="tools.view"><ToolRunPage /></ProtectedLayout>} />
       <Route path="/warranties" element={<ProtectedLayout allowed={() => canSeeWarrantyList(getCurrentUserFromStorage())}><WarrantiesListPage /></ProtectedLayout>} />
       <Route path="/warranties/dashboard" element={<ProtectedLayout allowed={() => canSeeWarrantyDashboard(getCurrentUserFromStorage())}><WarrantyDashboardPage /></ProtectedLayout>} />

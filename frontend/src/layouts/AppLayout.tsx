@@ -188,6 +188,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
       ] },
       { title: 'Herramientas', items: [
         { to: '/tools', icon: <Wrench size={16} />, label: 'Herramientas internas', permission: 'tools.view' },
+        { to: '/herramientas/stock-valorizado', icon: <FileSpreadsheet size={16} />, label: 'Stock valorizado', permission: 'tools.view' },
         { to: '/jobs', icon: <History size={16} />, label: 'Historial de procesos', permission: 'jobs.view' },
         { to: '/audit', icon: <ClipboardList size={16} />, label: 'Movimientos', permission: 'audit.view' },
       ] },
