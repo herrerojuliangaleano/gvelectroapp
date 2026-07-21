@@ -420,12 +420,14 @@ export async function fetchEmployeeLinkCandidates(q = ''): Promise<UserLinkCandi
 }
 
 export interface StockValorizadoResult {
+  filename?: string;
   sucursal: string;
   fecha: string;
   items: number;
   cantidad_total: number;
   valuacion_total: number;
   eliminados: number;
+  filas_total_eliminadas?: number;
   sheet_id: string;
   sheet_name: string;
   sheet_url: string;
@@ -437,6 +439,24 @@ export async function procesarStockValorizado(sucursal: string, file: File, fech
   form.append('file', file);
   if (fecha) form.append('fecha', fecha);
   return request('/api/stock-valorizado/procesar', { method: 'POST', body: form });
+}
+export interface StockValorizadoBulkItem extends Partial<StockValorizadoResult> {
+  ok: boolean;
+  filename: string;
+  error?: string;
+}
+export interface StockValorizadoBulkResult {
+  total: number;
+  uploaded: number;
+  errors: number;
+  items: StockValorizadoBulkItem[];
+}
+export async function procesarStockValorizadoMasivo(payload: { files: File[]; sucursal?: string; fecha?: string }): Promise<StockValorizadoBulkResult> {
+  const form = new FormData();
+  if (payload.sucursal) form.append('sucursal', payload.sucursal);
+  if (payload.fecha) form.append('fecha', payload.fecha);
+  payload.files.forEach((file) => form.append('files', file));
+  return request('/api/stock-valorizado/procesar-masivo', { method: 'POST', body: form });
 }
 export interface StockValorizadoMensaje {
   fecha: string;

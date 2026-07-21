@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, Copy, ExternalLink, FileSpreadsheet, MessageSquare, Upload } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Copy, ExternalLink, FileSpreadsheet, MessageSquare, Upload } from 'lucide-react';
 import {
   fetchOperationalStructure,
   fetchStockValorizadoMensaje,
-  procesarStockValorizado,
-  type StockValorizadoResult,
+  procesarStockValorizadoMasivo,
+  type StockValorizadoBulkResult,
 } from '../api/client';
 import type { BranchInfo } from '../types';
 import {
@@ -27,10 +27,10 @@ export function StockValorizadoPage() {
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [sucursal, setSucursal] = useState('');
   const [fecha, setFecha] = useState(todayISO());
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<StockValorizadoResult | null>(null);
+  const [result, setResult] = useState<StockValorizadoBulkResult | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [mensaje, setMensaje] = useState('');
@@ -74,20 +74,26 @@ export function StockValorizadoPage() {
     [branches],
   );
 
-  const canRun = Boolean(sucursal && file && !loading);
+  const selectedFileNames = useMemo(() => files.map((file) => file.name), [files]);
+  const canRun = Boolean(files.length && !loading);
+  const okItems = result?.items.filter((item) => item.ok) || [];
+  const totalUnidades = okItems.reduce((acc, item) => acc + (item.cantidad_total || 0), 0);
+  const totalValorizado = okItems.reduce((acc, item) => acc + (item.valuacion_total || 0), 0);
 
   async function run() {
-    if (!sucursal || !file) return;
+    if (!files.length) return;
     setLoading(true);
     setError(null);
     setResult(null);
+    setMensaje('');
+    setMensajeVacio(false);
     try {
-      const res = await procesarStockValorizado(sucursal, file, fecha);
+      const res = await procesarStockValorizadoMasivo({ files, sucursal, fecha });
       setResult(res);
-      setFile(null);
+      setFiles([]);
       if (fileRef.current) fileRef.current.value = '';
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo procesar el archivo');
+      setError(err instanceof Error ? err.message : 'No se pudo procesar el lote');
     } finally {
       setLoading(false);
     }
@@ -97,54 +103,66 @@ export function StockValorizadoPage() {
     <div className="erp-stack-4">
       <ErpPageHeader
         title="Stock valorizado"
-        description="Subí el Excel crudo del ERP; se limpia, se resume y se guarda en Drive como Google Sheet, en la carpeta del mes."
+        description="Subi uno o varios Excel del ERP; la app toma fecha y sucursal desde el nombre, limpia totales y guarda cada archivo en Drive."
       />
 
-      <ErpCard title="Generar y subir" subtitle="Cada sucursal sube su archivo del día en su propio formulario.">
-        <div className="erp-stack-3" style={{ maxWidth: 560 }}>
-          <ErpField label="Sucursal" required>
-            <ErpSelect value={sucursal} onChange={(e) => setSucursal(e.target.value)}>
-              <option value="">Elegí la sucursal…</option>
-              {sucursalOptions.map((name) => (
-                <option key={name} value={name}>{name}</option>
-              ))}
-            </ErpSelect>
-          </ErpField>
+      <ErpCard title="Carga masiva" subtitle="Formato recomendado: stock valorizado canning 11-07-2026.xlsx. Tambien acepta caseros, lanus y norte.">
+        <div className="erp-stack-3" style={{ maxWidth: 720 }}>
+          <div className="grid gap-3 md:grid-cols-2">
+            <ErpField label="Sucursal de respaldo" hint="Se usa solo si el nombre no trae caseros/canning/lanus/norte.">
+              <ErpSelect value={sucursal} onChange={(e) => setSucursal(e.target.value)}>
+                <option value="">Detectar desde archivo</option>
+                {sucursalOptions.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </ErpSelect>
+            </ErpField>
 
-          <ErpField label="Fecha del stock" hint="Define la carpeta del mes en Drive. Por defecto, hoy.">
-            <input
-              type="date"
-              value={fecha}
-              onChange={(e) => setFecha(e.target.value)}
-              className="w-full rounded-xl border border-[color:var(--border)] bg-[color:var(--surface)] px-3 py-2 text-sm text-[color:var(--text-1)] outline-none focus:border-[color:var(--primary)]"
-            />
-          </ErpField>
+            <ErpField label="Fecha de respaldo" hint="Si el nombre trae DD-MM-YYYY, esa fecha tiene prioridad.">
+              <input
+                type="date"
+                value={fecha}
+                onChange={(e) => setFecha(e.target.value)}
+                className="w-full rounded-xl border border-[color:var(--border)] bg-[color:var(--surface)] px-3 py-2 text-sm text-[color:var(--text-1)] outline-none focus:border-[color:var(--primary)]"
+              />
+            </ErpField>
+          </div>
 
-          <ErpField label="Archivo (.xlsx)" required hint="El export de 'stock valorizado' del ERP.">
+          <ErpField label="Archivos (.xlsx)" required hint="Podes seleccionar todos los archivos de una vez.">
             <input
               ref={fileRef}
               type="file"
+              multiple
               accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              onChange={(e) => setFiles(Array.from(e.target.files || []))}
               className="w-full rounded-xl border border-[color:var(--border)] bg-[color:var(--surface)] px-3 py-2 text-sm text-[color:var(--text-2)] file:mr-3 file:rounded-lg file:border-0 file:bg-[color:var(--primary)] file:px-3 file:py-1.5 file:text-white"
             />
           </ErpField>
 
+          {selectedFileNames.length > 0 && (
+            <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3 text-sm text-[color:var(--text-2)]">
+              <div className="font-bold text-[color:var(--text-1)]">{selectedFileNames.length} archivos seleccionados</div>
+              <div className="mt-2 max-h-32 space-y-1 overflow-auto font-mono text-xs">
+                {selectedFileNames.map((name) => <div key={name}>{name}</div>)}
+              </div>
+            </div>
+          )}
+
           {error && <ErpNotice tone="error">{error}</ErpNotice>}
 
           <ErpButton variant="primary" onClick={run} disabled={!canRun} loading={loading}>
-            <Upload size={16} /> {loading ? 'Procesando y subiendo…' : 'Procesar y subir a Drive'}
+            <Upload size={16} /> {loading ? 'Procesando y subiendo...' : `Procesar ${files.length || ''} archivo${files.length === 1 ? '' : 's'}`}
           </ErpButton>
         </div>
       </ErpCard>
 
-      <ErpCard title="Mensaje para WhatsApp" subtitle="Junta las sucursales subidas en la fecha elegida (arriba).">
+      <ErpCard title="Mensaje para WhatsApp" subtitle="Junta las sucursales subidas en la fecha elegida como respaldo.">
         <div className="erp-stack-3" style={{ maxWidth: 560 }}>
           <ErpButton variant="secondary" onClick={generarMensaje} loading={mensajeLoading}>
-            <MessageSquare size={16} /> Generar mensaje del día
+            <MessageSquare size={16} /> Generar mensaje del dia
           </ErpButton>
           {mensajeVacio && !mensaje && (
-            <ErpNotice tone="info">No hay sucursales subidas para esa fecha todavía.</ErpNotice>
+            <ErpNotice tone="info">No hay sucursales subidas para esa fecha todavia.</ErpNotice>
           )}
           {mensaje && (
             <>
@@ -155,7 +173,7 @@ export function StockValorizadoPage() {
                 className="w-full rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3 font-mono text-[13px] leading-relaxed text-[color:var(--text-1)] outline-none"
               />
               <ErpButton variant="primary" onClick={copiarMensaje}>
-                <Copy size={16} /> {copiado ? '¡Copiado!' : 'Copiar mensaje'}
+                <Copy size={16} /> {copiado ? 'Copiado!' : 'Copiar mensaje'}
               </ErpButton>
             </>
           )}
@@ -167,28 +185,65 @@ export function StockValorizadoPage() {
           <div className="erp-stack-3">
             <div className="flex items-center gap-2 text-[color:var(--success-2)]">
               <CheckCircle2 size={18} />
-              <span className="font-bold">Subido a Drive</span>
+              <span className="font-bold">Carga procesada</span>
             </div>
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-              <Kpi label="Ítems" value={nf.format(result.items)} />
-              <Kpi label="Cantidad total" value={nf.format(result.cantidad_total)} />
-              <Kpi label="Valuación total" value={`$ ${nf.format(Math.round(result.valuacion_total))}`} />
-              <Kpi label="Eliminados (Dispon < 0)" value={nf.format(result.eliminados)} />
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+              <Kpi label="Archivos" value={nf.format(result.total)} />
+              <Kpi label="Subidos" value={nf.format(result.uploaded)} />
+              <Kpi label="Errores" value={nf.format(result.errors)} />
+              <Kpi label="Cantidad total" value={nf.format(totalUnidades)} />
+              <Kpi label="Valuacion total" value={`$ ${nf.format(Math.round(totalValorizado))}`} />
             </div>
-            <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3 text-sm">
-              <div className="flex items-center gap-2 text-[color:var(--text-1)]">
-                <FileSpreadsheet size={16} className="text-[color:var(--success-2)]" />
-                <span className="font-semibold">{result.sheet_name}</span>
-              </div>
-              <div className="mt-1 text-[color:var(--text-3)]">Carpeta: {result.folder_name} · Sucursal: {result.sucursal}</div>
-              <a
-                href={result.sheet_url}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-2 inline-flex items-center gap-1.5 text-[color:var(--primary)] hover:underline"
-              >
-                <ExternalLink size={14} /> Abrir en Google Sheets
-              </a>
+            <div className="space-y-3">
+              {result.items.map((item) => (
+                <div
+                  key={item.filename}
+                  className={`rounded-xl border p-3 text-sm ${
+                    item.ok
+                      ? 'border-[color:var(--border)] bg-[color:var(--surface-2)]'
+                      : 'border-red-500/40 bg-red-500/10'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-[color:var(--text-1)]">
+                        {item.ok ? (
+                          <FileSpreadsheet size={16} className="text-[color:var(--success-2)]" />
+                        ) : (
+                          <AlertCircle size={16} className="text-red-300" />
+                        )}
+                        <span className="truncate font-semibold">{item.filename}</span>
+                      </div>
+                      {item.ok ? (
+                        <div className="mt-1 text-[color:var(--text-3)]">
+                          Carpeta: {item.folder_name} · Sucursal: {item.sucursal} · Fecha: {item.fecha}
+                        </div>
+                      ) : (
+                        <div className="mt-1 text-red-200">{item.error}</div>
+                      )}
+                    </div>
+                    {item.ok && item.sheet_url && (
+                      <a
+                        href={item.sheet_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 text-[color:var(--primary)] hover:underline"
+                      >
+                        <ExternalLink size={14} /> Abrir
+                      </a>
+                    )}
+                  </div>
+                  {item.ok && (
+                    <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-5">
+                      <MiniKpi label="Items" value={nf.format(item.items || 0)} />
+                      <MiniKpi label="Cantidad" value={nf.format(item.cantidad_total || 0)} />
+                      <MiniKpi label="Valorizado" value={`$ ${nf.format(Math.round(item.valuacion_total || 0))}`} />
+                      <MiniKpi label="Negativos" value={nf.format(item.eliminados || 0)} />
+                      <MiniKpi label="Totales quitados" value={nf.format(item.filas_total_eliminadas || 0)} />
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         </ErpCard>
@@ -202,6 +257,15 @@ function Kpi({ label, value }: { label: string; value: string }) {
     <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] p-3">
       <div className="text-[11px] font-bold uppercase tracking-wide text-[color:var(--text-3)]">{label}</div>
       <div className="mt-1 text-lg font-black tabular-nums text-[color:var(--text-1)]">{value}</div>
+    </div>
+  );
+}
+
+function MiniKpi({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-[color:var(--border)] bg-[color:var(--surface)] p-2">
+      <div className="text-[10px] font-bold uppercase tracking-wide text-[color:var(--text-3)]">{label}</div>
+      <div className="mt-1 font-black tabular-nums text-[color:var(--text-1)]">{value}</div>
     </div>
   );
 }

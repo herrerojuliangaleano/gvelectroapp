@@ -13,8 +13,10 @@ la sucursal. Cada sucursal sube su propio archivo del día.
 from __future__ import annotations
 
 import io
+import re
 import unicodedata
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -45,11 +47,80 @@ _COLUMNAS = [
     ("valuacion", "Valuación"),
 ]
 
+_TOTAL_ROW_PREFIXES = ("total", "totales")
+_TOTAL_ROW_EXACT = {
+    "total cantidad",
+    "total cantidades",
+    "total valorizado",
+    "total valuacion",
+    "total valuación",
+    "total general",
+}
+
+_FILENAME_DATE_PATTERNS = (
+    re.compile(r"(?<!\d)(?P<day>\d{1,2})[\s._-](?P<month>\d{1,2})[\s._-](?P<year>\d{2,4})(?!\d)"),
+    re.compile(r"(?<!\d)(?P<year>\d{4})[\s._-](?P<month>\d{1,2})[\s._-](?P<day>\d{1,2})(?!\d)"),
+)
+
+_SUCURSAL_ALIASES = (
+    ("Caseros", ("caseros", "electrogv", "gv")),
+    ("Canning", ("canning",)),
+    ("Lanus", ("lanus", "sur")),
+    ("Norcenter", ("norcenter", "norte", "northcenter", "nortecenter")),
+)
+
 
 def _norm(s: Any) -> str:
     return "".join(
         c for c in unicodedata.normalize("NFKD", str(s)) if not unicodedata.combining(c)
     ).strip().lower()
+
+
+def _norm_filename(s: str) -> str:
+    normalized = _norm(Path(s or "").stem)
+    return re.sub(r"[^a-z0-9]+", " ", normalized).strip()
+
+
+def fecha_desde_nombre_archivo(filename: str) -> date | None:
+    """Extrae fechas tipo 11-07-2026 o 2026-07-11 desde el nombre del archivo."""
+    text = _norm_filename(filename)
+    for pattern in _FILENAME_DATE_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        day = int(match.group("day"))
+        month = int(match.group("month"))
+        year = int(match.group("year"))
+        if year < 100:
+            year += 2000
+        try:
+            return date(year, month, day)
+        except ValueError:
+            continue
+    return None
+
+
+def sucursal_desde_nombre_archivo(filename: str) -> str | None:
+    """Infiere la sucursal desde nombres como `stock valorizado norte 11-07-2026.xlsx`."""
+    text = f" {_norm_filename(filename)} "
+    for sucursal, aliases in _SUCURSAL_ALIASES:
+        if any(f" {alias} " in text for alias in aliases):
+            return sucursal
+    return None
+
+
+def _is_total_row(row: pd.Series) -> bool:
+    """Detecta filas resumen del export ERP, por ejemplo `TOTAL CANTIDAD`."""
+    text_fields = (_COLUMNAS[0][1], _COLUMNAS[1][1], _COLUMNAS[2][1])
+    for field in text_fields:
+        value = _norm(row.get(field, ""))
+        if not value or value == "nan":
+            continue
+        if value in _TOTAL_ROW_EXACT:
+            return True
+        if any(value.startswith(prefix + " ") for prefix in _TOTAL_ROW_PREFIXES):
+            return True
+    return False
 
 
 def procesar_stock(xlsx_bytes: bytes) -> tuple[bytes, dict[str, Any]]:
@@ -66,12 +137,18 @@ def procesar_stock(xlsx_bytes: bytes) -> tuple[bytes, dict[str, Any]]:
 
     det = df[[cols[norm] for norm, _ in _COLUMNAS]].copy()
     det.columns = [display for _, display in _COLUMNAS]
+
+    total_original = len(det)
+    filas_total_mask = det.apply(_is_total_row, axis=1)
+    filas_total_eliminadas = int(filas_total_mask.sum())
+    if filas_total_eliminadas:
+        det = det[~filas_total_mask].copy()
+
     for c in ("Dispon", "Costo", "Valuación"):
         det[c] = pd.to_numeric(det[c], errors="coerce")
 
-    total_original = len(det)
     det = det[det["Dispon"].fillna(0) >= 0].reset_index(drop=True)
-    eliminados = total_original - len(det)
+    eliminados = total_original - filas_total_eliminadas - len(det)
 
     cantidad_total = int(det["Dispon"].sum())
     valuacion_total = float(det["Valuación"].sum())
@@ -113,6 +190,7 @@ def procesar_stock(xlsx_bytes: bytes) -> tuple[bytes, dict[str, Any]]:
         "cantidad_total": cantidad_total,
         "valuacion_total": valuacion_total,
         "eliminados": eliminados,
+        "filas_total_eliminadas": filas_total_eliminadas,
     }
 
 

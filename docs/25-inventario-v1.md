@@ -134,6 +134,7 @@ Jerarquía **Empresa → Sucursal → Rol → Permiso → Usuario**.
 5. **Credencial PVC:** separar **print plano** (reportlab) del **mockup visual** (Pillow+PyMuPDF). Print y mockup son dos cosas, no una.
 6. **Deploy:** `git push` a **ambos** remotes (origin + repo2). Backend a contenedores por `docker cp` + `docker restart`.
 7. **Examen Excel comparativo marcas:** datos "disfrazados" para examen (estimación por % de mercado + aumentos); Norte=Norcenter, Sur=Lanús.
+8. **Stock valorizado:** el export ERP puede traer una fila resumen `TOTAL CANTIDAD` en el bloque de productos. Esa fila no es producto real y debe descartarse antes de subir a Drive o calcular unidades/valuación. Para carga masiva, el nombre del archivo debe incluir sucursal y fecha: `stock valorizado canning 11-07-2026.xlsx`. Aliases aceptados: `caseros`, `canning`, `lanus`, `norte`/`norcenter`; la fecha se toma como `DD-MM-YYYY` o `YYYY-MM-DD`.
 
 ---
 
