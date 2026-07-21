@@ -3,7 +3,7 @@ import { AlertCircle, CheckCircle2, Copy, ExternalLink, FileSpreadsheet, Message
 import {
   fetchOperationalStructure,
   fetchStockValorizadoMensaje,
-  procesarStockValorizadoMasivo,
+  procesarStockValorizado,
   type StockValorizadoBulkResult,
 } from '../api/client';
 import type { BranchInfo } from '../types';
@@ -29,6 +29,7 @@ export function StockValorizadoPage() {
   const [fecha, setFecha] = useState(todayISO());
   const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
+  const [processingName, setProcessingName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<StockValorizadoBulkResult | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -83,18 +84,34 @@ export function StockValorizadoPage() {
   async function run() {
     if (!files.length) return;
     setLoading(true);
+    setProcessingName('');
     setError(null);
-    setResult(null);
+    setResult({ total: files.length, uploaded: 0, errors: 0, items: [] });
     setMensaje('');
     setMensajeVacio(false);
     try {
-      const res = await procesarStockValorizadoMasivo({ files, sucursal, fecha });
-      setResult(res);
+      const items: StockValorizadoBulkResult['items'] = [];
+      for (const selectedFile of files) {
+        setProcessingName(selectedFile.name);
+        try {
+          const item = await procesarStockValorizado(sucursal, selectedFile, fecha);
+          items.push({ ok: true, filename: selectedFile.name, ...item });
+        } catch (err) {
+          items.push({
+            ok: false,
+            filename: selectedFile.name,
+            error: err instanceof Error ? err.message : 'No se pudo procesar este archivo',
+          });
+        }
+        const uploaded = items.filter((item) => item.ok).length;
+        setResult({ total: files.length, uploaded, errors: items.length - uploaded, items: [...items] });
+      }
       setFiles([]);
       if (fileRef.current) fileRef.current.value = '';
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo procesar el lote');
     } finally {
+      setProcessingName('');
       setLoading(false);
     }
   }
@@ -153,6 +170,11 @@ export function StockValorizadoPage() {
           <ErpButton variant="primary" onClick={run} disabled={!canRun} loading={loading}>
             <Upload size={16} /> {loading ? 'Procesando y subiendo...' : `Procesar ${files.length || ''} archivo${files.length === 1 ? '' : 's'}`}
           </ErpButton>
+          {processingName && (
+            <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] px-3 py-2 text-xs text-[color:var(--text-3)]">
+              Procesando ahora: <span className="font-mono text-[color:var(--text-1)]">{processingName}</span>
+            </div>
+          )}
         </div>
       </ErpCard>
 
