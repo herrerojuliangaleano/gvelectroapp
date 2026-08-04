@@ -235,10 +235,15 @@ def to_numero(serie: pd.Series) -> pd.Series:
     return pd.to_numeric(s, errors="coerce")
 
 
+# Tipos de comprobante que son Nota de Crédito: RESTAN al resto.
+# 3 = NC A, 8 = NC B, 53 = NC (agregado). Todos los demás tipos suman.
+CODIGOS_NC = [3, 8, 53]
+
+
 def extraer_tipo_num(valor: object) -> int | None:
     """Saca el número del tipo de comprobante, sirva venir como '3',
-    '3 - Nota de Crédito A' o '8 - Nota de Crédito B'. Las notas de crédito
-    son los tipos 3 y 8 (y restan a los demás)."""
+    '3 - Nota de Crédito A' o '53 - Nota de Crédito'. Las notas de crédito
+    son los tipos de CODIGOS_NC (y restan a los demás)."""
     if pd.isna(valor):
         return None
     m = re.search(r"\d+", str(valor))
@@ -518,7 +523,7 @@ def calcular_ventas(df: pd.DataFrame) -> pd.DataFrame:
     ventas["imp_neto_gravado_total"] = to_numero(ventas["imp_neto_gravado_total"])
     ventas["total_iva"] = to_numero(ventas["total_iva"])
 
-    mask_b = ventas["tipo_de_comprobante"].isin([3, 8])
+    mask_b = ventas["tipo_de_comprobante"].isin(CODIGOS_NC)
     mask_a = ventas["tipo_de_comprobante"].notna() & ~mask_b
 
     neto_a = ventas.loc[mask_a, "imp_neto_gravado_total"].sum(skipna=True)
@@ -533,8 +538,8 @@ def calcular_ventas(df: pd.DataFrame) -> pd.DataFrame:
     resultado = pd.DataFrame({
         "Concepto": [
             "Resto de comprobantes",
-            "Comprobantes 3 y 8",
-            "Diferencia (resto - 3 y 8)",
+            "Comprobantes 3, 8 y 53",
+            "Diferencia (resto - 3, 8 y 53)",
         ],
         "Imp. Neto Gravado Total": [neto_a, neto_b, neto_a - neto_b],
         "Total IVA": [iva_a, iva_b, iva_a - iva_b],
@@ -542,7 +547,7 @@ def calcular_ventas(df: pd.DataFrame) -> pd.DataFrame:
     })
 
     print(f"[INFO] Ventas: filas resto = {mask_a.sum()}")
-    print(f"[INFO] Ventas: filas 3 y 8 = {mask_b.sum()}")
+    print(f"[INFO] Ventas: filas 3, 8 y 53 = {mask_b.sum()}")
 
     return resultado.round(2)
 
@@ -560,14 +565,14 @@ def calcular_compras(df: pd.DataFrame) -> pd.DataFrame:
     compras = df.copy()
 
     # El tipo puede venir como número ('3') o como texto ('3 - Nota de Crédito A').
-    # Las notas de crédito son los tipos 3 y 8 y restan al resto (igual que ventas).
+    # Las notas de crédito son los tipos de CODIGOS_NC (3, 8 y 53) y restan al resto (igual que ventas).
     compras["tipo_num"] = compras["tipo"].apply(extraer_tipo_num)
     compras["total_iva"] = to_numero(compras["total_iva"])
     if "imp_neto_gravado" not in compras.columns:
         compras["imp_neto_gravado"] = 0
     compras["imp_neto_gravado"] = to_numero(compras["imp_neto_gravado"])
 
-    mask_b = compras["tipo_num"].isin([3, 8])
+    mask_b = compras["tipo_num"].isin(CODIGOS_NC)
     mask_a = compras["tipo_num"].notna() & ~mask_b
 
     iva_a = compras.loc[mask_a, "total_iva"].sum(skipna=True)
@@ -582,7 +587,7 @@ def calcular_compras(df: pd.DataFrame) -> pd.DataFrame:
     resultado = pd.DataFrame({
         "Concepto": [
             "Resto de comprobantes",
-            "Notas de crédito (3 y 8)",
+            "Notas de crédito (3, 8 y 53)",
             "Diferencia (resto - notas crédito)",
         ],
         "Imp. Neto Gravado Total": [
@@ -603,14 +608,14 @@ def calcular_compras(df: pd.DataFrame) -> pd.DataFrame:
     })
 
     print(f"[INFO] Compras: filas resto = {mask_a.sum()}")
-    print(f"[INFO] Compras: filas notas de crédito (3 y 8) = {mask_b.sum()}")
+    print(f"[INFO] Compras: filas notas de crédito (3, 8 y 53) = {mask_b.sum()}")
 
     return resultado.round(2)
 
 
 def calcular_compras_por_proveedor(df: pd.DataFrame) -> pd.DataFrame:
     """Desglosa las compras por proveedor (Denominación Emisor), con las notas
-    de crédito (tipos 3 y 8) ya restadas en la columna 'Total IVA neto'."""
+    de crédito (tipos 3, 8 y 53) ya restadas en la columna 'Total IVA neto'."""
     columnas = {"tipo", "total_iva"}
     faltantes = columnas - set(df.columns)
     if faltantes:
@@ -631,8 +636,8 @@ def calcular_compras_por_proveedor(df: pd.DataFrame) -> pd.DataFrame:
     compras["proveedor"] = compras["proveedor"].astype(str).str.strip()
     compras.loc[compras["proveedor"].isin(["", "nan", "none", "None"]), "proveedor"] = "(sin proveedor)"
 
-    # Tabla compacta: una fila por proveedor con los netos (NC 3 y 8 ya restadas).
-    signo = compras["tipo_num"].isin([3, 8]).map({True: -1, False: 1})
+    # Tabla compacta: una fila por proveedor con los netos (NC 3, 8 y 53 ya restadas).
+    signo = compras["tipo_num"].isin(CODIGOS_NC).map({True: -1, False: 1})
     compras["_neto"] = compras["imp_neto_gravado"] * signo
     compras["_iva"] = compras["total_iva"] * signo
 
