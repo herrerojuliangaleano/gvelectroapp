@@ -54,3 +54,20 @@ La bandeja de anuncios vuelve a mostrar exactamente cuatro cambios:
 - `AEV12IF10-BL`: ENOVA, nuevo ingreso con descripcion `A/A DE VENTANA`.
 
 El lote `#93` queda regenerable con esas mismas identidades e importes.
+
+## Resultado de ejecucion
+
+[HECHO] Reparacion aplicada el 12/08/2026 sobre PostgreSQL de produccion local.
+
+- Backup previo:
+  `backend/backups-prod/pre-price-announcement-repair-20260812-104327.dump`.
+- `products.id=1380` quedo inactivo y `products.id=1387` quedo como identidad
+  canonica `TELEFUNKEN / TFK-EX395`.
+- Actualizaciones `#990/#991` quedaron canceladas como duplicados de cambio de
+  identidad.
+- Actualizaciones `#984/#987/#988/#989` quedaron nuevamente disponibles para
+  anuncios.
+- El lote `#93` fue corregido y su renderer produjo una pagina PNG de 162.359
+  bytes con cuatro productos.
+- Health de mini-prod: `GET http://127.0.0.1:8010/api/health` respondio
+  `{"ok": true}`.
