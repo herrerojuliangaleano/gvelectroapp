@@ -937,6 +937,7 @@ export async function salesBIConfirm(payload: {
   sheet_names?: string[];
   replace?: boolean;
   sucursal?: string;
+  source_name?: string;
 }): Promise<{ imported: { sheet_name: string; import_id: number; fecha: string; sucursal: string; tipo: string; total_records: number }[]; skipped: { sheet_name: string; reason: string }[] }> {
   return request('/api/sales-bi/confirm', { method: 'POST', body: JSON.stringify(payload) });
 }

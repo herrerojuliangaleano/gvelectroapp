@@ -323,7 +323,12 @@ export function SalesBIImportPage() {
         // 37 transacciones contra Postgres en paralelo.
         for (const { temp_file_key, sheetNames, replace, fileName } of byKey.values()) {
           try {
-            const result = await salesBIConfirm({ temp_file_key, sheet_names: sheetNames, replace });
+            const result = await salesBIConfirm({
+              temp_file_key,
+              sheet_names: sheetNames,
+              replace,
+              source_name: fileName,
+            });
             totalImported += result.imported.length;
             allSkipped.push(...result.skipped.map((s) => `${fileName}: ${s.reason}`));
           } catch (e) {
@@ -541,14 +546,14 @@ export function SalesBIImportPage() {
           {hasConflict && (
             <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
               <AlertTriangle size={15} className="mt-0.5 shrink-0" />
-              Hay hojas con importaciones activas para la misma fecha y sucursal. Marcá la opción de reemplazar en cada una para continuar.
+              Hay hojas con importaciones activas para la misma fecha y sucursal. Si no marcás reemplazar, esas hojas se omitirán y el resto del lote se importará normalmente.
             </div>
           )}
 
           <div className="flex items-center gap-3">
             <button
               onClick={handleConfirm}
-              disabled={confirming || selected.size === 0 || !!hasConflict}
+              disabled={confirming || selected.size === 0}
               className="flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 font-medium text-white disabled:opacity-40 hover:bg-emerald-500"
             >
               {confirming ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}

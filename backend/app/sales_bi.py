@@ -180,7 +180,11 @@ def _is_placeholder_sucursal(value: str, sheet_name: str) -> bool:
 
 
 def _infer_sucursal_from_source_name(source_name: str) -> str:
-    source_norm = _norm(Path(str(source_name or "")).stem)
+    source = str(source_name or "").strip()
+    if not source or re.match(r"^https?://", source, re.IGNORECASE):
+        return ""
+
+    source_norm = _norm(Path(source).stem)
     if not source_norm:
         return ""
     words = set(source_norm.split())
@@ -193,7 +197,32 @@ def _infer_sucursal_from_source_name(source_name: str) -> str:
     return ""
 
 
+def _infer_date_from_source_name(source_name: str) -> str:
+    """Extract a daily-sheet date from an uploaded Excel filename.
+
+    Daily workbooks are operationally identified by their filename. The
+    internal header can be stale when a template from another day/branch was
+    reused, so a valid filename date is authoritative for file uploads.
+    """
+    source = str(source_name or "").strip()
+    if not source or re.match(r"^https?://", source, re.IGNORECASE):
+        return ""
+
+    stem = Path(source).stem
+    matches = re.findall(r"(?<!\d)(\d{1,2})[._-](\d{1,2})[._-](\d{4})(?!\d)", stem)
+    for day_text, month_text, year_text in reversed(matches):
+        try:
+            return date(int(year_text), int(month_text), int(day_text)).isoformat()
+        except ValueError:
+            continue
+    return ""
+
+
 def _infer_workbook_sucursal(sheets: dict[str, list[list]], source_name: str = "") -> str:
+    source_sucursal = _infer_sucursal_from_source_name(source_name)
+    if source_sucursal:
+        return source_sucursal
+
     for name, rows in sheets.items():
         if _classify_sheet_name(name) is None:
             continue
@@ -1251,14 +1280,31 @@ def _sheet_totals(records: list[dict]) -> dict:
 def analyze_sheets(sheets: dict[str, list[list]], sucursal_override: str = "", source_name: str = "") -> list[dict]:
     results = []
     workbook_sucursal = "" if sucursal_override else _infer_workbook_sucursal(sheets, source_name)
+    source_date = _infer_date_from_source_name(source_name)
     for name, rows in sheets.items():
         tipo_hoja = _classify_sheet_name(name)
         if tipo_hoja is None:
             # Skip sheets that are not 'Planilla' or 'On Line'
             continue
         parsed = _parse_sheet(name, rows, sucursal_override=sucursal_override)
-        if workbook_sucursal and _is_placeholder_sucursal(parsed.get("sucursal", ""), parsed.get("sheet_name", name)):
+        if workbook_sucursal and not sucursal_override:
+            internal_sucursal = str(parsed.get("sucursal") or "").strip()
+            if (
+                internal_sucursal
+                and not _is_placeholder_sucursal(internal_sucursal, parsed.get("sheet_name", name))
+                and _norm(internal_sucursal) != _norm(workbook_sucursal)
+            ):
+                parsed["warnings"].append(
+                    f"Sucursal interna '{internal_sucursal}' corregida a '{workbook_sucursal}' según el nombre del archivo."
+                )
             parsed["sucursal"] = workbook_sucursal
+        if source_date:
+            internal_date = str(parsed.get("fecha") or "").strip()
+            if internal_date and internal_date != source_date:
+                parsed["warnings"].append(
+                    f"Fecha interna '{internal_date}' corregida a '{source_date}' según el nombre del archivo."
+                )
+            parsed["fecha"] = source_date
         totals = _sheet_totals(parsed["records"])
         parsed.update(totals)
         results.append(parsed)

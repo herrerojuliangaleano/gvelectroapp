@@ -34,6 +34,7 @@ Code puedan entender la aplicacion sin depender de memoria oral.
 25. **[24 - Arquitectura de la v2 (reconstrucción modular)](24-arquitectura-v2.md)** · plan del rebuild: stack, patrón Clean/Hexagonal, capas, orden de módulos y ADRs.
 26. **[25 - Inventario completo de la v1](25-inventario-v1.md)** · qué es, con qué está hecha, librerías, módulos, casos borde, qué se rescata/descarta.
 27. **[26 - Prompt de arranque para el chat nuevo (build v2)](26-prompt-arranque-v2.md)** · prompt listo para copiar + cómo dar acceso a la v1.
+28. **[27 - Planillas diarias y congelado central](27-planillas-diarias-google-drive.md)** · generación en Drive, Apps Script, diagnóstico y despliegue.
 
 ## Documentacion por fases
 
@@ -74,6 +75,7 @@ Code puedan entender la aplicacion sin depender de memoria oral.
 | **Arquitectura de la v2 (rebuild modular)** | **[24-arquitectura-v2.md](24-arquitectura-v2.md)** |
 | **Inventario completo de la v1** | **[25-inventario-v1.md](25-inventario-v1.md)** |
 | **Prompt de arranque para el chat nuevo (v2)** | **[26-prompt-arranque-v2.md](26-prompt-arranque-v2.md)** |
+| Planillas diarias en Google Drive | [27-planillas-diarias-google-drive.md](27-planillas-diarias-google-drive.md) |
 | Referencia visual instalada (GV Electro Dynamics) | [referencias/bi-visual-gv-electro-dynamics/README.md](referencias/bi-visual-gv-electro-dynamics/README.md) |
 | Docker local | [fase-1-docker/README.md](fase-1-docker/README.md) |
 | Modelo de datos historico (Fase 2 · superado por 17/18) | [fase-2-postgres/01-modelo-datos.md](fase-2-postgres/01-modelo-datos.md) |

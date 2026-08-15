@@ -645,6 +645,28 @@ subida de archivos, logs y seguimiento de jobs.
 | `nvsc` | Normalizar Ventas VS Costos | Cruza ventas contra planilla madre. |
 | `vsc` | Ventas VS Costos | Sincroniza libro diario con mensual. |
 
+### Generar Planillas Diarias (`gpd`)
+
+- Genera las planillas de Caseros, Lanús, Norcenter y Canning a partir de sus
+  plantillas de Google Sheets y las guarda en las carpetas configuradas.
+- La creación se ejecuta como job; el resultado muestra el enlace de cada
+  archivo generado y el log permite verificar su ID de Drive.
+- Las filas de venta se congelan después mediante el proyecto externo de Apps
+  Script `Congelado Central`. Ese proceso asigna un ID oculto en AX, registra
+  el control en `AUX_CONGELAR` y protege A:J cuando la venta queda estable.
+- Una planilla vacía no debe recibir hojas, columnas ni escrituras auxiliares.
+  La estructura de control se crea recién con la primera venta real.
+- Si el archivo se crea pero Google Sheets queda cargando indefinidamente,
+  revisar primero el Apps Script central y no los permisos de Drive.
+- Al importar planillas históricas a Sales BI, el nombre del archivo define
+  sucursal y fecha cuando incluye valores válidos. Por ejemplo, `SUR` se
+  normaliza a Lanús aunque el encabezado interno conserve `NORTE`.
+- Un archivo conflictivo no bloquea la importación del resto del lote; se puede
+  omitir o marcar para reemplazo de forma individual.
+
+Documentación operativa y técnica:
+[27 - Planillas diarias y congelado central](27-planillas-diarias-google-drive.md).
+
 ### Limpiar Comprobantes (`cer`)
 
 - El flujo mensual normal mantiene la lógica original: mes actual, mes pasado o ambos se procesan como archivos completos separados.

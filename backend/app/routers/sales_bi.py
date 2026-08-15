@@ -102,6 +102,7 @@ class ConfirmRequest(BaseModel):
     sheet_names: list[str] | None = None  # None = all sheets
     replace: bool = False
     sucursal: str | None = None
+    source_name: str = ""
 
 
 class ConfirmResponse(BaseModel):
@@ -287,7 +288,7 @@ async def confirm(
             raise HTTPException(status_code=400, detail=f"No se pudo leer el archivo: {exc}")
         fuente = "excel"
         fuente_url = ""
-        fuente_nombre = body.temp_file_key
+        fuente_nombre = body.source_name or body.temp_file_key
     else:
         try:
             sheets_data = read_google_sheet(body.sheet_url)  # type: ignore[arg-type]
@@ -297,7 +298,11 @@ async def confirm(
         fuente_url = body.sheet_url or ""
         fuente_nombre = fuente_url
 
-    parsed = analyze_sheets(sheets_data, sucursal_override=body.sucursal or "")
+    parsed = analyze_sheets(
+        sheets_data,
+        sucursal_override=body.sucursal or "",
+        source_name=body.source_name or body.sheet_url or "",
+    )
 
     selected = parsed
     if body.sheet_names is not None:
