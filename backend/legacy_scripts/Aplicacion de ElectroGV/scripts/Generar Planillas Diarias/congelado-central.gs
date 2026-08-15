@@ -217,6 +217,24 @@ function buscarPlanillasRecientes_() {
  ****************************************************/
 
 function procesarPlanilla_(ss) {
+  const hojasConCarga = CONFIG.targetSheetNames
+    .map(sheetName => {
+      const sheet = ss.getSheetByName(sheetName);
+      if (!sheet) return null;
+
+      return {
+        sheetName,
+        sheet,
+        lastRow: obtenerUltimaFilaConCarga_(sheet)
+      };
+    })
+    .filter(item => item && item.lastRow >= CONFIG.dataStartRow);
+
+  // Una planilla recien creada no necesita hoja auxiliar, columna AX ni
+  // escrituras de control. Evitar esas mutaciones mantiene liviana la carga
+  // inicial en Google Sheets; la estructura se crea con la primera venta.
+  if (hojasConCarga.length === 0) return;
+
   prepararEstructura_(ss);
 
   const controlSheet = ss.getSheetByName(CONFIG.controlSheetName);
@@ -224,12 +242,7 @@ function procesarPlanilla_(ss) {
 
   const now = new Date();
 
-  CONFIG.targetSheetNames.forEach(sheetName => {
-    const sheet = ss.getSheetByName(sheetName);
-    if (!sheet) return;
-
-    const lastRow = sheet.getLastRow();
-    if (lastRow < CONFIG.dataStartRow) return;
+  hojasConCarga.forEach(({ sheetName, sheet, lastRow }) => {
 
     const numRows = lastRow - CONFIG.dataStartRow + 1;
 
@@ -498,7 +511,10 @@ function prepararEstructura_(ss) {
     const sheet = ss.getSheetByName(sheetName);
     if (!sheet) return;
 
-    sheet.getRange(1, CONFIG.idColumn).setValue('AUTO_ID_VENTA');
+    const idHeader = sheet.getRange(1, CONFIG.idColumn);
+    if (normalizarId_(idHeader.getValue()) !== 'AUTO_ID_VENTA') {
+      idHeader.setValue('AUTO_ID_VENTA');
+    }
 
     if (CONFIG.hideIdColumn && !sheet.isColumnHiddenByUser(CONFIG.idColumn)) {
       sheet.hideColumns(CONFIG.idColumn);
@@ -527,8 +543,19 @@ function prepararHojaControl_(ss) {
     'NOTAS'
   ];
 
-  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-  sheet.setFrozenRows(1);
+  const headerRange = sheet.getRange(1, 1, 1, headers.length);
+  const currentHeaders = headerRange.getValues()[0] || [];
+  const headersChanged = headers.some(
+    (header, index) => normalizarId_(currentHeaders[index]) !== header
+  );
+
+  if (headersChanged) {
+    headerRange.setValues([headers]);
+  }
+
+  if (sheet.getFrozenRows() !== 1) {
+    sheet.setFrozenRows(1);
+  }
 
   if (CONFIG.hideControlSheet && !sheet.isSheetHidden()) {
     sheet.hideSheet();
@@ -694,6 +721,28 @@ function crearIdVenta_() {
 function normalizarId_(value) {
   if (value === null || value === undefined) return '';
   return String(value).trim();
+}
+
+
+function obtenerUltimaFilaConCarga_(sheet) {
+  // H y J tienen formulas precargadas, por eso no pueden participar de esta
+  // busqueda. Se consideran las columnas que completa una persona y, si ya
+  // existe, AX para poder detectar una fila borrada que conserva su ID.
+  const inputColumns = [1, 2, 3, 4, 5, 6, 7, 9, 11];
+  if (sheet.getMaxColumns() >= CONFIG.idColumn) {
+    inputColumns.push(CONFIG.idColumn);
+  }
+
+  const maxRows = sheet.getMaxRows();
+
+  return inputColumns.reduce((lastRow, column) => {
+    const candidate = sheet
+      .getRange(maxRows, column)
+      .getNextDataCell(SpreadsheetApp.Direction.UP)
+      .getRow();
+
+    return Math.max(lastRow, candidate);
+  }, 0);
 }
 
 

@@ -37,6 +37,9 @@ Listo. No hay paso 7. No hay que volver a tocarlo.
 
 ## Semántica (igual que el sistema viejo)
 
+- Una planilla recién creada y todavía vacía no se modifica. La hoja
+  `AUX_CONGELAR`, la columna AX y sus encabezados se preparan recién cuando
+  aparece la primera venta.
 - Una venta se considera **completa** cuando tiene Producto (G),
   Cantidad (I) y Valor (J).
 - Cuando una venta completa pasa `minutesToWait` (10 min) **sin
@@ -46,6 +49,24 @@ Listo. No hay paso 7. No hay que volver a tocarlo.
   20 minutos** después del último cambio.
 - El control vive en la hoja oculta `AUX_CONGELAR` de cada planilla,
   y el ID por venta en la columna AX (oculta).
+- Las fórmulas precargadas de H y J no cuentan como una venta. El escaneo se
+  limita a la última fila que tenga datos reales en las columnas de carga.
+
+## Despliegue del script
+
+Este archivo vive en el repositorio como fuente de verdad, pero el proyecto
+standalone de Apps Script es un servicio externo. Un commit, un push o un
+rebuild de Docker **no actualizan** el código que ejecuta Google.
+
+Después de cambiar `congelado-central.gs`:
+
+1. Abrir el proyecto `Congelado Central` en `script.google.com` con la cuenta
+   administradora.
+2. Reemplazar `Código.gs` por el contenido versionado en este repositorio.
+3. Guardar el proyecto.
+4. Ejecutar `verEstadoSistema` y confirmar que existe un solo trigger activo.
+5. Crear una planilla de prueba y verificar que, mientras esté vacía, no se
+   creen `AUX_CONGELAR` ni la columna AX.
 
 ## Convivencia con el sistema viejo
 
