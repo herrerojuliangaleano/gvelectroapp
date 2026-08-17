@@ -828,6 +828,10 @@ export async function fetchPriceCostUpdateHistory(id: string | number): Promise<
 export async function generatePriceAnnouncementImages(payload: PriceAnnouncementImagesPayload): Promise<PriceAnnouncementImagesResponse> {
   return request('/api/price-cost-updates/announcements/images', { method: 'POST', body: JSON.stringify(payload) });
 }
+export interface ReingresoItemInput { producto: string; marca?: string; sku?: string; precio: number; }
+export async function generateReingresoAnnouncement(items: ReingresoItemInput[], logoBrand: string, vigencia = ''): Promise<PriceAnnouncementImagesResponse> {
+  return request('/api/price-cost-updates/announcements/reingreso', { method: 'POST', body: JSON.stringify({ items, logo_brand: logoBrand, vigencia }) });
+}
 export async function fetchPriceAnnouncementBatches(limit = 30): Promise<PriceAnnouncementBatch[]> {
   return request(`/api/price-cost-updates/announcements/batches${buildQs({ limit })}`);
 }

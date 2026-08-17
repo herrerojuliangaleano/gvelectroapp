@@ -5,10 +5,13 @@ import {
   Download,
   ImageDown,
   Layers3,
+  Plus,
   RefreshCw,
+  Repeat,
   Search,
   Share2,
   Square,
+  Trash2,
   Wand2,
   XCircle,
 } from 'lucide-react';
@@ -17,8 +20,10 @@ import {
   fetchPriceAnnouncementBatches,
   fetchPriceCostUpdates,
   generatePriceAnnouncementImages,
+  generateReingresoAnnouncement,
   getCurrentUserFromStorage,
   regeneratePriceAnnouncementBatchImages,
+  searchBudgetProducts,
 } from '../api/client';
 import {
   ErpBadge,
@@ -28,12 +33,15 @@ import {
   ErpField,
   ErpInput,
   ErpKpiCard,
+  ErpModal,
   ErpNotice,
   ErpPageHeader,
   ErpSelect,
 } from '../components/ProUI';
 import { canUsePriceAnnouncements } from '../priceAnnouncementsAccess';
-import type { PriceAnnouncementBatch, PriceAnnouncementImage, PriceAnnouncementImagesResponse, PriceCostUpdate } from '../types';
+import type { BudgetProduct, PriceAnnouncementBatch, PriceAnnouncementImage, PriceAnnouncementImagesResponse, PriceCostUpdate } from '../types';
+
+interface ReingresoRow { producto: string; marca: string; sku: string; precio: number; }
 
 interface BrandGroup {
   brand: string;
@@ -111,6 +119,47 @@ export function PriceAnnouncementsPage() {
   const [result, setResult] = useState<PriceAnnouncementImagesResponse | null>(null);
   const [shareHint, setShareHint] = useState('');
   const [copiedFor, setCopiedFor] = useState<string | null>(null);
+
+  // ── Reingreso (mantiene precio) ──────────────────────────────────────────
+  const [reingresoOpen, setReingresoOpen] = useState(false);
+  const [reQuery, setReQuery] = useState('');
+  const [reResults, setReResults] = useState<BudgetProduct[]>([]);
+  const [reSearching, setReSearching] = useState(false);
+  const [reItems, setReItems] = useState<ReingresoRow[]>([]);
+  const [reGenerating, setReGenerating] = useState(false);
+
+  async function reSearch(query: string) {
+    setReQuery(query);
+    if (query.trim().length < 2) { setReResults([]); return; }
+    setReSearching(true);
+    try {
+      setReResults(await searchBudgetProducts(query.trim()));
+    } catch {
+      setReResults([]);
+    } finally {
+      setReSearching(false);
+    }
+  }
+  function reAdd(p: BudgetProduct) {
+    setReItems((cur) => [...cur, { producto: p.producto, marca: p.marca || 'Sin marca', sku: p.sku || '', precio: Number(p.precio || 0) }]);
+    setReQuery('');
+    setReResults([]);
+  }
+  async function generateReingreso() {
+    if (!reItems.length) { setError('Agregá al menos un producto.'); return; }
+    setReGenerating(true);
+    setError('');
+    try {
+      const res = await generateReingresoAnnouncement(reItems, logoBrand);
+      setResult(res);
+      setShareHint('');
+      setReingresoOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo generar el reingreso.');
+    } finally {
+      setReGenerating(false);
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -324,12 +373,89 @@ export function PriceAnnouncementsPage() {
             <ErpButton variant="secondary" onClick={() => { load(); loadBatches(); }} disabled={loading} leftIcon={<RefreshCw size={16} />} className="w-full justify-center sm:w-auto">
               Refrescar
             </ErpButton>
+            <ErpButton variant="secondary" onClick={() => { setReingresoOpen(true); setError(''); }} leftIcon={<Repeat size={16} />} className="w-full justify-center sm:w-auto">
+              Reingreso
+            </ErpButton>
             <ErpButton variant="primary" onClick={generate} loading={generating} disabled={!selectedIds.size} leftIcon={<Wand2 size={16} />} className="w-full justify-center sm:w-auto">
               Generar imagen
             </ErpButton>
           </>
         )}
       />
+
+      <ErpModal
+        open={reingresoOpen}
+        onClose={() => setReingresoOpen(false)}
+        title="Reingreso — mantiene el precio"
+        footer={(
+          <>
+            <ErpButton variant="secondary" size="sm" onClick={() => setReingresoOpen(false)}>Cerrar</ErpButton>
+            <ErpButton variant="primary" size="sm" onClick={generateReingreso} loading={reGenerating} disabled={!reItems.length} leftIcon={<Wand2 size={15} />}>
+              Generar imagen
+            </ErpButton>
+          </>
+        )}
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-[color:var(--text-2)]">
+            Elegí productos que reingresan manteniendo el precio. Sale la misma placa pero con
+            <strong> "Reingreso de:"</strong> y color neutral.
+          </p>
+          <ErpField label="Buscar producto">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[color:var(--text-3)]" size={16} />
+              <ErpInput value={reQuery} onChange={(e) => reSearch(e.target.value)} placeholder="SKU, producto o marca" className="pl-9" />
+            </div>
+          </ErpField>
+          {reSearching && <div className="text-xs text-[color:var(--text-3)]">Buscando…</div>}
+          {reResults.length > 0 && (
+            <div className="max-h-52 divide-y divide-[color:var(--border)] overflow-y-auto rounded-xl border border-[color:var(--border)]">
+              {reResults.map((p) => (
+                <button
+                  key={`${p.sku}-${p.producto}`}
+                  type="button"
+                  onClick={() => reAdd(p)}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-[color:var(--surface-hover)]"
+                >
+                  <Plus size={15} className="shrink-0 text-[color:var(--primary)]" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm text-[color:var(--text)]">{p.producto}</span>
+                    <span className="block truncate text-xs text-[color:var(--text-3)]">
+                      {p.marca || 'Sin marca'} · {p.precio_texto || (p.precio ? `$ ${p.precio}` : 's/precio')}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {reItems.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-xs font-black uppercase tracking-wide text-[color:var(--text-3)]">Seleccionados ({reItems.length})</div>
+              {reItems.map((it, idx) => (
+                <div key={idx} className="flex items-center gap-2 rounded-xl border border-[color:var(--border)] bg-[color:var(--surface-2)] p-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm text-[color:var(--text)]">{it.producto}</div>
+                    <div className="truncate text-xs text-[color:var(--text-3)]">{it.marca}</div>
+                  </div>
+                  <ErpInput
+                    type="number"
+                    value={it.precio}
+                    onChange={(e) => setReItems((cur) => cur.map((r, i) => (i === idx ? { ...r, precio: Number(e.target.value) } : r)))}
+                    className="w-32 text-right"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setReItems((cur) => cur.filter((_, i) => i !== idx))}
+                    className="shrink-0 rounded-lg p-1.5 text-[color:var(--text-3)] hover:text-[color:var(--danger-2)]"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </ErpModal>
 
       {error && (
         <ErpNotice tone="error" title="No se pudo completar">

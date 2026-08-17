@@ -346,6 +346,8 @@ def _render_announcement_rows(
     rows: list[dict[str, Any]],
     logo_brand: str,
     vigencia_text: str,
+    hero_title_override: str | None = None,
+    count_word: str = "cambio",
 ) -> tuple[list[list[dict[str, Any]]], list[bytes]]:
     logo_path = brand_logo_path(logo_brand)
     logo_uri = logo_path.as_uri() if logo_path else ""
@@ -358,6 +360,8 @@ def _render_announcement_rows(
             total_productos=len(rows),
             logo_uri=logo_uri,
             image_height=page_heights[index],
+            hero_title_override=hero_title_override,
+            count_word=count_word,
         )
         for index, entries in enumerate(pages)
     ]
@@ -657,6 +661,8 @@ html, body {
 .badge.AUMENTO { background: #FEF3C7; color: #92400E; }
 .badge.BAJA    { background: #D1FAE5; color: #065F46; }
 .badge.NUEVO   { background: #DBEAFE; color: #1E40AF; }
+/* Neutral: reingreso que mantiene el precio. */
+.badge.REINGRESO { background: #E2E8F0; color: #475569; }
 
 .card .prices {
   flex: 0 0 auto;
@@ -689,6 +695,7 @@ html, body {
 .card.AUMENTO .price-new { color: #D97706; }
 .card.BAJA    .price-new { color: #059669; }
 .card.NUEVO   .price-new { color: #2563EB; }
+.card.REINGRESO .price-new { color: #475569; }
 
 /* ── Footer ────────────────────────────────────────────────────── */
 .footer {
@@ -717,6 +724,8 @@ def _build_html(
     total_productos: int,
     logo_uri: str,
     image_height: int = IMAGE_H,
+    hero_title_override: str | None = None,
+    count_word: str = "cambio",
 ) -> str:
     """Construye el HTML completo de una página."""
 
@@ -735,7 +744,7 @@ def _build_html(
 
     brand_count_page = _page_brand_counts(page_entries)
     new_count, price_count = _page_entry_mix(page_entries)
-    hero_title = _hero_title_html(new_count, price_count)
+    hero_title = _esc(hero_title_override) if hero_title_override else _hero_title_html(new_count, price_count)
     body_html: list[str] = []
     brand_block_open = False
     for entry in page_entries:
@@ -745,7 +754,7 @@ def _build_html(
             marca = str(entry["marca"])
             bar_color = _brand_color(marca)
             count = brand_count_page.get(marca, 0)
-            count_text = f"{count} cambio" if count == 1 else f"{count} cambios"
+            count_text = f"{count} {count_word}" if count == 1 else f"{count} {count_word}s"
             body_html.append(
                 f'''<div class="brand-block">
                     <div class="brand-header">
@@ -766,7 +775,7 @@ def _build_html(
         )
         # Icono inline en el badge: ↑ aumento, ↓ baja, ★ nuevo.
         # Usamos Unicode geométrico (no emoji) para que mantenga el color del badge.
-        badge_icon = {"AUMENTO": "↑", "BAJA": "↓", "NUEVO": "★"}.get(change, "")
+        badge_icon = {"AUMENTO": "↑", "BAJA": "↓", "NUEVO": "★", "REINGRESO": "↺"}.get(change, "")
         body_html.append(
             f'''<div class="card {change}">
                 <div class="info">
@@ -886,6 +895,69 @@ def _render_pages_to_png(html_pages: list[str], page_heights: list[int] | None =
 # ──────────────────────────────────────────────────────────────────────────
 # Endpoint
 # ──────────────────────────────────────────────────────────────────────────
+
+class ReingresoItem(BaseModel):
+    producto: str = Field(min_length=1)
+    marca: str = "Sin marca"
+    sku: str = ""
+    precio: float
+
+
+class ReingresoImageRequest(BaseModel):
+    items: list[ReingresoItem] = Field(min_length=1, max_length=100)
+    logo_brand: str = "gv_electro"
+    vigencia: str = ""
+
+
+@router.post("/announcements/reingreso", response_model=AnnouncementImagesOut)
+def generate_reingreso_images(
+    payload: ReingresoImageRequest,
+    user: Annotated[CurrentUser, Depends(require_current_user)],
+):
+    """Genera la placa de 'Reingreso de:' (mismo estilo, color neutral, precio mantenido).
+
+    A diferencia de /images, los productos los elige el usuario a mano (no salen de
+    actualizaciones de precio) y no se persiste tanda.
+    """
+    require_price_announcement_permission(user)
+
+    rows: list[dict[str, Any]] = []
+    for it in payload.items:
+        rows.append({
+            "id": 0,
+            "marca": (it.marca or "Sin marca").strip() or "Sin marca",
+            "sku": (it.sku or "").strip(),
+            "producto": (it.producto or "").strip(),
+            "valor_anterior_dec": None,
+            "valor_nuevo_dec": Decimal(str(it.precio)),
+            "valor_anterior_text": "",
+            "valor_nuevo_text": _money_display(it.precio),
+            "change": "REINGRESO",
+            "is_new_entry": False,
+            "auto_created": False,
+        })
+    _sort_announcement_rows(rows)
+
+    vigencia_text = _format_vigencia(payload.vigencia)
+    pages, png_bytes_list = _render_announcement_rows(
+        rows=rows, logo_brand=payload.logo_brand, vigencia_text=vigencia_text,
+        hero_title_override="Reingreso de:", count_word="producto",
+    )
+
+    now = datetime.now(AR_TZ)
+    stamp = now.strftime("%Y%m%d-%H%M%S")
+    images = _images_out_from_pngs(pages=pages, png_bytes_list=png_bytes_list, stamp=stamp)
+    brands = list(dict.fromkeys(r["marca"] for r in rows))
+    n = len(rows)
+    return AnnouncementImagesOut(
+        batch_id=None,
+        message=f"Reingreso de {n} producto{'s' if n != 1 else ''} {now.strftime('%d/%m/%Y %H:%M')}.",
+        generated_at=now.strftime("%d/%m/%Y %H:%M"),
+        brand_names=brands,
+        product_count=n,
+        images=images,
+    )
+
 
 @router.post("/announcements/images", response_model=AnnouncementImagesOut)
 def generate_announcement_images(
