@@ -522,6 +522,7 @@ html, body {
 .hero h1 .accent,
 .hero h1 .accent-price { color: #F5B544; }
 .hero h1 .accent-new { color: #2563EB; }
+.hero h1 .accent-reingreso { color: #A78BFA; }
 .hero .vigencia {
   margin-top: 24px;
   font-size: 18px;
@@ -661,8 +662,8 @@ html, body {
 .badge.AUMENTO { background: #FEF3C7; color: #92400E; }
 .badge.BAJA    { background: #D1FAE5; color: #065F46; }
 .badge.NUEVO   { background: #DBEAFE; color: #1E40AF; }
-/* Neutral: reingreso que mantiene el precio. */
-.badge.REINGRESO { background: #E2E8F0; color: #475569; }
+/* Reingreso que mantiene el precio: violeta propio, distinto de aumento/baja/nuevo. */
+.badge.REINGRESO { background: #EDE9FE; color: #6D28D9; }
 
 .card .prices {
   flex: 0 0 auto;
@@ -695,7 +696,7 @@ html, body {
 .card.AUMENTO .price-new { color: #D97706; }
 .card.BAJA    .price-new { color: #059669; }
 .card.NUEVO   .price-new { color: #2563EB; }
-.card.REINGRESO .price-new { color: #475569; }
+.card.REINGRESO .price-new { color: #6D28D9; }
 
 /* ── Footer ────────────────────────────────────────────────────── */
 .footer {
@@ -744,7 +745,8 @@ def _build_html(
 
     brand_count_page = _page_brand_counts(page_entries)
     new_count, price_count = _page_entry_mix(page_entries)
-    hero_title = _esc(hero_title_override) if hero_title_override else _hero_title_html(new_count, price_count)
+    # hero_title_override es HTML de confianza (constante nuestra, no input de usuario).
+    hero_title = hero_title_override if hero_title_override else _hero_title_html(new_count, price_count)
     body_html: list[str] = []
     brand_block_open = False
     for entry in page_entries:
@@ -941,7 +943,7 @@ def generate_reingreso_images(
     vigencia_text = _format_vigencia(payload.vigencia)
     pages, png_bytes_list = _render_announcement_rows(
         rows=rows, logo_brand=payload.logo_brand, vigencia_text=vigencia_text,
-        hero_title_override="Reingreso de:", count_word="producto",
+        hero_title_override='Nuevo <span class="accent-reingreso">reingreso</span>', count_word="producto",
     )
 
     now = datetime.now(AR_TZ)

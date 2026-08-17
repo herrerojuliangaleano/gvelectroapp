@@ -399,7 +399,7 @@ export function PriceAnnouncementsPage() {
         <div className="space-y-3">
           <p className="text-sm text-[color:var(--text-2)]">
             Elegí productos que reingresan manteniendo el precio. Sale la misma placa pero con
-            <strong> "Reingreso de:"</strong> y color neutral.
+            <strong> "Nuevo reingreso"</strong> y un color propio (violeta) para que se note.
           </p>
           <ErpField label="Buscar producto">
             <div className="relative">
