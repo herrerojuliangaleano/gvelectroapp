@@ -325,7 +325,7 @@ def to_numero(serie: pd.Series) -> pd.Series:
     - separador decimal con coma o punto
     - símbolo $
     - texto extra
-    - valores negativos entre paréntesis
+    - valores negativos al inicio, al final, entre paréntesis o con signo unicode
     """
     s = serie.astype(str).str.strip()
     s = s.replace({"nan": None, "None": None, "": None})
@@ -334,12 +334,44 @@ def to_numero(serie: pd.Series) -> pd.Series:
         if valor is None or pd.isna(valor):
             return None
 
-        txt = str(valor).strip()
-        txt = txt.replace("$", "").replace("ARS", "").replace(" ", "")
-        txt = txt.replace("(", "-").replace(")", "")
-        txt = re.sub(r"[^0-9,.\-]", "", txt)
+        original = unicodedata.normalize("NFKC", str(valor)).strip()
+        if not original or original.lower() in {"nan", "none", "nat"}:
+            return None
 
-        if txt in {"", "-", ".", ","}:
+        # Números ya limpios (incluida notación científica tipo "5e-324", que
+        # algunos bancos —Supervielle— exportan como cero en los movimientos
+        # vacíos): parsear directo. Los formatos locales (miles con punto,
+        # decimal con coma, paréntesis, menos al final) NO pasan float() y caen
+        # al parser de abajo, así que Galicia/Nave no se ven afectados.
+        # Sin esto, "5e-324" se rompía: el "-" del exponente se tomaba como
+        # negativo y el re.sub dejaba "5324" -> -5324.
+        try:
+            num = float(original)
+            return 0.0 if abs(num) < 1e-6 else num
+        except (ValueError, OverflowError):
+            pass
+
+        original = "".join(
+            "-"
+            if char in {"\u2212", "\uFE63", "\uFF0D"} or unicodedata.category(char) == "Pd"
+            else char
+            for char in original
+        ).replace("\u00a0", " ")
+
+        negativo = False
+        if re.search(r"\([^)]*\d[^)]*\)", original):
+            negativo = True
+
+        txt_sin_espacios = original.replace(" ", "")
+        if "-" in txt_sin_espacios and re.search(r"\d", txt_sin_espacios):
+            negativo = True
+
+        txt = original.upper()
+        txt = txt.replace("$", "").replace("ARS", "").replace(" ", "")
+        txt = re.sub(r"\([^)]*\)", lambda m: m.group(0).strip("()"), txt)
+        txt = re.sub(r"[^0-9,.]", "", txt)
+
+        if txt in {"", ".", ","}:
             return None
 
         tiene_coma = "," in txt
@@ -361,7 +393,10 @@ def to_numero(serie: pd.Series) -> pd.Series:
             if len(partes) > 2:
                 txt = "".join(partes[:-1]) + "." + partes[-1]
 
-        return pd.to_numeric(txt, errors="coerce")
+        numero = pd.to_numeric(txt, errors="coerce")
+        if pd.isna(numero):
+            return numero
+        return -abs(numero) if negativo else numero
 
     return s.apply(convertir)
 
