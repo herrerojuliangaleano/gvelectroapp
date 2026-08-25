@@ -11,6 +11,23 @@
 #   docker compose --env-file backend/.env.production.local -f docker-compose.prod-local.yml up -d --build
 
 services:
+  # Túnel Cloudflare: expone el backend en tu dominio, sin abrir puertos ni IP
+  # pública (funciona detrás de CGNAT). El token va en
+  # backend/.env.production.local -> CLOUDFLARE_TUNNEL_TOKEN=... (gitignoreado).
+  # En el dashboard del túnel, Public Hostname -> Service: http://electrogv-backend-prod:8000
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: electrogv-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - backend-prod
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
   backend-prod:
     build: ./backend
     image: electrogv-backend:prod-local
@@ -29,6 +46,10 @@ services:
       - "127.0.0.1:${PROD_BACKEND_PORT:-8010}:8000"
     volumes:
       - ./backend/storage-prod:/app/storage
+      # El frontend buildeado se monta desde el host: así SIEMPRE está presente
+      # al arrancar (main.py registra las rutas del SPA solo si existe al boot)
+      # y no se pierde en cada recreate/restart del contenedor.
+      - ./frontend/dist:/frontend/dist:ro
     depends_on:
       postgres-prod:
         condition: service_healthy
