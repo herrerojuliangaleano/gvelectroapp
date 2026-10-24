@@ -1073,6 +1073,7 @@ def generate_announcement_images(
     logo_uri = logo_path.as_uri() if logo_path else ""
 
     # Paginar + construir HTML
+    _attach_puma_codes(rows)
     pages = _paginate(rows)
     total = len(pages)
     html_pages = [
