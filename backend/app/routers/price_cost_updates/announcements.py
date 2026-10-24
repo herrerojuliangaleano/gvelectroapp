@@ -40,6 +40,7 @@ from sqlalchemy import select
 
 from ...brand_assets import brand_logo_path
 from ...config import get_settings
+from ...product_catalog import clean_text, find_column, get_sheet_values, runtime_product_catalog_config, sku_key
 from ...price_cost_rules import require_price_announcement_permission, require_price_announcement_view_permission
 from . import (
     CurrentUser,
@@ -212,10 +213,51 @@ def _is_new_entry(row: dict[str, Any]) -> bool:
     return str(row.get("change") or "").upper() == "NUEVO"
 
 
+def _puma_codes_by_sku() -> dict[str, str]:
+    """Mapa SKU -> código Puma leído en vivo de la Planilla Madre (columna "Codg.Puma").
+
+    El catálogo sincronizado no guarda el Puma, así que se lee la hoja al generar.
+    Si la planilla no responde o no tiene la columna, devuelve {} y el anuncio
+    sale igual, sin el código.
+    """
+    try:
+        cfg = runtime_product_catalog_config()
+        spreadsheet_id = str(cfg.get("spreadsheet_id") or "")
+        sheet_name = str(cfg.get("sheet_name") or "Productos PVP")
+        header_row = max(1, int(cfg.get("header_row") or 1))
+        columns_cfg = cfg.get("columns") if isinstance(cfg.get("columns"), dict) else {}
+        values = get_sheet_values(spreadsheet_id, sheet_name, "A:Z")
+        if len(values) < header_row:
+            return {}
+        headers = [str(x).strip() for x in values[header_row - 1]]
+        configured_sku = clean_text(columns_cfg.get("sku") or "")
+        sku_col = find_column(headers, ([configured_sku] if configured_sku else []) + ["SKU", "CODIGO", "COD", "CODE", "MODELO"], fallback_index=3)
+        puma_col = find_column(headers, ["Codg.Puma", "COD PUMA", "CODIGO PUMA", "COD. PUMA", "PUMA"])
+        if sku_col is None or puma_col is None:
+            return {}
+        out: dict[str, str] = {}
+        for raw in values[header_row:]:
+            sku = clean_text(raw[sku_col]) if sku_col < len(raw) else ""
+            puma = clean_text(raw[puma_col]) if puma_col < len(raw) else ""
+            if sku and puma:
+                out.setdefault(sku_key(sku), puma)
+        return out
+    except Exception:
+        return {}
+
+
+def _attach_puma_codes(rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        return
+    codes = _puma_codes_by_sku()
+    for row in rows:
+        row["puma"] = codes.get(sku_key(row.get("sku") or ""), "")
+
+
 def _estimated_row_height(row: dict[str, Any]) -> int:
     height = CARD_ESTIMATED_H
     product_len = len(str(row.get("producto") or ""))
-    sku_len = len(str(row.get("sku") or ""))
+    sku_len = len(str(row.get("sku") or "")) + len(str(row.get("puma") or ""))
     if product_len > 64:
         height += 14
     if product_len > 100:
@@ -351,6 +393,7 @@ def _render_announcement_rows(
 ) -> tuple[list[list[dict[str, Any]]], list[bytes]]:
     logo_path = brand_logo_path(logo_brand)
     logo_uri = logo_path.as_uri() if logo_path else ""
+    _attach_puma_codes(rows)
     pages = _paginate(rows)
     page_heights = [_page_image_height(entries) for entries in pages]
     html_pages = [
@@ -638,6 +681,24 @@ html, body {
   /* Wrap natural — no truncate */
   word-break: break-word;
 }
+/* Código Puma junto al SKU: el vendedor lo usa para cargar en el sistema. */
+.card .puma {
+  font-size: 14px;
+  font-weight: 500;
+  color: #475569;
+  background: #F1F5F9;
+  border: 1px solid #E2E8F0;
+  border-radius: 6px;
+  padding: 2px 8px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.card .puma b {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  color: #0F172A;
+  font-variant-numeric: tabular-nums;
+}
 .badge {
   flex: 0 0 auto;
   display: inline-flex;
@@ -778,12 +839,15 @@ def _build_html(
         # Icono inline en el badge: ↑ aumento, ↓ baja, ★ nuevo.
         # Usamos Unicode geométrico (no emoji) para que mantenga el color del badge.
         badge_icon = {"AUMENTO": "↑", "BAJA": "↓", "NUEVO": "★", "REINGRESO": "↺"}.get(change, "")
+        puma = str(entry.get("puma") or "")
+        puma_html = f'<span class="puma">Puma <b>{_esc(puma)}</b></span>' if puma else ""
         body_html.append(
             f'''<div class="card {change}">
                 <div class="info">
                   <div class="desc">{_esc(entry.get("producto", ""))}</div>
                   <div class="sku-row">
                     <span class="sku">{_esc(entry.get("sku", ""))}</span>
+                    {puma_html}
                     <span class="badge {change}"><span class="icon">{badge_icon}</span>{_esc(change)}</span>
                   </div>
                 </div>
